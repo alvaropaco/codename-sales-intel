@@ -19,6 +19,7 @@ const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  ListToolsRequestSchema,
   CallToolRequestSchema,
   TextContent,
   ToolResultBlockSchema,
@@ -549,6 +550,8 @@ const toolsHandler = async () => {
     ],
   };
 };
+
+server.setRequestHandler(ListToolsRequestSchema, toolsHandler);
 
 server.setRequestHandler(
   CallToolRequestSchema,
