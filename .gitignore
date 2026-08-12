@@ -1,0 +1,6 @@
+# Local secrets / environment overrides (never commit)
+.env.local
+
+# Node
+node_modules/
+*.log

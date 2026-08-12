@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Building,
   Building2,
@@ -8,15 +8,21 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Users,
+  UserPlus,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { CommercialProfile, Prospect } from '@/types';
+import { CommercialProfile, DiscoveredCompany, Prospect } from '@/types';
 import { formatCNPJ } from '@/lib/utils';
+import {
+  fetchDiscoveryCandidates,
+  importDiscoveredCompany,
+} from '@/services/api';
 
 interface ProspectsDirectoryViewProps {
   prospects: Prospect[];
@@ -69,6 +75,54 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [selectedSituation, setSelectedSituation] = useState('active');
   const [selectedSize, setSelectedSize] = useState('all');
   const [selectedAge, setSelectedAge] = useState('all');
+
+  const [discovered, setDiscovered] = useState<DiscoveredCompany[]>([]);
+  const [discoveryCriteria, setDiscoveryCriteria] = useState<{ segments: string[]; locations: string[]; activeOnly: boolean; usedProfile: boolean }>({ segments: [], locations: [], activeOnly: false, usedProfile: false });
+  const [isLoadingDiscovery, setIsLoadingDiscovery] = useState(false);
+  const [discoveryMessage, setDiscoveryMessage] = useState('');
+  const [isImporting, setIsImporting] = useState<string | null>(null);
+  const [importError, setImportError] = useState('');
+
+  const loadDiscovery = async () => {
+    setIsLoadingDiscovery(true);
+    setImportError('');
+    const segment = searchQuery.trim() || undefined;
+    const location = selectedLocation.trim() || undefined;
+    const result = await fetchDiscoveryCandidates({ segment, location, limit: 12 });
+    setDiscovered(result.companies);
+    setDiscoveryCriteria(result.criteria);
+    setDiscoveryMessage(result.message || '');
+    setIsLoadingDiscovery(false);
+  };
+
+  useEffect(() => {
+    // Load discovered companies on mount, and when the seller changes the
+    // searched niche or location so results follow the active criteria.
+    const timer = setTimeout(() => loadDiscovery(), 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, selectedLocation]);
+
+  const handleImport = async (company: DiscoveredCompany) => {
+    setIsImporting(company.cnpj);
+    setImportError('');
+    try {
+      await importDiscoveredCompany({
+        cnpj: company.cnpj,
+        legalName: company.legalName,
+        tradeName: company.tradeName || null,
+        industry: company.industry || null,
+        status: company.status || 'active',
+      });
+      // Refresh the registered list and drop the just-imported company.
+      await onRefresh();
+      setDiscovered((current) => current.filter((c) => c.cnpj !== company.cnpj));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Não foi possível adicionar a empresa.');
+    } finally {
+      setIsImporting(null);
+    }
+  };
 
   const industries = Array.from(new Set(prospects.map((p) => p.industry).filter(Boolean)));
   const profileSegments = [
@@ -195,6 +249,79 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
           <Button onClick={onOpenSettings} variant="outline" className="h-10 shrink-0 gap-2 rounded-xl bg-white/80 text-xs font-bold dark:bg-white/10">
             Ajustar preferências
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Empresas descobertas agora via inteligência comercial */}
+      <Card className="overflow-hidden border-emerald-100 bg-gradient-to-br from-white to-emerald-50/40 dark:border-emerald-500/20 dark:from-slate-900 dark:to-emerald-500/5">
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+              <Sparkles className="h-4 w-4" />
+              <span className="text-xs font-black uppercase tracking-[0.16em]">Empresas descobertas agora</span>
+            </div>
+            <Button
+              onClick={() => loadDiscovery()}
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoadingDiscovery ? 'animate-spin' : ''}`} />
+              Buscar novamente
+            </Button>
+          </div>
+
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+            {discoveryCriteria.usedProfile
+              ? `Sugestões reais a partir do perfil do onboarding (${discoveryCriteria.segments.join(', ') || 'segmentos'}).`
+              : discoveryCriteria.segments.length
+              ? `Buscando por "${discoveryCriteria.segments.join(', ')}"${discoveryCriteria.locations[0] ? ` em ${discoveryCriteria.locations[0]}` : ''}.`
+              : 'Digite um nicho acima ou finalize o onboarding para ver empresas reais com potencial.'}
+          </p>
+
+          {importError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs font-bold text-red-700">{importError}</p>}
+          {discoveryMessage && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{discoveryMessage}</p>}
+
+          {isLoadingDiscovery ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-32 animate-pulse rounded-xl border border-slate-100 bg-slate-50 dark:border-white/5 dark:bg-white/5" />
+              ))}
+            </div>
+          ) : discovered.length ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {discovered.map((company) => (
+                <div key={company.cnpj} className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-emerald-200 dark:border-white/10 dark:bg-white/[0.03]">
+                  <div className="flex items-start gap-2.5">
+                    <div className="h-9 w-9 shrink-0 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:border-emerald-500/20 flex items-center justify-center">
+                      <Building className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-slate-900 dark:text-white">{company.legalName}</p>
+                      <p className="text-[10px] text-slate-400">{formatCNPJ(company.cnpj)}</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 line-clamp-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">{company.industry || 'Segmento a confirmar'}</p>
+                  <div className="mt-auto flex items-center justify-between pt-3">
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                      <MapPin className="h-3 w-3" /> {company.city ? `${company.city}${company.state ? ` (${company.state})` : ''}` : company.state || 'Local a confirmar'}
+                    </span>
+                    <Button onClick={() => handleImport(company)} disabled={isImporting === company.cnpj} size="sm" className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700">
+                      <UserPlus className="h-3.5 w-3.5" />
+                      {isImporting === company.cnpj ? 'Adicionando...' : 'Adicionar à lista'}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            !discoveryMessage && (
+              <div className="mt-4 rounded-xl border border-dashed border-slate-200 p-6 text-center dark:border-white/10">
+                <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Nenhuma empresa encontrada</p>
+                <p className="mt-1 text-xs text-slate-400">Ajuste o nicho ou finalize o onboarding para ver sugestões reais.</p>
+              </div>
+            )
+          )}
         </CardContent>
       </Card>
 

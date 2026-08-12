@@ -84,6 +84,30 @@ export interface CnpjPartner {
   joinedAt?: string;
 }
 
+export interface DiscoveredCompany {
+  cnpj: string;
+  legalName: string;
+  tradeName?: string | null;
+  industry?: string | null;
+  status?: 'active' | 'inactive' | string | null;
+  city?: string | null;
+  state?: string | null;
+  openingDate?: string | null;
+  legalNature?: string | null;
+  companySize?: string | null;
+  shareCapital?: number | null;
+  email?: string | null;
+  isActive?: boolean;
+  source?: string;
+}
+
+export interface DiscoveryCriteria {
+  segments: string[];
+  locations: string[];
+  activeOnly: boolean;
+  usedProfile: boolean;
+}
+
 export interface EnrichedCnpjContact {
   id: string;
   cnpj: string;

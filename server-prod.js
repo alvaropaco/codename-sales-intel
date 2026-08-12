@@ -1,12 +1,50 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 
+// Minimal .env loader (no dotenv dependency): loads KEY=VALUE pairs from
+// .env and .env.local, never overriding variables already in the environment.
+// .env.local holds local secrets and is excluded from version control.
+const fsLoadEnv = require('fs');
+const pathLoadEnv = require('path');
+(function loadEnvFile() {
+  const files = ['.env', '.env.local'];
+  for (const file of files) {
+    try {
+      const envPath = pathLoadEnv.join(__dirname, file);
+      if (!fsLoadEnv.existsSync(envPath)) continue;
+      const lines = fsLoadEnv.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq === -1) continue;
+        const key = trimmed.slice(0, eq).trim();
+        let value = trimmed.slice(eq + 1).trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
+          process.env[key] = value;
+        }
+      }
+    } catch (_err) {
+      // ignore: environment is already configured
+    }
+  }
+})();
+
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
 const path = require('path');
 const fs = require('fs');
+const {
+  searchCompanies,
+  filterCompanies,
+  getCompanyByCnpj,
+  getDatasetStats,
+} = require('./mcp-cnpj');
 const {
   enrichProspectWithCnpj,
   listEnrichedProspects,
@@ -482,6 +520,235 @@ app.post('/api/enrichment/extract', async (req, res) => {
       filters: { from: from || null, to: to || null, refresh: Boolean(refresh) },
       timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// DISCOVERY (after onboarding) - fetch real companies by CNAE via MCP-CNPJ
+// ============================================================================
+
+function getStateFromLocation(location) {
+  const match = String(location || '').match(/\(([A-Za-z]{2})\)/);
+  return match ? match[1].toUpperCase() : undefined;
+}
+
+// GET /api/discovery/profile - onboarding criteria that drive discovery
+app.get('/api/discovery/profile', async (req, res) => {
+  try {
+    const org = await prisma.organization.findFirst();
+    if (!org) {
+      return res.json({
+        success: true,
+        data: { onboardingCompleted: false, targetCnaes: [], targetSegments: [], targetLocations: [], companyStatuses: ['active'], targetSizes: [] },
+        timestamp: new Date().toISOString(),
+      });
+    }
+    const settings = await prisma.commercialSettings.findUnique({ where: { orgId: org.id } });
+    const profile = settings
+      ? {
+          onboardingCompleted: settings.onboardingCompleted,
+          targetCnaes: Array.isArray(settings.targetCnaes) ? settings.targetCnaes : [],
+          targetSegments: Array.isArray(settings.targetSegments) ? settings.targetSegments : [],
+          targetLocations: Array.isArray(settings.targetLocations) ? settings.targetLocations : [],
+          companyStatuses: Array.isArray(settings.companyStatuses) && settings.companyStatuses.length ? settings.companyStatuses : ['active'],
+          targetSizes: Array.isArray(settings.targetSizes) ? settings.targetSizes : [],
+        }
+      : { onboardingCompleted: false, targetCnaes: [], targetSegments: [], targetLocations: [], companyStatuses: ['active'], targetSizes: [] };
+
+    res.json({ success: true, data: profile, timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/discovery/candidates - search real companies by CNAE/segment/location
+app.get('/api/discovery/candidates', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(Number(req.query.limit) || 10, 50));
+    const explicitCnae = req.query.cnae ? String(req.query.cnae) : null;
+    const explicitSegment = req.query.segment ? String(req.query.segment) : null;
+    const explicitLocation = req.query.location ? String(req.query.location) : null;
+
+    let segments = [];
+    let locations = [];
+    let activeOnly = false;
+    let usedProfile = false;
+
+    if (!explicitCnae && !explicitSegment && !explicitLocation) {
+      // Fall back to the onboarding profile as the discovery criteria.
+      const org = await prisma.organization.findFirst();
+      if (org) {
+        const settings = await prisma.commercialSettings.findUnique({ where: { orgId: org.id } });
+        if (settings) {
+          segments = Array.isArray(settings.targetCnaes) ? settings.targetCnaes : [];
+          if (!segments.length) segments = Array.isArray(settings.targetSegments) ? settings.targetSegments : [];
+          locations = Array.isArray(settings.targetLocations) ? settings.targetLocations : [];
+          activeOnly = !Array.isArray(settings.companyStatuses) || settings.companyStatuses.includes('active');
+          usedProfile = true;
+        }
+      }
+    } else {
+      if (explicitCnae) segments.push(explicitCnae);
+      if (explicitSegment) segments.push(explicitSegment);
+      if (explicitLocation) locations.push(explicitLocation);
+    }
+
+    const candidates = [];
+    const state = locations.length ? getStateFromLocation(locations[0]) : undefined;
+
+    // 1) Structured CNAE filter when we have codes.
+    for (const code of segments) {
+      if (!/^\d+$/.test(code)) continue;
+      const filtered = await filterCompanies({
+        cnae: code,
+        state,
+        isActive: activeOnly || undefined,
+        limit: Math.min(limit, 20),
+      });
+      filtered.forEach((company) => candidates.push(company));
+      if (candidates.length >= limit) break;
+    }
+
+    // 2) Semantic search for segment/natural-language criteria.
+    if (candidates.length < limit) {
+      const query = explicitSegment || segments[0] || '';
+      if (query && !/^\d+$/.test(query)) {
+        const found = await searchCompanies({
+          query,
+          state,
+          limit: Math.min(limit, 20),
+        });
+        found.forEach((company) => candidates.push(company));
+      } else if (!query && segments.length === 0) {
+        // No usable criteria: return empty rather than fabricated data.
+        return res.json({
+          success: true,
+          data: [],
+          source: [],
+          criteria: { segments, locations, activeOnly, usedProfile },
+          message: 'Configure segmentos ou CNAEs no onboarding para descobrir empresas.',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    const seen = new Set();
+    const unique = [];
+    for (const c of candidates) {
+      if (!c || seen.has(c.cnpj)) continue;
+      seen.add(c.cnpj);
+      unique.push(c);
+    }
+
+    res.json({
+      success: true,
+      data: unique.slice(0, limit),
+      source: ['mcp.cnpj'],
+      criteria: { segments, locations, activeOnly, usedProfile },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/discovery/import - persist a discovered company as a Prospect
+app.post('/api/discovery/import', async (req, res) => {
+  try {
+    const { cnpj, legalName, tradeName, industry, status } = req.body || {};
+    if (!cnpj || !legalName) {
+      return res.status(400).json({ success: false, error: 'CNPJ and company name required' });
+    }
+
+    const orgId = await getOrCreateOrganization(req.body?.orgId);
+    const normalizedCnpj = String(cnpj).replace(/\D/g, '');
+
+    let prospect = await prisma.prospect.findUnique({ where: { cnpj: normalizedCnpj } });
+    if (prospect) {
+      return res.json({
+        success: true,
+        data: formatEnrichedProspect(prospect),
+        alreadyExists: true,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    prospect = await prisma.prospect.create({
+      data: {
+        cnpj: normalizedCnpj,
+        companyName: legalName || tradeName || normalizedCnpj,
+        tradeName: tradeName || null,
+        industry: industry || null,
+        status: status === 'active' ? 'prospect' : 'lead',
+        opportunityScore: 60,
+        enrichmentStatus: 'enriched',
+        enrichmentSource: 'mcp.cnpj',
+        enrichedAt: new Date(),
+        orgId,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: formatEnrichedProspect(prospect),
+      alreadyExists: false,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/prospects/:id/enrich-mcp - enrich an existing prospect via MCP-CNPJ
+app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
+  try {
+    const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+
+    const company = await getCompanyByCnpj(prospect.cnpj);
+    if (!company) {
+      return res.json({
+        success: true,
+        data: prospect,
+        enrichment: { status: 'unavailable', source: 'mcp.cnpj', error: 'Company not found in MCP-CNPJ' },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const updated = await prisma.prospect.update({
+      where: { id: prospect.id },
+      data: {
+        companyName: company.legalName || prospect.companyName,
+        tradeName: company.tradeName || prospect.tradeName,
+        industry: company.industry || prospect.industry,
+        cnpjEmail: company.email || prospect.cnpjEmail,
+        cnpjOpenedAt: company.openingDate ? new Date(company.openingDate) : prospect.cnpjOpenedAt,
+        cnpjLegalNature: company.legalNature || prospect.cnpjLegalNature,
+        enrichmentStatus: 'enriched',
+        enrichmentSource: 'mcp.cnpj',
+        enrichmentError: null,
+        enrichedAt: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      data: formatEnrichedProspect(updated),
+      enrichment: { status: 'enriched', source: 'mcp.cnpj' },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/discovery/stats - quick dataset stats from MCP-CNPJ
+app.get('/api/discovery/stats', async (req, res) => {
+  try {
+    const stats = await getDatasetStats();
+    res.json({ success: true, data: stats, timestamp: new Date().toISOString() });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
