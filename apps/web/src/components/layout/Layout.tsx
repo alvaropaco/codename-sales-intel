@@ -2,6 +2,7 @@ import React from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { ActiveTab } from '@/types';
+import { cn } from '@/lib/utils';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -28,6 +29,15 @@ export const Layout: React.FC<LayoutProps> = ({
   onOpenCreateModal,
   onOpenQualifyModal,
 }) => {
+  const mobileNavItems: Array<{ id: ActiveTab; label: string; badge?: string | null }> = [
+    { id: 'dashboard', label: 'CRM Dashboard' },
+    { id: 'prospects', label: 'Leads & CNPJs', badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
+    { id: 'pipeline', label: 'Sales Pipeline', badge: 'Live' },
+    { id: 'risk', label: 'Credit Risk AI', badge: 'AI' },
+    { id: 'workflows', label: 'Workflow Automation' },
+    { id: 'enrichment', label: 'CNPJ Enrichment', badge: 'Data' },
+  ];
+
   return (
     <div className={`min-h-screen flex bg-slate-50 text-slate-900 ${isDark ? 'dark bg-slate-950 text-foreground' : ''}`}>
       <Sidebar
@@ -45,6 +55,37 @@ export const Layout: React.FC<LayoutProps> = ({
           onOpenCreateModal={onOpenCreateModal}
           onOpenQualifyModal={onOpenQualifyModal}
         />
+        <nav id="mobile-dashboard-navigation" aria-label="Mobile dashboard navigation" className="border-b border-slate-200 bg-white/95 px-3 py-2 dark:border-white/10 dark:bg-slate-950/95 lg:hidden">
+          <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {mobileNavItems.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={() => setActiveTab(item.id)}
+                  className={cn(
+                    'flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-black transition',
+                    isActive
+                      ? 'border-slate-950 bg-slate-950 text-white shadow-sm dark:border-white dark:bg-white dark:text-slate-950'
+                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-slate-950 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white'
+                  )}
+                >
+                  <span>{item.label}</span>
+                  {item.badge && (
+                    <span className={cn(
+                      'rounded-full px-1.5 py-0.5 text-[10px]',
+                      isActive ? 'bg-white/15 text-current dark:bg-slate-950/10' : 'bg-white text-slate-500 dark:bg-white/10 dark:text-slate-300'
+                    )}>
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 xl:p-8">
           {children}
         </main>

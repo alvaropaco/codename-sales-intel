@@ -65,7 +65,13 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85 sm:px-6 xl:px-8">
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <button className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 lg:hidden dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300">
+          <button
+            type="button"
+            aria-label="Open dashboard navigation"
+            aria-controls="mobile-dashboard-navigation"
+            onClick={() => document.getElementById('mobile-dashboard-navigation')?.scrollIntoView({ block: 'nearest', inline: 'start' })}
+            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 lg:hidden dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300"
+          >
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0">
