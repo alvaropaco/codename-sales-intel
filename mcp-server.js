@@ -34,8 +34,10 @@ const server = new Server({
   name: "salesintel-mcp",
   version: "1.0.0",
 }, {
-  resources: {},
-  tools: {},
+  capabilities: {
+    resources: {},
+    tools: {},
+  },
 });
 
 // ============================================================================
@@ -463,91 +465,290 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // TOOL DEFINITIONS
 // ============================================================================
 
+const toolsHandler = async () => {
+  return {
+    tools: [
+      {
+        name: "qualify_prospect",
+        description:
+          "Score and qualify a prospect based on company characteristics",
+        inputSchema: {
+          type: "object",
+          properties: {
+            company_name: {
+              type: "string",
+              description: "Name of the company",
+            },
+            industry: {
+              type: "string",
+              description:
+                "Industry sector (e.g., Software, Finance, Healthcare)",
+            },
+            employees: {
+              type: "number",
+              description: "Number of employees",
+            },
+            revenue_estimate: {
+              type: "number",
+              description: "Estimated annual revenue in BRL",
+            },
+          },
+          required: ["company_name", "industry"],
+        },
+      },
+      {
+        name: "assess_credit_risk",
+        description: "Evaluate credit risk for a company",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cnpj: {
+              type: "string",
+              description: "Company CNPJ (format: XX.XXX.XXX/0001-XX)",
+            },
+          },
+          required: ["cnpj"],
+        },
+      },
+      {
+        name: "create_prospect",
+        description: "Create a new prospect record in the database",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cnpj: {
+              type: "string",
+              description:
+                "Company CNPJ (format: XX.XXX.XXX/0001-XX, must be unique)",
+            },
+            company_name: {
+              type: "string",
+              description: "Legal company name",
+            },
+            status: {
+              type: "string",
+              enum: ["prospect", "qualified", "lead"],
+              description: "Initial status (default: prospect)",
+            },
+            industry: {
+              type: "string",
+              description: "Industry classification",
+            },
+            employees: {
+              type: "number",
+              description: "Number of employees",
+            },
+            revenue_estimate: {
+              type: "number",
+              description: "Estimated annual revenue in BRL",
+            },
+          },
+          required: ["cnpj", "company_name"],
+        },
+      },
+    ],
+  };
+};
+
 server.setRequestHandler(
-  { method: "tools/list", uriPattern: "/tools/list" },
-  async () => {
-    return {
-      tools: [
-        {
-          name: "qualify_prospect",
-          description:
-            "Score and qualify a prospect based on company characteristics",
-          inputSchema: {
-            type: "object",
-            properties: {
-              company_name: {
-                type: "string",
-                description: "Name of the company",
-              },
-              industry: {
-                type: "string",
-                description:
-                  "Industry sector (e.g., Software, Finance, Healthcare)",
-              },
-              employees: {
-                type: "number",
-                description: "Number of employees",
-              },
-              revenue_estimate: {
-                type: "number",
-                description: "Estimated annual revenue in BRL",
-              },
+  CallToolRequestSchema,
+  async (request) => {
+    const { name, arguments: args } = request.params;
+
+    try {
+      if (name === "qualify_prospect") {
+        const { company_name, industry, employees, revenue_estimate } = args;
+
+        // Simple qualification logic
+        let score = 50; // Base score
+
+        // Industry bonus
+        if (
+          ["Software", "Technology", "SaaS", "Fintech"].includes(industry)
+        ) {
+          score += 20;
+        }
+
+        // Size bonus
+        if (employees >= 100) score += 15;
+        if (employees >= 500) score += 10;
+
+        // Revenue bonus
+        if (revenue_estimate >= 1000000) score += 15;
+        if (revenue_estimate >= 5000000) score += 10;
+
+        const level =
+          score >= 75
+            ? "qualified"
+            : score >= 50
+            ? "prospect"
+            : "lead";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  company: company_name,
+                  qualification: {
+                    score: Math.min(100, score),
+                    level,
+                    confidence: (0.7 + Math.random() * 0.3).toFixed(2),
+                    factors: [
+                      "industry_fit",
+                      "company_size",
+                      "revenue_scale",
+                    ],
+                  },
+                  timestamp: new Date().toISOString(),
+                },
+                null,
+                2
+              ),
             },
-            required: ["company_name", "industry"],
-          },
-        },
-        {
-          name: "assess_credit_risk",
-          description: "Evaluate credit risk for a company",
-          inputSchema: {
-            type: "object",
-            properties: {
-              cnpj: {
-                type: "string",
-                description: "Company CNPJ (format: XX.XXX.XXX/0001-XX)",
-              },
+          ],
+        };
+      }
+
+      if (name === "assess_credit_risk") {
+        const { cnpj } = args;
+
+        // Simulate credit risk assessment
+        const riskScore = Math.floor(Math.random() * 100);
+        const level =
+          riskScore >= 70
+            ? "high"
+            : riskScore >= 40
+            ? "medium"
+            : "low";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  cnpj,
+                  risk_assessment: {
+                    score: riskScore,
+                    level,
+                    factors: [
+                      "payment_history",
+                      "revenue_stability",
+                      "market_position",
+                    ],
+                    recommendation:
+                      level === "high"
+                        ? "Request additional documentation"
+                        : "Proceed with standard process",
+                  },
+                  timestamp: new Date().toISOString(),
+                },
+                null,
+                2
+              ),
             },
-            required: ["cnpj"],
+          ],
+        };
+      }
+
+      if (name === "create_prospect") {
+        const {
+          cnpj,
+          company_name,
+          status,
+          industry,
+          employees,
+          revenue_estimate,
+        } = args;
+
+        // Validate CNPJ format
+        if (!/^\d{2}\.\d{3}\.\d{3}\/0001-\d{2}$/.test(cnpj)) {
+          throw new Error(
+            "Invalid CNPJ format. Expected: XX.XXX.XXX/0001-XX"
+          );
+        }
+
+        // Check if prospect already exists
+        const existing = await prisma.prospect.findUnique({
+          where: { cnpj },
+        });
+
+        if (existing) {
+          throw new Error(`Prospect with CNPJ ${cnpj} already exists`);
+        }
+
+        // Get or create default organization
+        let org = await prisma.organization.findFirst();
+        if (!org) {
+          org = await prisma.organization.create({
+            data: { name: "Default Organization" },
+          });
+        }
+
+        // Create new prospect
+        const prospect = await prisma.prospect.create({
+          data: {
+            cnpj,
+            companyName: company_name,
+            status: status || "prospect",
+            industry,
+            employees: employees || 0,
+            revenueEstimate: revenue_estimate || 0,
+            opportunityScore: 65, // Default score
+            orgId: org.id,
           },
-        },
-        {
-          name: "create_prospect",
-          description: "Create a new prospect record in the database",
-          inputSchema: {
-            type: "object",
-            properties: {
-              cnpj: {
-                type: "string",
-                description:
-                  "Company CNPJ (format: XX.XXX.XXX/0001-XX, must be unique)",
-              },
-              company_name: {
-                type: "string",
-                description: "Legal company name",
-              },
-              status: {
-                type: "string",
-                enum: ["prospect", "qualified", "lead"],
-                description: "Initial status (default: prospect)",
-              },
-              industry: {
-                type: "string",
-                description: "Industry classification",
-              },
-              employees: {
-                type: "number",
-                description: "Number of employees",
-              },
-              revenue_estimate: {
-                type: "number",
-                description: "Estimated annual revenue in BRL",
-              },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  prospect: {
+                    id: prospect.id,
+                    cnpj: prospect.cnpj,
+                    company_name: prospect.companyName,
+                    status: prospect.status,
+                    industry: prospect.industry,
+                    employees: prospect.employees,
+                    revenue_estimate: prospect.revenueEstimate,
+                    opportunity_score: prospect.opportunityScore,
+                    created_at: prospect.createdAt,
+                  },
+                  message: `Prospect ${company_name} created successfully`,
+                },
+                null,
+                2
+              ),
             },
-            required: ["cnpj", "company_name"],
+          ],
+        };
+      }
+
+      throw new Error(`Unknown tool: ${name}`);
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                error: error.message,
+                tool: name,
+                timestamp: new Date().toISOString(),
+              },
+              null,
+              2
+            ),
           },
-        },
-      ],
-    };
+        ],
+        isError: true,
+      };
+    }
   }
 );
 
