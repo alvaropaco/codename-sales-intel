@@ -5,6 +5,7 @@ import { ProspectsDirectoryView } from '@/components/views/ProspectsDirectoryVie
 import { PipelineKanbanView } from '@/components/views/PipelineKanbanView';
 import { CreditRiskView } from '@/components/views/CreditRiskView';
 import { WorkflowsView } from '@/components/views/WorkflowsView';
+import { CnpjEnrichmentView } from '@/components/views/CnpjEnrichmentView';
 import { ProspectModal } from '@/components/modals/ProspectModal';
 import { ProspectDetailDrawer } from '@/components/modals/ProspectDetailDrawer';
 import { ActiveTab, Prospect, PipelineAnalytics, ForecastAnalytics } from '@/types';
@@ -104,6 +105,8 @@ export function App() {
       {activeTab === 'risk' && <CreditRiskView />}
 
       {activeTab === 'workflows' && <WorkflowsView />}
+
+      {activeTab === 'enrichment' && <CnpjEnrichmentView />}
 
       {activeTab === 'settings' && (
         <div className="p-8 max-w-xl mx-auto space-y-4 text-center">

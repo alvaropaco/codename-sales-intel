@@ -57,4 +57,32 @@ export interface WorkflowItem {
   createdAt: string;
 }
 
-export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'settings';
+export interface CnpjPartner {
+  name?: string;
+  qualification?: string;
+  country?: string;
+  ageRange?: string;
+  joinedAt?: string;
+}
+
+export interface EnrichedCnpjContact {
+  id: string;
+  cnpj: string;
+  companyName: string;
+  tradeName?: string | null;
+  industry?: string | null;
+  status: ProspectStatus;
+  opportunityScore: number;
+  email?: string | null;
+  phones: string[];
+  partners: CnpjPartner[];
+  openedAt?: string | null;
+  legalNature?: string | null;
+  enrichmentStatus: 'pending' | 'enriched' | 'unavailable' | 'error';
+  enrichmentSource?: string | null;
+  enrichmentError?: string | null;
+  enrichedAt?: string | null;
+  createdAt: string;
+}
+
+export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'settings';

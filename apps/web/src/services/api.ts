@@ -5,7 +5,8 @@ import {
   StatusBreakdownItem, 
   QualificationResult, 
   CreditRiskResult,
-  WorkflowItem 
+  WorkflowItem,
+  EnrichedCnpjContact
 } from '../types';
 
 const API_BASE = '/api';
@@ -145,4 +146,41 @@ export async function createWorkflow(data: { name: string; trigger: string; acti
     throw new Error(json.error || 'Erro ao criar workflow');
   }
   return json.workflow;
+}
+
+export async function fetchEnrichedCnpjContacts(filters: {
+  from?: string;
+  to?: string;
+  status?: string;
+} = {}): Promise<EnrichedCnpjContact[]> {
+  const params = new URLSearchParams();
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status);
+
+  const query = params.toString();
+  const res = await fetch(`${API_BASE}/enrichment/contacts${query ? `?${query}` : ''}`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao buscar enriquecimento CNPJ');
+  }
+  return json.data || [];
+}
+
+export async function extractCnpjContacts(data: {
+  from?: string;
+  to?: string;
+  refresh?: boolean;
+  limit?: number;
+} = {}): Promise<EnrichedCnpjContact[]> {
+  const res = await fetch(`${API_BASE}/enrichment/extract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao extrair contatos CNPJ');
+  }
+  return json.data || [];
 }

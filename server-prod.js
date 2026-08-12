@@ -7,6 +7,11 @@ const PORT = process.env.PORT || 3001;
 
 const path = require('path');
 const fs = require('fs');
+const {
+  enrichProspectWithCnpj,
+  listEnrichedProspects,
+  formatEnrichedProspect
+} = require('./cnpj-enrichment');
 
 // Middleware
 app.use(express.json());
@@ -70,7 +75,18 @@ app.get('/api/prospects', async (req, res) => {
         revenueEstimate: true,
         employees: true,
         industry: true,
+        tradeName: true,
+        cnpjEmail: true,
+        cnpjPhones: true,
+        cnpjPartners: true,
+        cnpjOpenedAt: true,
+        cnpjLegalNature: true,
+        enrichmentStatus: true,
+        enrichmentSource: true,
+        enrichmentError: true,
+        enrichedAt: true,
         createdAt: true,
+        updatedAt: true,
         orgId: true
       },
       orderBy: { createdAt: 'desc' }
@@ -129,11 +145,41 @@ app.post('/api/prospects', async (req, res) => {
       }
     });
 
-    res.json({ success: true, data: prospect, timestamp: new Date().toISOString() });
+    const enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
+
+    res.json({
+      success: true,
+      data: enrichedProspect,
+      enrichment: {
+        status: enrichedProspect.enrichmentStatus,
+        source: enrichedProspect.enrichmentSource,
+        error: enrichedProspect.enrichmentError
+      },
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     if (error.code === 'P2002') {
       return res.status(400).json({ success: false, error: 'CNPJ already exists' });
     }
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/prospects/:id/enrich - Enrich a specific prospect CNPJ from BrasilAPI
+app.post('/api/prospects/:id/enrich', async (req, res) => {
+  try {
+    const enriched = await enrichProspectWithCnpj(prisma, req.params.id);
+    res.json({
+      success: true,
+      data: enriched,
+      enrichment: {
+        status: enriched.enrichmentStatus,
+        source: enriched.enrichmentSource,
+        error: enriched.enrichmentError
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -243,6 +289,76 @@ app.get('/api/analytics/breakdown', async (req, res) => {
     res.json({
       success: true,
       data: { breakdown: formatted },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/enrichment/contacts - List enriched contacts, partners and phones by date range
+app.get('/api/enrichment/contacts', async (req, res) => {
+  try {
+    const contacts = await listEnrichedProspects(prisma, {
+      from: req.query.from,
+      to: req.query.to,
+      status: req.query.status,
+    });
+
+    res.json({
+      success: true,
+      data: contacts,
+      count: contacts.length,
+      filters: {
+        from: req.query.from || null,
+        to: req.query.to || null,
+        status: req.query.status || 'all'
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/enrichment/extract - Enrich CNPJs already present in PostgreSQL/MCP by createdAt time range
+app.post('/api/enrichment/extract', async (req, res) => {
+  try {
+    const { from, to, refresh = false, limit = 25 } = req.body || {};
+    const where = {};
+
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = new Date(from);
+      if (to) where.createdAt.lte = new Date(to);
+    }
+
+    if (!refresh) {
+      where.OR = [
+        { enrichmentStatus: 'pending' },
+        { enrichmentStatus: 'error' },
+        { enrichmentStatus: 'unavailable' },
+        { enrichedAt: null }
+      ];
+    }
+
+    const prospects = await prisma.prospect.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Number(limit) || 25, 50),
+    });
+
+    const enriched = [];
+    for (const prospect of prospects) {
+      // Sequential by design to avoid hammering the public CNPJ service.
+      enriched.push(await enrichProspectWithCnpj(prisma, prospect));
+    }
+
+    res.json({
+      success: true,
+      processed: enriched.length,
+      data: enriched.map(formatEnrichedProspect),
+      filters: { from: from || null, to: to || null, refresh: Boolean(refresh) },
       timestamp: new Date().toISOString()
     });
   } catch (error) {

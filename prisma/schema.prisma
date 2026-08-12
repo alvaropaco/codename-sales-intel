@@ -38,11 +38,22 @@ model Prospect {
   id                    String   @id @default(cuid())
   cnpj                  String   @unique
   companyName           String
+  tradeName             String?
   status                String   @default("prospect") // prospect, qualified, lead
   opportunityScore      Int      @default(0)
   revenueEstimate       Int?
   employees             Int?
   industry              String?
+  cnpjEmail             String?
+  cnpjPhones            Json?
+  cnpjPartners          Json?
+  cnpjRawData           Json?
+  cnpjOpenedAt          DateTime?
+  cnpjLegalNature       String?
+  enrichmentStatus      String   @default("pending") // pending, enriched, unavailable, error
+  enrichmentSource      String?
+  enrichmentError       String?
+  enrichedAt            DateTime?
   activitiesCount       Int      @default(0)
   lastContact           DateTime?
   qualificationStage    String   @default("initial_contact")
@@ -56,6 +67,9 @@ model Prospect {
   
   @@index([orgId])
   @@index([status])
+  @@index([createdAt])
+  @@index([enrichedAt])
+  @@index([enrichmentStatus])
 }
 
 model Activity {

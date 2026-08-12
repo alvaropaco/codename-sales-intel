@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   Moon,
+  Network,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'pipeline' as ActiveTab, label: 'Sales Pipeline', icon: Kanban, badge: 'Live' },
     { id: 'risk' as ActiveTab, label: 'Credit Risk AI', icon: ShieldCheck, badge: 'AI' },
     { id: 'workflows' as ActiveTab, label: 'Workflow Automation', icon: Workflow, badge: null },
+    { id: 'enrichment' as ActiveTab, label: 'CNPJ Enrichment', icon: Network, badge: 'Data' },
   ];
 
   const appItems = [

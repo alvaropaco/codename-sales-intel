@@ -42,6 +42,10 @@ const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
     title: 'Workflow Automation',
     subtitle: 'Triggers automáticos para cadências e regras de qualificação.',
   },
+  enrichment: {
+    title: 'CNPJ Enrichment',
+    subtitle: 'Extração de sócios, emails e telefones dos CNPJs via MCP/PostgreSQL.',
+  },
   settings: {
     title: 'Settings',
     subtitle: 'Configurações de ambiente, multi-tenancy e integrações MCP.',

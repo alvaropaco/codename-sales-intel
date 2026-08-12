@@ -26,6 +26,11 @@ const {
 } = require("@modelcontextprotocol/sdk/types.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { PrismaClient } = require("@prisma/client");
+const {
+  enrichProspectWithCnpj,
+  listEnrichedProspects,
+  formatEnrichedProspect,
+} = require("./cnpj-enrichment");
 
 // Initialize Prisma client
 const prisma = new PrismaClient();
@@ -76,6 +81,13 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
         uri: "analytics://breakdown",
         name: "Status Breakdown",
         description: "Get prospect count breakdown by status",
+        mimeType: "application/json",
+      },
+      {
+        uri: "cnpj_enrichment://contacts",
+        name: "CNPJ Enriched Contacts",
+        description:
+          "List enriched socios, emails and phones for CNPJs with optional ?from=&to=&status= filters",
         mimeType: "application/json",
       },
     ],
@@ -235,6 +247,39 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             text: JSON.stringify(
               {
                 breakdown: formatted,
+                timestamp: new Date().toISOString(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    if (uri.startsWith("cnpj_enrichment://contacts")) {
+      const queryString = uri.includes("?") ? uri.split("?")[1] : "";
+      const params = new URLSearchParams(queryString);
+      const contacts = await listEnrichedProspects(prisma, {
+        from: params.get("from"),
+        to: params.get("to"),
+        status: params.get("status"),
+      });
+
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                count: contacts.length,
+                contacts,
+                filters: {
+                  from: params.get("from"),
+                  to: params.get("to"),
+                  status: params.get("status") || "all",
+                },
                 timestamp: new Date().toISOString(),
               },
               null,
@@ -513,7 +558,7 @@ const toolsHandler = async () => {
       },
       {
         name: "create_prospect",
-        description: "Create a new prospect record in the database",
+        description: "Create a new prospect record in the database and automatically enrich its CNPJ from BrasilAPI when available",
         inputSchema: {
           type: "object",
           properties: {
@@ -545,6 +590,44 @@ const toolsHandler = async () => {
             },
           },
           required: ["cnpj", "company_name"],
+        },
+      },
+      {
+        name: "enrich_cnpj",
+        description:
+          "Enrich one existing prospect CNPJ with socios, email and phones from BrasilAPI and persist the result in PostgreSQL",
+        inputSchema: {
+          type: "object",
+          properties: {
+            prospect_id: {
+              type: "string",
+              description: "Existing SalesIntel prospect ID to enrich",
+            },
+          },
+          required: ["prospect_id"],
+        },
+      },
+      {
+        name: "extract_cnpj_contacts",
+        description:
+          "Extract/list enriched socios, emails and phones for CNPJs with optional enrichment time-range filters",
+        inputSchema: {
+          type: "object",
+          properties: {
+            from: {
+              type: "string",
+              description: "Optional ISO start date for enrichedAt filter",
+            },
+            to: {
+              type: "string",
+              description: "Optional ISO end date for enrichedAt filter",
+            },
+            status: {
+              type: "string",
+              enum: ["all", "pending", "enriched", "unavailable", "error"],
+              description: "Optional enrichment status filter",
+            },
+          },
         },
       },
     ],
@@ -704,6 +787,8 @@ server.setRequestHandler(
           },
         });
 
+        const enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
+
         return {
           content: [
             {
@@ -712,17 +797,71 @@ server.setRequestHandler(
                 {
                   success: true,
                   prospect: {
-                    id: prospect.id,
-                    cnpj: prospect.cnpj,
-                    company_name: prospect.companyName,
-                    status: prospect.status,
-                    industry: prospect.industry,
-                    employees: prospect.employees,
-                    revenue_estimate: prospect.revenueEstimate,
-                    opportunity_score: prospect.opportunityScore,
-                    created_at: prospect.createdAt,
+                    id: enrichedProspect.id,
+                    cnpj: enrichedProspect.cnpj,
+                    company_name: enrichedProspect.companyName,
+                    trade_name: enrichedProspect.tradeName,
+                    status: enrichedProspect.status,
+                    industry: enrichedProspect.industry,
+                    employees: enrichedProspect.employees,
+                    revenue_estimate: enrichedProspect.revenueEstimate,
+                    opportunity_score: enrichedProspect.opportunityScore,
+                    email: enrichedProspect.cnpjEmail,
+                    phones: enrichedProspect.cnpjPhones || [],
+                    partners: enrichedProspect.cnpjPartners || [],
+                    enrichment_status: enrichedProspect.enrichmentStatus,
+                    enrichment_source: enrichedProspect.enrichmentSource,
+                    enrichment_error: enrichedProspect.enrichmentError,
+                    enriched_at: enrichedProspect.enrichedAt,
+                    created_at: enrichedProspect.createdAt,
                   },
-                  message: `Prospect ${company_name} created successfully`,
+                  message: `Prospect ${enrichedProspect.companyName} created and enrichment attempted`,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      if (name === "enrich_cnpj") {
+        const { prospect_id } = args;
+        const enriched = await enrichProspectWithCnpj(prisma, prospect_id);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  prospect: formatEnrichedProspect(enriched),
+                  timestamp: new Date().toISOString(),
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      if (name === "extract_cnpj_contacts") {
+        const { from, to, status } = args || {};
+        const contacts = await listEnrichedProspects(prisma, { from, to, status });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  count: contacts.length,
+                  contacts,
+                  filters: { from: from || null, to: to || null, status: status || "all" },
+                  timestamp: new Date().toISOString(),
                 },
                 null,
                 2
