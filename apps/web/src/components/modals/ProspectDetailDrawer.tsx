@@ -73,7 +73,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
             <div className="space-y-4 text-xs">
               <div className="space-y-1">
                 <span className="text-muted-foreground font-semibold">Segmento de atuação</span>
-                <p className="font-medium text-foreground">{prospect.industry || 'Software & Serviços'}</p>
+                <p className="font-medium text-foreground">{prospect.industry || 'Segmento a confirmar'}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -89,7 +89,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                   <span className="text-muted-foreground font-semibold">Faturamento Est.</span>
                   <p className="font-medium text-foreground flex items-center gap-1">
                     <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
-                    {formatCurrency(prospect.revenueEstimate || 5000000)}
+                    {prospect.revenueEstimate ? formatCurrency(prospect.revenueEstimate) : 'A confirmar'}
                   </p>
                 </div>
               </div>

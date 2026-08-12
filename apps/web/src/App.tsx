@@ -23,12 +23,12 @@ export function App() {
     prospects: 0,
     leads: 0,
     qualification_rate: 0,
-    closure_rate: 0.83,
+    closure_rate: 0,
   });
   const [forecast, setForecast] = useState<ForecastAnalytics>({
-    this_month: 125000,
-    next_month: 185000,
-    q3_projection: 450000,
+    this_month: 0,
+    next_month: 0,
+    q3_projection: 0,
   });
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -110,7 +110,7 @@ export function App() {
         <div className="p-8 max-w-xl mx-auto space-y-4 text-center">
           <h2 className="text-xl font-bold text-foreground">Preferências SalesIntel</h2>
           <p className="text-xs text-muted-foreground">
-            Ajuste segmentos de interesse, regiões prioritárias e critérios comerciais da organização SalesIntel Demo.
+            Ajuste segmentos de interesse, regiões prioritárias e critérios comerciais da organização.
           </p>
         </div>
       )}

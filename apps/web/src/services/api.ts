@@ -91,9 +91,9 @@ export async function fetchForecastAnalytics(): Promise<ForecastAnalytics> {
     return json.data;
   } catch (error) {
     return {
-      this_month: 125000,
-      next_month: 185000,
-      q3_projection: 450000,
+      this_month: 0,
+      next_month: 0,
+      q3_projection: 0,
     };
   }
 }

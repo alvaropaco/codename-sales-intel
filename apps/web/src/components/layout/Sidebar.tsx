@@ -72,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-xs font-black text-white">AP</div>
             <div>
               <p className="text-xs font-black text-slate-950 dark:text-white">Álvaro Paco</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">SalesIntel Demo</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">Organização</p>
             </div>
           </div>
           <ChevronDown className="h-4 w-4 text-slate-400" />

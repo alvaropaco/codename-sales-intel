@@ -33,27 +33,28 @@ app.get('/', async (req, res) => {
   res.json({ success: true, message: 'SalesIntel Dashboard' });
 });
 
-// Initialize database with default organization
+// Validate database connection without creating demo data
 async function initDatabase() {
   try {
-    let org = await prisma.organization.findFirst();
-    
-    if (!org) {
-      console.log('Creating default organization...');
-      org = await prisma.organization.create({
-        data: {
-          name: 'SalesIntel Demo',
-          cnpj: '00.000.000/0000-00'
-        }
-      });
-      console.log('✅ Default organization created');
-    }
-    
-    return org.id;
+    await prisma.$connect();
+    console.log('✅ Database connection ready');
+    return null;
   } catch (error) {
     console.error('Database initialization error:', error);
     process.exit(1);
   }
+}
+
+async function getOrCreateOrganization(orgId) {
+  if (orgId) return orgId;
+
+  let org = await prisma.organization.findFirst();
+  if (!org) {
+    org = await prisma.organization.create({
+      data: { name: 'Organização principal' }
+    });
+  }
+  return org.id;
 }
 
 let DEFAULT_ORG_ID;
@@ -129,8 +130,8 @@ app.post('/api/prospects', async (req, res) => {
       return res.status(400).json({ success: false, error: 'CNPJ and company name required' });
     }
 
-    // Use provided orgId or default
-    const targetOrgId = orgId || DEFAULT_ORG_ID;
+    // Use provided orgId or create an organization only when the user saves real data
+    const targetOrgId = await getOrCreateOrganization(orgId);
 
     const prospect = await prisma.prospect.create({
       data: {

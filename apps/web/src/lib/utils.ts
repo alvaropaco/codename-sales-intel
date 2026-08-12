@@ -16,7 +16,7 @@ export function formatCNPJ(cnpj: string | null | undefined): string {
 }
 
 /**
- * Format BRL Currency (e.g. 5000000 -> R$ 5.000.000,00)
+ * Format BRL Currency
  */
 export function formatCurrency(value: number | null | undefined): string {
   if (value === undefined || value === null) return "R$ 0";

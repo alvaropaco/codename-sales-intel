@@ -18,10 +18,10 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
 }) => {
   const [cnpj, setCnpj] = useState('');
   const [companyName, setCompanyName] = useState('');
-  const [industry, setIndustry] = useState('Software');
+  const [industry, setIndustry] = useState('');
   const [employees, setEmployees] = useState('100');
   const [status, setStatus] = useState<ProspectStatus>('prospect');
-  const [revenueEstimate, setRevenueEstimate] = useState('2500000');
+  const [revenueEstimate, setRevenueEstimate] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -42,7 +42,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
         industry,
         employees: parseInt(employees) || 50,
         status,
-        revenueEstimate: parseInt(revenueEstimate) || 1000000,
+        revenueEstimate: parseInt(revenueEstimate) || 0,
       });
       onSuccess();
       onClose();
@@ -107,7 +107,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Segmento de atuação</label>
               <Input
-                placeholder="Software / Logística / Varejo"
+                placeholder="Segmento, logística, varejo..."
                 value={industry}
                 onChange={(e) => setIndustry(e.target.value)}
                 className="bg-secondary/40 text-xs"
@@ -131,7 +131,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
               <label className="text-xs font-semibold text-muted-foreground">Estimativa de Receita (R$)</label>
               <Input
                 type="number"
-                placeholder="5000000"
+                placeholder="Valor estimado"
                 value={revenueEstimate}
                 onChange={(e) => setRevenueEstimate(e.target.value)}
                 className="bg-secondary/40 text-xs"

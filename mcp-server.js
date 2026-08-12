@@ -435,11 +435,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Prospect with CNPJ ${cnpj} already exists`);
       }
 
-      // Get or create default organization
+      // Get or create an organization only when saving real data
       let org = await prisma.organization.findFirst();
       if (!org) {
         org = await prisma.organization.create({
-          data: { name: "Default Organization" },
+          data: { name: "Organização principal" },
         });
       }
 
@@ -765,11 +765,11 @@ server.setRequestHandler(
           throw new Error(`Prospect with CNPJ ${cnpj} already exists`);
         }
 
-        // Get or create default organization
+        // Get or create an organization only when saving real data
         let org = await prisma.organization.findFirst();
         if (!org) {
           org = await prisma.organization.create({
-            data: { name: "Default Organization" },
+            data: { name: "Organização principal" },
           });
         }
 

@@ -529,7 +529,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
           <CardContent className="space-y-4 p-5">
             <form onSubmit={handleQuickQualify} className="space-y-3">
               <Input
-                placeholder="Ex: Mercado Livre Brasil LTDA"
+                placeholder="Ex: empresa do segmento escolhido"
                 value={quickQualifyName}
                 onChange={(e) => setQuickQualifyName(e.target.value)}
                 className="h-11 rounded-xl bg-slate-50 text-xs dark:bg-white/[0.04]"

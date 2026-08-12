@@ -57,7 +57,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         {columns.map((col) => {
           const colProspects = prospects.filter((p) => p.status === col.id);
-          const totalValue = colProspects.reduce((sum, p) => sum + (p.revenueEstimate || 50000), 0);
+          const totalValue = colProspects.reduce((sum, p) => sum + (p.revenueEstimate || 0), 0);
 
           return (
             <div 
@@ -101,9 +101,9 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between text-xs text-slate-600 dark:text-muted-foreground pt-2 border-t border-slate-100 dark:border-border/40 font-medium">
-                          <span>{p.industry || 'Tecnologia'}</span>
+                          <span>{p.industry || 'Segmento a confirmar'}</span>
                           <span className="font-bold text-slate-900 dark:text-foreground">
-                            {formatCurrency(p.revenueEstimate || 150000)}
+                            {p.revenueEstimate ? formatCurrency(p.revenueEstimate) : 'A confirmar'}
                           </span>
                         </div>
 
