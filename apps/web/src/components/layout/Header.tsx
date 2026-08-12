@@ -5,9 +5,9 @@ import {
   ChevronRight,
   Command,
   Menu,
-  Plus,
   Search,
   Sparkles,
+  Target,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,32 +23,32 @@ interface HeaderProps {
 
 const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
   dashboard: {
-    title: 'CRM Dashboard',
-    subtitle: '16 Jul 2026 - 12 Aug 2026 · visão executiva do funil SalesIntel.',
+    title: 'Visão comercial',
+    subtitle: '16 Jul 2026 - 12 Ago 2026 · prioridades, oportunidades e próximos passos de venda.',
   },
   prospects: {
-    title: 'Leads & CNPJs',
-    subtitle: 'Base completa de empresas qualificadas e persistidas no PostgreSQL.',
+    title: 'Descobrir empresas',
+    subtitle: 'Empresas sugeridas a partir dos segmentos e perfis comerciais definidos no onboarding.',
   },
   pipeline: {
-    title: 'Sales Pipeline',
-    subtitle: 'Acompanhamento kanban de oportunidades e progressão comercial.',
+    title: 'Pipeline de vendas',
+    subtitle: 'Acompanhe oportunidades, prioridades e avanço no funil comercial.',
   },
   risk: {
-    title: 'Credit Risk & Intelligence Engine',
-    subtitle: 'Avaliação automatizada de risco financeiro e scoring de CNPJ.',
+    title: 'Risco e potencial',
+    subtitle: 'Avalie saúde financeira e aderência comercial antes de avançar uma oportunidade.',
   },
   workflows: {
-    title: 'Workflow Automation',
-    subtitle: 'Triggers automáticos para cadências e regras de qualificação.',
+    title: 'Ações automáticas',
+    subtitle: 'Regras comerciais para priorizar contatos, cadências e distribuição de oportunidades.',
   },
   enrichment: {
-    title: 'CNPJ Enrichment',
-    subtitle: 'Extração de sócios, emails e telefones dos CNPJs via MCP/PostgreSQL.',
+    title: 'Inteligência comercial',
+    subtitle: 'Informações da empresa, contatos e sinais úteis para transformar leads em oportunidades.',
   },
   settings: {
-    title: 'Settings',
-    subtitle: 'Configurações de ambiente, multi-tenancy e integrações MCP.',
+    title: 'Preferências',
+    subtitle: 'Ajustes da organização, segmentos de interesse e preferências comerciais.',
   },
 };
 
@@ -67,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
-            aria-label="Open dashboard navigation"
+            aria-label="Abrir navegação principal"
             aria-controls="mobile-dashboard-navigation"
             onClick={() => document.getElementById('mobile-dashboard-navigation')?.scrollIntoView({ block: 'nearest', inline: 'start' })}
             className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 lg:hidden dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300"
@@ -92,7 +92,7 @@ export const Header: React.FC<HeaderProps> = ({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               type="text"
-              placeholder="Search leads, CNPJ, opportunities..."
+              placeholder="Buscar por nicho, cidade, segmento ou oportunidade..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-10 rounded-xl border-slate-200 bg-slate-50 pl-9 pr-20 text-xs font-medium dark:border-white/10 dark:bg-white/[0.04]"
@@ -111,15 +111,15 @@ export const Header: React.FC<HeaderProps> = ({
             className="hidden h-10 gap-2 rounded-xl border-slate-200 bg-white text-xs font-bold dark:border-white/10 dark:bg-white/[0.03] sm:inline-flex"
           >
             <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
-            AI Qualify
+            Analisar potencial
           </Button>
           <Button
             onClick={onOpenCreateModal}
             size="sm"
             className="h-10 gap-2 rounded-xl bg-slate-950 px-4 text-xs font-bold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
           >
-            <Plus className="h-4 w-4" />
-            New Lead
+            <Target className="h-4 w-4" />
+            Descobrir empresas
           </Button>
           <button className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white">
             <Bell className="h-4 w-4" />

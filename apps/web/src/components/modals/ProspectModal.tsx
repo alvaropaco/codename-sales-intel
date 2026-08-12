@@ -47,7 +47,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Erro ao criar prospecto no banco de dados');
+      setError(err.message || 'Não foi possível salvar esta empresa');
     } finally {
       setLoading(false);
     }
@@ -62,8 +62,8 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
               <Building2 className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-foreground">Novo Prospecto CNPJ</h3>
-              <p className="text-xs text-muted-foreground">Cadastre no banco de dados PostgreSQL</p>
+              <h3 className="text-base font-bold text-foreground">Adicionar empresa à lista</h3>
+              <p className="text-xs text-muted-foreground">Use apenas quando quiser acompanhar uma empresa específica.</p>
             </div>
           </div>
           <button 
@@ -83,7 +83,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">CNPJ *</label>
+              <label className="text-xs font-semibold text-muted-foreground">Identificação da empresa *</label>
               <Input
                 placeholder="12.345.678/0001-99"
                 value={cnpj}
@@ -93,7 +93,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Razão Social / Nome *</label>
+              <label className="text-xs font-semibold text-muted-foreground">Nome da empresa *</label>
               <Input
                 placeholder="Nome da Empresa LTDA"
                 value={companyName}
@@ -105,7 +105,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Setor / Indústria</label>
+              <label className="text-xs font-semibold text-muted-foreground">Segmento de atuação</label>
               <Input
                 placeholder="Software / Logística / Varejo"
                 value={industry}
@@ -145,9 +145,9 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
                 onChange={(e) => setStatus(e.target.value as ProspectStatus)}
                 className="h-10 w-full rounded-lg border border-border/80 bg-secondary/50 px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="lead">Lead</option>
-                <option value="prospect">Prospect</option>
-                <option value="qualified">Qualified</option>
+                <option value="lead">Nova oportunidade</option>
+                <option value="prospect">Em avaliação</option>
+                <option value="qualified">Pronta para contato</option>
               </select>
             </div>
           </div>
@@ -157,7 +157,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
               Cancelar
             </Button>
             <Button type="submit" disabled={loading} variant="gradient" size="sm" className="text-xs gap-1.5">
-              {loading ? 'Salvando...' : 'Salvar no PostgreSQL'}
+              {loading ? 'Salvando...' : 'Salvar empresa'}
             </Button>
           </div>
         </form>

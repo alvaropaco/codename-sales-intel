@@ -50,18 +50,17 @@ interface ExecutiveDashboardViewProps {
   prospects: Prospect[];
   analytics: PipelineAnalytics;
   forecast: ForecastAnalytics;
-  onOpenCreateModal: () => void;
   onSelectProspect: (prospect: Prospect) => void;
   onNavigateToTab: (tab: any) => void;
 }
 
 const statusConfig = {
-  qualified: { label: 'Qualified', color: '#10b981', badge: 'qualified' as const, weight: 0.72 },
+  qualified: { label: 'Pronto para contato', color: '#10b981', badge: 'qualified' as const, weight: 0.72 },
   prospect: { label: 'Lead', color: '#6366f1', badge: 'prospect' as const, weight: 0.38 },
-  lead: { label: 'New', color: '#3b82f6', badge: 'lead' as const, weight: 0.18 },
-  contacted: { label: 'Contacted', color: '#f59e0b', badge: 'prospect' as const, weight: 0.48 },
-  proposal: { label: 'Proposal', color: '#8b5cf6', badge: 'closed' as const, weight: 0.82 },
-  closed: { label: 'Closed Won', color: '#14b8a6', badge: 'closed' as const, weight: 1 },
+  lead: { label: 'Nova oportunidade', color: '#3b82f6', badge: 'lead' as const, weight: 0.18 },
+  contacted: { label: 'Contato iniciado', color: '#f59e0b', badge: 'prospect' as const, weight: 0.48 },
+  proposal: { label: 'Proposta enviada', color: '#8b5cf6', badge: 'closed' as const, weight: 0.82 },
+  closed: { label: 'Cliente ganho', color: '#14b8a6', badge: 'closed' as const, weight: 1 },
 };
 
 const getInitials = (name: string) =>
@@ -136,7 +135,6 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
   prospects,
   analytics,
   forecast,
-  onOpenCreateModal,
   onSelectProspect,
   onNavigateToTab,
 }) => {
@@ -204,9 +202,9 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
       .sort((a, b) => safeNumber(b.opportunityScore) - safeNumber(a.opportunityScore))
       .slice(0, 3)
       .map((p, index) => ({
-        title: index === 0 ? `Follow up executivo com ${p.companyName}` : index === 1 ? `Preparar proposta para ${p.companyName}` : `Validar dados CNPJ de ${p.companyName}`,
-        subtitle: `${p.industry || 'Empresa'} · Score ${p.opportunityScore}/100`,
-        priority: index === 0 ? 'High' : index === 1 ? 'Medium' : 'Low',
+        title: index === 0 ? `Retomar conversa com ${p.companyName}` : index === 1 ? `Preparar proposta para ${p.companyName}` : `Confirmar informações de ${p.companyName}`,
+        subtitle: `${p.industry || 'Empresa'} · Potencial ${p.opportunityScore}/100`,
+        priority: index === 0 ? 'Alta' : index === 1 ? 'Média' : 'Baixa',
         due: index === 0 ? 'Hoje' : index === 1 ? 'Amanhã' : 'Esta semana',
         prospect: p,
       }));
@@ -242,26 +240,26 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
             <div className="max-w-3xl space-y-4">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300" variant="outline">
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Enterprise CNPJ Intelligence
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Inteligência comercial
                 </Badge>
                 <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300" variant="outline">
-                  PostgreSQL live data
+                  Dados atualizados
                 </Badge>
               </div>
               <div>
                 <h1 className="max-w-4xl text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-5xl">
-                  CRM executivo para inteligência comercial, forecast e qualificação CNPJ.
+                  Descubra empresas com potencial de compra e priorize as melhores oportunidades.
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-                  Uma experiência enterprise com dados reais do pipeline, scoring de oportunidade e ações de vendas priorizadas pela base persistida no PostgreSQL.
+                  Acompanhe sinais comerciais, potencial de receita e próximos passos para transformar empresas em oportunidades de venda.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Button onClick={onOpenCreateModal} className="h-11 gap-2 rounded-xl bg-slate-950 px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200">
-                  <Plus className="h-4 w-4" /> Novo prospecto
+                <Button onClick={() => onNavigateToTab('prospects')} className="h-11 gap-2 rounded-xl bg-slate-950 px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200">
+                  <Plus className="h-4 w-4" /> Descobrir empresas
                 </Button>
                 <Button onClick={() => onNavigateToTab('prospects')} variant="outline" className="h-11 gap-2 rounded-xl border-slate-200 bg-white/70 px-5 dark:border-white/10 dark:bg-white/5">
-                  Ver base de CNPJs <ChevronRight className="h-4 w-4" />
+                  Ver empresas sugeridas <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -307,8 +305,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                   <TrendingUp className="h-4 w-4" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold">Forecast Q3</p>
-                  <p className="text-[11px] text-slate-400">Projeção via API real</p>
+                  <p className="text-xs font-bold">Projeção do trimestre</p>
+                  <p className="text-[11px] text-slate-400">Estimativa de receita potencial</p>
                 </div>
               </div>
               <p className="text-sm font-black">{formatCurrency(forecast.q3_projection)}</p>
@@ -318,9 +316,9 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="Clientes alvo" value={analytics.total_prospects || prospects.length} subtitle="Contas persistidas" trend="Live" icon={Building2} tone="indigo" />
-        <MetricCard title="Deals qualificados" value={analytics.qualified} subtitle="Prontos para venda" trend={`${derived.qRate}%`} icon={Trophy} tone="emerald" />
-        <MetricCard title="Receita potencial" value={formatCurrency(derived.totalRevenue)} subtitle="Soma da base atual" trend="DB" icon={Landmark} tone="sky" />
+        <MetricCard title="Clientes alvo" value={analytics.total_prospects || prospects.length} subtitle="Empresas sugeridas" trend="Atual" icon={Building2} tone="indigo" />
+        <MetricCard title="Oportunidades qualificadas" value={analytics.qualified} subtitle="Prontas para venda" trend={`${derived.qRate}%`} icon={Trophy} tone="emerald" />
+        <MetricCard title="Receita potencial" value={formatCurrency(derived.totalRevenue)} subtitle="Soma das oportunidades" trend="Previsto" icon={Landmark} tone="sky" />
         <MetricCard title="Em prospecção" value={analytics.prospects + analytics.leads} subtitle="Aguardando maturação" trend="Ativo" icon={Users} tone="amber" />
       </section>
 
@@ -328,11 +326,11 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 pb-4 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-black">Revenue Forecast</CardTitle>
-              <CardDescription>Receita real da base e projeções retornadas pela API.</CardDescription>
+              <CardTitle className="text-base font-black">Previsão de receita</CardTitle>
+              <CardDescription>Potencial da carteira atual e projeções para os próximos períodos.</CardDescription>
             </div>
             <Button variant="outline" size="sm" className="gap-2 text-xs">
-              <Download className="h-3.5 w-3.5" /> Export
+              <Download className="h-3.5 w-3.5" /> Baixar
             </Button>
           </CardHeader>
           <CardContent className="p-6">
@@ -361,8 +359,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
 
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="border-b border-slate-100 dark:border-white/10">
-            <CardTitle className="text-base font-black">Leads by Industry</CardTitle>
-            <CardDescription>Segmentos calculados a partir dos prospectos reais.</CardDescription>
+            <CardTitle className="text-base font-black">Oportunidades por segmento</CardTitle>
+            <CardDescription>Onde há mais empresas com aderência ao seu perfil comercial.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5 p-6">
             <div className="h-[210px] w-full">
@@ -399,11 +397,11 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-black">Tasks</CardTitle>
-              <CardDescription>Próximas ações priorizadas por score e valor.</CardDescription>
+              <CardTitle className="text-base font-black">Próximas ações</CardTitle>
+              <CardDescription>Recomendações priorizadas por potencial e valor comercial.</CardDescription>
             </div>
             <Button onClick={() => onNavigateToTab('workflows')} size="sm" variant="outline" className="gap-2 text-xs">
-              <Plus className="h-3.5 w-3.5" /> Add Task
+              <Plus className="h-3.5 w-3.5" /> Nova ação
             </Button>
           </CardHeader>
           <CardContent className="space-y-3 p-5">
@@ -416,7 +414,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex gap-3">
                     <div className="mt-0.5 rounded-xl bg-white p-2 text-indigo-600 shadow-sm dark:bg-white/10 dark:text-indigo-300">
-                      {task.priority === 'High' ? <Flag className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
+                      {task.priority === 'Alta' ? <Flag className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
                     </div>
                     <div>
                       <p className="text-sm font-bold text-slate-950 dark:text-white">{task.title}</p>
@@ -424,7 +422,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                     </div>
                   </div>
                   <div className="text-right">
-                    <Badge variant={task.priority === 'High' ? 'destructive' : 'outline'} className="text-[10px]">{task.priority}</Badge>
+                    <Badge variant={task.priority === 'Alta' ? 'destructive' : 'outline'} className="text-[10px]">{task.priority}</Badge>
                     <p className="mt-2 text-[11px] font-medium text-slate-500">{task.due}</p>
                   </div>
                 </div>
@@ -436,8 +434,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-black">Sales Pipeline</CardTitle>
-              <CardDescription>Deals atuais por estágio do funil comercial.</CardDescription>
+              <CardTitle className="text-base font-black">Pipeline de vendas</CardTitle>
+              <CardDescription>Oportunidades atuais por estágio do funil comercial.</CardDescription>
             </div>
             <Button onClick={() => onNavigateToTab('pipeline')} variant="ghost" size="sm" className="gap-1 text-xs text-indigo-600 dark:text-indigo-300">
               Pipeline <ChevronRight className="h-3.5 w-3.5" />
@@ -452,7 +450,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                     <span className="text-sm font-bold text-slate-900 dark:text-white">{stage.label}</span>
                   </div>
                   <span className="text-xs font-medium text-slate-500">
-                    {stage.count} deals · {formatCurrency(stage.revenue)}
+                    {stage.count} oportunidades · {formatCurrency(stage.revenue)}
                   </span>
                 </div>
                 <ProgressBar value={stage.pct} />
@@ -466,8 +464,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-black">Leads</CardTitle>
-              <CardDescription>Contas de maior prioridade sincronizadas com PostgreSQL.</CardDescription>
+              <CardTitle className="text-base font-black">Empresas prioritárias</CardTitle>
+              <CardDescription>Contas com maior potencial para abordagem comercial.</CardDescription>
             </div>
             <Button onClick={() => onNavigateToTab('prospects')} variant="outline" size="sm" className="text-xs">Ver todos</Button>
           </CardHeader>
@@ -477,10 +475,10 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                 <thead className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-[0.16em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03]">
                   <tr>
                     <th className="px-6 py-3.5 font-black">Empresa</th>
-                    <th className="px-6 py-3.5 font-black">Status</th>
+                    <th className="px-6 py-3.5 font-black">Momento</th>
                     <th className="px-6 py-3.5 font-black">CNPJ</th>
                     <th className="px-6 py-3.5 font-black">Valor</th>
-                    <th className="px-6 py-3.5 font-black">Score</th>
+                    <th className="px-6 py-3.5 font-black">Potencial</th>
                     <th className="px-6 py-3.5 text-right font-black">Ação</th>
                   </tr>
                 </thead>
@@ -525,8 +523,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
 
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="border-b border-slate-100 dark:border-white/10">
-            <CardTitle className="flex items-center gap-2 text-base font-black"><Zap className="h-4 w-4 text-indigo-500" /> Qualificador Express AI</CardTitle>
-            <CardDescription>Use o endpoint real de inteligência para simular qualificação.</CardDescription>
+            <CardTitle className="flex items-center gap-2 text-base font-black"><Zap className="h-4 w-4 text-indigo-500" /> Análise rápida de potencial</CardTitle>
+            <CardDescription>Informe uma empresa e veja se ela combina com seu perfil comercial.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 p-5">
             <form onSubmit={handleQuickQualify} className="space-y-3">
@@ -537,7 +535,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                 className="h-11 rounded-xl bg-slate-50 text-xs dark:bg-white/[0.04]"
               />
               <Button type="submit" disabled={isQualifying || !quickQualifyName.trim()} className="h-11 w-full gap-2 rounded-xl bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700">
-                <Sparkles className="h-4 w-4" /> {isQualifying ? 'Analisando...' : 'Executar análise AI'}
+                <Sparkles className="h-4 w-4" /> {isQualifying ? 'Analisando...' : 'Analisar potencial'}
               </Button>
             </form>
             {quickResult ? (
@@ -548,7 +546,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                 </div>
                 <div className="mt-4 flex items-end justify-between">
                   <div>
-                    <p className="text-[11px] text-slate-500">Score oportunidade</p>
+                    <p className="text-[11px] text-slate-500">Potencial da oportunidade</p>
                     <p className="text-3xl font-black text-slate-950 dark:text-white">{quickResult.score}/100</p>
                   </div>
                   <div className="text-right">
@@ -563,7 +561,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                   <ShieldCheck className="h-8 w-8 text-emerald-500" />
                   <div>
                     <p className="text-sm font-bold text-slate-950 dark:text-white">Pronto para análise</p>
-                    <p className="text-xs text-slate-500">Sem dados mockados. Resultado vem do backend.</p>
+                    <p className="text-xs text-slate-500">Informe uma empresa para receber uma recomendação comercial.</p>
                   </div>
                 </div>
               </div>

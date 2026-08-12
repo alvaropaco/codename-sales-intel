@@ -30,12 +30,12 @@ export const Layout: React.FC<LayoutProps> = ({
   onOpenQualifyModal,
 }) => {
   const mobileNavItems: Array<{ id: ActiveTab; label: string; badge?: string | null }> = [
-    { id: 'dashboard', label: 'CRM Dashboard' },
-    { id: 'prospects', label: 'Leads & CNPJs', badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
-    { id: 'pipeline', label: 'Sales Pipeline', badge: 'Live' },
-    { id: 'risk', label: 'Credit Risk AI', badge: 'AI' },
-    { id: 'workflows', label: 'Workflow Automation' },
-    { id: 'enrichment', label: 'CNPJ Enrichment', badge: 'Data' },
+    { id: 'dashboard', label: 'Visão comercial' },
+    { id: 'prospects', label: 'Descobrir empresas', badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
+    { id: 'pipeline', label: 'Pipeline de vendas', badge: 'Ao vivo' },
+    { id: 'risk', label: 'Risco e potencial' },
+    { id: 'workflows', label: 'Ações automáticas' },
+    { id: 'enrichment', label: 'Inteligência comercial' },
   ];
 
   return (
@@ -55,7 +55,7 @@ export const Layout: React.FC<LayoutProps> = ({
           onOpenCreateModal={onOpenCreateModal}
           onOpenQualifyModal={onOpenQualifyModal}
         />
-        <nav id="mobile-dashboard-navigation" aria-label="Mobile dashboard navigation" className="border-b border-slate-200 bg-white/95 px-3 py-2 dark:border-white/10 dark:bg-slate-950/95 lg:hidden">
+        <nav id="mobile-dashboard-navigation" aria-label="Navegação principal mobile" className="border-b border-slate-200 bg-white/95 px-3 py-2 dark:border-white/10 dark:bg-slate-950/95 lg:hidden">
           <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {mobileNavItems.map((item) => {
               const isActive = activeTab === item.id;

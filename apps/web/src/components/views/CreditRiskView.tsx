@@ -41,10 +41,10 @@ export const CreditRiskView: React.FC = () => {
     <div className="space-y-6 animate-fadeIn">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Hub de Análise de Risco & Crédito CNPJ
+          Risco e potencial da empresa
         </h1>
         <p className="text-xs text-muted-foreground">
-          Consulte e avalie a saúde financeira, estabilidade e capacidade pagadora de qualquer CNPJ.
+          Avalie se uma empresa tem perfil financeiro adequado para avançar no funil comercial.
         </p>
       </div>
 
@@ -57,15 +57,15 @@ export const CreditRiskView: React.FC = () => {
                 <ShieldCheck className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className="text-base font-bold">Consultar CNPJ</CardTitle>
-                <CardDescription>Insira o número para iniciar a varredura</CardDescription>
+                <CardTitle className="text-base font-bold">Consultar empresa</CardTitle>
+                <CardDescription>Informe a identificação da empresa para análise</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAnalyze} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Número do CNPJ</label>
+                <label className="text-xs font-semibold text-muted-foreground">Identificação da empresa</label>
                 <Input
                   placeholder="Ex: 12.345.678/0001-95"
                   value={cnpjInput}
@@ -81,7 +81,7 @@ export const CreditRiskView: React.FC = () => {
                 className="w-full text-xs gap-2"
               >
                 {loading ? (
-                  <>Consultando Receita & Banco de Risco...</>
+                  <>Consultando indicadores financeiros...</>
                 ) : (
                   <>
                     <Zap className="h-4 w-4" />
@@ -96,9 +96,9 @@ export const CreditRiskView: React.FC = () => {
         {/* Results Card */}
         <Card className="glass-card lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base font-bold">Relatório de Risco de Crédito</CardTitle>
+            <CardTitle className="text-base font-bold">Resumo financeiro e comercial</CardTitle>
             <CardDescription>
-              {riskData ? `Resultado para o CNPJ ${formatCNPJ(cnpjInput)}` : 'Aguardando consulta de CNPJ'}
+              {riskData ? `Resultado para ${formatCNPJ(cnpjInput)}` : 'Aguardando consulta da empresa'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -107,7 +107,7 @@ export const CreditRiskView: React.FC = () => {
                 {/* Score Gauge Summary */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 rounded-xl bg-secondary/40 border border-border/80 text-center">
-                    <span className="text-xs text-muted-foreground font-semibold uppercase">Score de Risco</span>
+                    <span className="text-xs text-muted-foreground font-semibold uppercase">Segurança comercial</span>
                     <p className="text-4xl font-black text-indigo-400 mt-1">{riskData.score}/100</p>
                     <p className="text-[10px] text-muted-foreground mt-1">Quanto maior, menor o risco</p>
                   </div>
@@ -123,7 +123,7 @@ export const CreditRiskView: React.FC = () => {
                   </div>
 
                   <div className="p-4 rounded-xl bg-secondary/40 border border-border/80 text-center">
-                    <span className="text-xs text-muted-foreground font-semibold uppercase">Status de Qualificação</span>
+                    <span className="text-xs text-muted-foreground font-semibold uppercase">Momento comercial</span>
                     <p className="text-sm font-bold text-emerald-400 mt-2">ALTA CAPACIDADE</p>
                     <p className="text-[10px] text-muted-foreground mt-1">Sem restrições ativas</p>
                   </div>

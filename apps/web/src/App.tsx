@@ -68,7 +68,7 @@ export function App() {
       totalProspectsCount={prospects.length}
       searchQuery={searchQuery}
       setSearchQuery={setSearchQuery}
-      onOpenCreateModal={() => setIsCreateModalOpen(true)}
+      onOpenCreateModal={() => setActiveTab('prospects')}
       onOpenQualifyModal={() => setActiveTab('risk')}
     >
       {activeTab === 'dashboard' && (
@@ -76,7 +76,6 @@ export function App() {
           prospects={prospects}
           analytics={analytics}
           forecast={forecast}
-          onOpenCreateModal={() => setIsCreateModalOpen(true)}
           onSelectProspect={(p) => setSelectedProspect(p)}
           onNavigateToTab={(tab) => setActiveTab(tab)}
         />
@@ -87,7 +86,6 @@ export function App() {
           prospects={prospects}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
-          onOpenCreateModal={() => setIsCreateModalOpen(true)}
           onSelectProspect={(p) => setSelectedProspect(p)}
           onDeleteProspect={handleDeleteProspect}
           onRefresh={loadData}
@@ -110,9 +108,9 @@ export function App() {
 
       {activeTab === 'settings' && (
         <div className="p-8 max-w-xl mx-auto space-y-4 text-center">
-          <h2 className="text-xl font-bold text-foreground">Configurações SalesIntel Platform</h2>
+          <h2 className="text-xl font-bold text-foreground">Preferências SalesIntel</h2>
           <p className="text-xs text-muted-foreground">
-            Conectado ao ambiente PostgreSQL Docker na porta 5432. Organização: SalesIntel Demo.
+            Ajuste segmentos de interesse, regiões prioritárias e critérios comerciais da organização SalesIntel Demo.
           </p>
         </div>
       )}

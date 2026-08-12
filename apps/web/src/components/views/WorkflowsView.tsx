@@ -20,25 +20,25 @@ export const WorkflowsView: React.FC = () => {
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([
     {
       id: 1,
-      name: 'Qualificação Automática CNPJ > 70',
-      trigger: 'Ao cadastrar novo prospecto',
-      action: 'Mover para Qualificado & Notificar Vendedor',
+      name: 'Priorizar empresas com alto potencial',
+      trigger: 'Quando uma nova empresa combinar com o perfil ideal',
+      action: 'Enviar para o vendedor responsável',
       status: 'active',
       createdAt: new Date().toISOString(),
     },
     {
       id: 2,
-      name: 'Alerta de Risco Financeiro Médio',
+      name: 'Alerta de atenção financeira',
       trigger: 'Risco de crédito < 60',
-      action: 'Marcar para revisão de compliance',
+      action: 'Marcar para revisão comercial',
       status: 'active',
       createdAt: new Date().toISOString(),
     },
   ]);
 
   const [name, setName] = useState('');
-  const [trigger, setTrigger] = useState('Novo CNPJ cadastrado');
-  const [action, setAction] = useState('Disparar enriquecimento de dados');
+  const [trigger, setTrigger] = useState('Nova empresa sugerida');
+  const [action, setAction] = useState('Criar próxima ação para o vendedor');
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,10 +56,10 @@ export const WorkflowsView: React.FC = () => {
     <div className="space-y-6 animate-fadeIn">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Automações & Workflows de Qualificação
+          Ações automáticas de vendas
         </h1>
         <p className="text-xs text-muted-foreground">
-          Crie gatilhos automáticos para qualificação, distribuição de leads e inteligência de dados.
+          Configure regras para priorizar oportunidades, distribuir empresas e lembrar o time dos próximos contatos.
         </p>
       </div>
 
@@ -72,8 +72,8 @@ export const WorkflowsView: React.FC = () => {
                 <Workflow className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className="text-base font-bold">Novo Workflow</CardTitle>
-                <CardDescription>Configure uma nova regra de automação</CardDescription>
+                <CardTitle className="text-base font-bold">Nova regra comercial</CardTitle>
+                <CardDescription>Defina quando a plataforma deve sugerir uma ação</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -90,7 +90,7 @@ export const WorkflowsView: React.FC = () => {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Gatilho (Trigger)</label>
+                <label className="text-xs font-semibold text-muted-foreground">Quando isso acontecer</label>
                 <Input
                   value={trigger}
                   onChange={(e) => setTrigger(e.target.value)}
@@ -113,7 +113,7 @@ export const WorkflowsView: React.FC = () => {
                 className="w-full text-xs gap-2"
               >
                 <Plus className="h-4 w-4" />
-                Ativar Workflow
+                Ativar regra
               </Button>
             </form>
           </CardContent>
@@ -122,8 +122,8 @@ export const WorkflowsView: React.FC = () => {
         {/* Active Workflows List */}
         <Card className="glass-card lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base font-bold">Workflows Ativos ({workflows.length})</CardTitle>
-            <CardDescription>Regras em execução em tempo real na plataforma</CardDescription>
+            <CardTitle className="text-base font-bold">Regras ativas ({workflows.length})</CardTitle>
+            <CardDescription>Ações comerciais prontas para apoiar o time de vendas</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {workflows.map((wf) => (

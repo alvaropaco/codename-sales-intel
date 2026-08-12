@@ -22,10 +22,10 @@ interface ColumnConfig {
 }
 
 const columns: ColumnConfig[] = [
-  { id: 'lead', title: 'Novos Leads', color: 'border-blue-200 bg-blue-50/40 dark:border-blue-500/40 dark:bg-blue-500/5' },
+  { id: 'lead', title: 'Novas oportunidades', color: 'border-blue-200 bg-blue-50/40 dark:border-blue-500/40 dark:bg-blue-500/5' },
   { id: 'prospect', title: 'Em Qualificação', color: 'border-amber-200 bg-amber-50/40 dark:border-amber-500/40 dark:bg-amber-500/5' },
-  { id: 'qualified', title: 'Qualificados (SQL)', color: 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' },
-  { id: 'closed', title: 'Deals Fechados', color: 'border-purple-200 bg-purple-50/40 dark:border-purple-500/40 dark:bg-purple-500/5' },
+  { id: 'qualified', title: 'Prontas para contato', color: 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-500/40 dark:bg-emerald-500/5' },
+  { id: 'closed', title: 'Clientes ganhos', color: 'border-purple-200 bg-purple-50/40 dark:border-purple-500/40 dark:bg-purple-500/5' },
 ];
 
 export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
@@ -46,10 +46,10 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
     <div className="space-y-6 animate-fadeIn">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-foreground">
-          Funil CRM & Kanban de Oportunidades
+          Pipeline de oportunidades
         </h1>
         <p className="text-xs text-slate-500 dark:text-muted-foreground">
-          Acompanhe a evolução das empresas cadastradas através dos estágios de prospecção e vendas.
+          Acompanhe a evolução das empresas sugeridas até virarem oportunidades comerciais reais.
         </p>
       </div>
 
@@ -142,7 +142,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                   ))
                 ) : (
                   <div className="h-32 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 dark:border-border/60 text-slate-400 dark:text-muted-foreground text-xs text-center p-4">
-                    <p className="font-semibold">Nenhum prospecto neste estágio</p>
+                    <p className="font-semibold">Nenhuma empresa neste estágio</p>
                   </div>
                 )}
               </div>

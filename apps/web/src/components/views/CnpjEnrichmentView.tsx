@@ -26,6 +26,13 @@ const statusVariant: Record<string, 'qualified' | 'prospect' | 'lead' | 'destruc
   error: 'destructive',
 };
 
+const contactStatusLabel: Record<string, string> = {
+  enriched: 'Informações completas',
+  pending: 'Aguardando atualização',
+  unavailable: 'Sem contato disponível',
+  error: 'Revisar manualmente',
+};
+
 const today = new Date().toISOString().slice(0, 10);
 const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -46,7 +53,7 @@ export const CnpjEnrichmentView: React.FC = () => {
       const data = await fetchEnrichedCnpjContacts({ from, to, status });
       setContacts(data);
     } catch (err: any) {
-      setError(err.message || 'Falha ao carregar enriquecimentos');
+      setError(err.message || 'Não foi possível carregar as informações comerciais');
     } finally {
       setIsLoading(false);
     }
@@ -64,7 +71,7 @@ export const CnpjEnrichmentView: React.FC = () => {
       await extractCnpjContacts({ from, to, refresh: true, limit: 25 });
       await loadContacts();
     } catch (err: any) {
-      setError(err.message || 'Falha ao extrair contatos');
+      setError(err.message || 'Não foi possível atualizar as informações de contato');
     } finally {
       setIsExtracting(false);
     }
@@ -96,7 +103,7 @@ export const CnpjEnrichmentView: React.FC = () => {
       enrichedAt: item.enrichedAt || '',
     }));
     const csv = [
-      ['CNPJ', 'Empresa', 'Email', 'Telefones', 'Sócios', 'Status', 'Enriquecido em'].join(','),
+      ['Identificação', 'Empresa', 'Email', 'Telefones', 'Sócios', 'Momento', 'Atualizado em'].join(','),
       ...rows.map((row) => [
         row.cnpj,
         `"${row.companyName}"`,
@@ -109,7 +116,7 @@ export const CnpjEnrichmentView: React.FC = () => {
     ].join('\n');
     const link = document.createElement('a');
     link.href = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-    link.download = `salesintel_cnpj_enrichment_${Date.now()}.csv`;
+    link.download = `salesintel_inteligencia_comercial_${Date.now()}.csv`;
     link.click();
   };
 
@@ -119,30 +126,30 @@ export const CnpjEnrichmentView: React.FC = () => {
         <div className="flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
           <div className="max-w-3xl space-y-3">
             <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300">
-              <Sparkles className="mr-1.5 h-3.5 w-3.5" /> CNPJ enrichment pipeline
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Inteligência comercial
             </Badge>
             <h1 className="text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-4xl">
-              Extração de sócios, emails e telefones por CNPJ.
+              Informações da empresa para vender melhor.
             </h1>
             <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
-              Enriqueça os CNPJs já presentes no MCP/PostgreSQL via BrasilAPI, persista os dados e filtre por período para prospecção comercial.
+              Veja contatos, sócios, sinais comerciais e dados úteis para decidir quem abordar primeiro e como iniciar a conversa.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button onClick={handleExtract} disabled={isExtracting} className="h-11 gap-2 rounded-xl bg-slate-950 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950">
               <RefreshCw className={cn('h-4 w-4', isExtracting && 'animate-spin')} />
-              {isExtracting ? 'Extraindo...' : 'Extrair do MCP/CNPJ'}
+              {isExtracting ? 'Atualizando...' : 'Atualizar informações'}
             </Button>
             <Button onClick={handleExport} variant="outline" className="h-11 gap-2 rounded-xl" disabled={!filtered.length}>
-              <Download className="h-4 w-4" /> Exportar CSV
+              <Download className="h-4 w-4" /> Baixar lista
             </Button>
           </div>
         </div>
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Metric title="CNPJs listados" value={filtered.length} icon={ShieldCheck} tone="indigo" />
-        <Metric title="Sócios extraídos" value={totalPartners} icon={UsersRound} tone="emerald" />
+        <Metric title="Empresas analisadas" value={filtered.length} icon={ShieldCheck} tone="indigo" />
+        <Metric title="Decisores mapeados" value={totalPartners} icon={UsersRound} tone="emerald" />
         <Metric title="Emails encontrados" value={totalEmails} icon={Mail} tone="sky" />
         <Metric title="Telefones encontrados" value={totalPhones} icon={Phone} tone="amber" />
       </section>
@@ -152,16 +159,16 @@ export const CnpjEnrichmentView: React.FC = () => {
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_160px_160px_170px_auto_auto] lg:items-center">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por empresa, CNPJ, email ou sócio..." className="h-10 rounded-xl pl-9 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por empresa, contato, email ou decisor..." className="h-10 rounded-xl pl-9 text-xs" />
             </div>
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 rounded-xl text-xs" />
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-10 rounded-xl text-xs" />
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-200">
-              <option value="all">Todos status</option>
-              <option value="enriched">Enriched</option>
-              <option value="pending">Pending</option>
-              <option value="unavailable">Unavailable</option>
-              <option value="error">Error</option>
+              <option value="all">Todos os momentos</option>
+              <option value="enriched">Informações completas</option>
+              <option value="pending">Aguardando atualização</option>
+              <option value="unavailable">Sem contato disponível</option>
+              <option value="error">Revisar manualmente</option>
             </select>
             <Button onClick={loadContacts} variant="outline" className="h-10 gap-2 rounded-xl text-xs" disabled={isLoading}>
               <CalendarDays className="h-4 w-4" /> Filtrar
@@ -174,8 +181,8 @@ export const CnpjEnrichmentView: React.FC = () => {
 
       <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
         <CardHeader className="border-b border-slate-100 dark:border-white/10">
-          <CardTitle className="text-base font-black">Contatos enriquecidos</CardTitle>
-          <CardDescription>Dados persistidos no PostgreSQL e expostos também pelo resource MCP cnpj_enrichment://contacts.</CardDescription>
+          <CardTitle className="text-base font-black">Informações para contato</CardTitle>
+          <CardDescription>Dados comerciais prontos para priorizar abordagens e transformar empresas em oportunidades.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -186,13 +193,13 @@ export const CnpjEnrichmentView: React.FC = () => {
                   <th className="px-6 py-3.5 font-black">Email</th>
                   <th className="px-6 py-3.5 font-black">Telefones</th>
                   <th className="px-6 py-3.5 font-black">Sócios</th>
-                  <th className="px-6 py-3.5 font-black">Status</th>
-                  <th className="px-6 py-3.5 font-black">Enriquecido</th>
+                  <th className="px-6 py-3.5 font-black">Momento</th>
+                  <th className="px-6 py-3.5 font-black">Atualizado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/10">
                 {isLoading ? (
-                  <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">Carregando enriquecimentos...</td></tr>
+                  <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">Carregando informações comerciais...</td></tr>
                 ) : filtered.length ? filtered.map((item) => (
                   <tr key={item.id} className="align-top transition hover:bg-slate-50 dark:hover:bg-white/[0.03]">
                     <td className="px-6 py-4">
@@ -218,7 +225,7 @@ export const CnpjEnrichmentView: React.FC = () => {
                       )) : <span className="text-slate-400">Não disponível</span>}
                     </td>
                     <td className="px-6 py-4">
-                      <Badge variant={statusVariant[item.enrichmentStatus] || 'outline'}>{item.enrichmentStatus}</Badge>
+                      <Badge variant={statusVariant[item.enrichmentStatus] || 'outline'}>{contactStatusLabel[item.enrichmentStatus] || 'Em análise'}</Badge>
                       {item.enrichmentError && <p className="mt-2 max-w-[220px] text-[11px] text-red-500">{item.enrichmentError}</p>}
                     </td>
                     <td className="px-6 py-4 text-slate-500">
@@ -226,7 +233,7 @@ export const CnpjEnrichmentView: React.FC = () => {
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">Nenhum enriquecimento encontrado para o filtro atual.</td></tr>
+                  <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">Nenhuma informação comercial encontrada para o filtro atual.</td></tr>
                 )}
               </tbody>
             </table>

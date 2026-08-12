@@ -4,7 +4,6 @@ import {
   Building2,
   ChevronDown,
   CreditCard,
-  Database,
   Kanban,
   LayoutDashboard,
   LifeBuoy,
@@ -36,18 +35,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   totalProspectsCount,
 }) => {
   const navItems = [
-    { id: 'dashboard' as ActiveTab, label: 'CRM Dashboard', icon: LayoutDashboard, badge: null },
-    { id: 'prospects' as ActiveTab, label: 'Leads & CNPJs', icon: Building2, badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
-    { id: 'pipeline' as ActiveTab, label: 'Sales Pipeline', icon: Kanban, badge: 'Live' },
-    { id: 'risk' as ActiveTab, label: 'Credit Risk AI', icon: ShieldCheck, badge: 'AI' },
-    { id: 'workflows' as ActiveTab, label: 'Workflow Automation', icon: Workflow, badge: null },
-    { id: 'enrichment' as ActiveTab, label: 'CNPJ Enrichment', icon: Network, badge: 'Data' },
+    { id: 'dashboard' as ActiveTab, label: 'Visão comercial', icon: LayoutDashboard, badge: null },
+    { id: 'prospects' as ActiveTab, label: 'Descobrir empresas', icon: Building2, badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
+    { id: 'pipeline' as ActiveTab, label: 'Pipeline de vendas', icon: Kanban, badge: 'Ao vivo' },
+    { id: 'risk' as ActiveTab, label: 'Risco e potencial', icon: ShieldCheck, badge: null },
+    { id: 'workflows' as ActiveTab, label: 'Ações automáticas', icon: Workflow, badge: null },
+    { id: 'enrichment' as ActiveTab, label: 'Inteligência comercial', icon: Network, badge: null },
   ];
 
   const appItems = [
-    { label: 'Revenue Analytics', icon: BarChart3 },
-    { label: 'Billing Intelligence', icon: CreditCard },
-    { label: 'Support Center', icon: LifeBuoy },
+    { label: 'Receita e metas', icon: BarChart3 },
+    { label: 'Potencial de compra', icon: CreditCard },
+    { label: 'Ajuda ao vendedor', icon: LifeBuoy },
   ];
 
   return (
@@ -55,11 +54,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5 dark:border-white/10">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/15 dark:bg-white dark:text-slate-950">
-            <Database className="h-5 w-5" />
+            <Sparkles className="h-5 w-5" />
           </div>
           <div>
             <h1 className="text-base font-black tracking-tight text-slate-950 dark:text-white">SalesIntel</h1>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Enterprise CRM</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Inteligência comercial</p>
           </div>
         </div>
         <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] font-black text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
@@ -81,7 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="space-y-6">
           <div>
-            <p className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Dashboards</p>
+            <p className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Vendas</p>
             <nav className="space-y-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
@@ -113,7 +112,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           <div>
-            <p className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Apps</p>
+            <p className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Apoio comercial</p>
             <div className="space-y-1">
               {appItems.map((item) => (
                 <button key={item.label} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white">
@@ -130,9 +129,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/10">
           <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
             <Sparkles className="h-4 w-4" />
-            <span className="text-xs font-black uppercase tracking-[0.14em]">CNPJ Engine AI</span>
+            <span className="text-xs font-black uppercase tracking-[0.14em]">Recomendação de oportunidades</span>
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">Dados PostgreSQL, scoring e MCP prontos para workflows com LLM.</p>
+          <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">Empresas sugeridas, sinais de compra e próximos passos para o time comercial.</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -141,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-200 dark:hover:bg-white/[0.06]"
           >
             {isDark ? <Moon className="h-4 w-4 text-indigo-300" /> : <Sun className="h-4 w-4 text-amber-500" />}
-            {isDark ? 'Dark' : 'Light'}
+            {isDark ? 'Escuro' : 'Claro'}
           </button>
           <button onClick={() => setActiveTab('settings')} className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white">
             <Settings className="h-4 w-4" />

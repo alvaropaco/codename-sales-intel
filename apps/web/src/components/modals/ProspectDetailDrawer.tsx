@@ -61,7 +61,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
             {/* Quick Status Bar */}
             <div className="my-5 p-4 rounded-xl bg-secondary/40 border border-border/80 flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-bold text-muted-foreground">Score CNPJ</span>
+                <span className="text-[10px] uppercase font-bold text-muted-foreground">Potencial comercial</span>
                 <p className="text-2xl font-black text-indigo-400">{prospect.opportunityScore}/100</p>
               </div>
               <Badge variant={prospect.status === 'qualified' ? 'qualified' : 'prospect'}>
@@ -72,7 +72,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
             {/* Details Grid */}
             <div className="space-y-4 text-xs">
               <div className="space-y-1">
-                <span className="text-muted-foreground font-semibold">Setor Atuação</span>
+                <span className="text-muted-foreground font-semibold">Segmento de atuação</span>
                 <p className="font-medium text-foreground">{prospect.industry || 'Software & Serviços'}</p>
               </div>
 
@@ -94,11 +94,10 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Risk Assessment Mock Box */}
               <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
                 <div className="flex items-center gap-2 text-emerald-400 font-bold">
                   <ShieldCheck className="h-4 w-4" />
-                  <span>Análise de Risco de Crédito: Aprovado</span>
+                  <span>Saúde financeira: favorável</span>
                 </div>
                 <p className="text-[11px] text-emerald-300/80 leading-relaxed">
                   Sem pendências fiscais na Receita Federal. Histórico de pagamento pontual verificado.
@@ -114,10 +113,10 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                 <div className="space-y-2.5 text-[11px]">
                   <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
                     <p className="font-semibold text-foreground">Disparo de Qualificação Automática</p>
-                    <p className="text-muted-foreground text-[10px]">Hoje, 11:35 • CNPJ Engine AI</p>
+                    <p className="text-muted-foreground text-[10px]">Hoje, 11:35 • Recomendação comercial</p>
                   </div>
                   <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                    <p className="font-semibold text-foreground">Registro Salvo no PostgreSQL</p>
+                    <p className="font-semibold text-foreground">Empresa salva na sua lista</p>
                     <p className="text-muted-foreground text-[10px]">Data de criação: {new Date(prospect.createdAt).toLocaleDateString('pt-BR')}</p>
                   </div>
                 </div>
