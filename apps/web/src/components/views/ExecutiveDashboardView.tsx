@@ -1,33 +1,49 @@
-import React, { useState } from 'react';
-import { 
-  Building2, 
-  CheckCircle2, 
-  TrendingUp, 
-  DollarSign, 
-  ArrowUpRight, 
-  Sparkles,
-  Zap,
+import React, { useMemo, useState } from 'react';
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  BarChart3,
+  BriefcaseBusiness,
+  Building2,
+  CalendarDays,
+  CheckCircle2,
   ChevronRight,
-  Plus
+  CircleDollarSign,
+  Clock3,
+  Download,
+  Factory,
+  Flag,
+  Landmark,
+  MailCheck,
+  MoreHorizontal,
+  PhoneCall,
+  Plus,
+  ShieldCheck,
+  Sparkles,
+  Target,
+  TrendingUp,
+  Trophy,
+  Users,
+  Zap,
 } from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  BarChart,
+import {
+  Area,
+  AreaChart,
   Bar,
-  Cell
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Prospect, PipelineAnalytics, ForecastAnalytics, QualificationResult } from '@/types';
-import { formatCNPJ, formatCurrency } from '@/lib/utils';
+import { cn, formatCNPJ, formatCurrency } from '@/lib/utils';
 import { qualifyCompany } from '@/services/api';
 
 interface ExecutiveDashboardViewProps {
@@ -39,14 +55,82 @@ interface ExecutiveDashboardViewProps {
   onNavigateToTab: (tab: any) => void;
 }
 
-const mockRevenueChartData = [
-  { month: 'Jan', revenue: 95000, qualified: 12 },
-  { month: 'Fev', revenue: 110000, qualified: 15 },
-  { month: 'Mar', revenue: 125000, qualified: 18 },
-  { month: 'Abr', revenue: 140000, qualified: 22 },
-  { month: 'Mai', revenue: 165000, qualified: 25 },
-  { month: 'Jun (Forecast)', revenue: 185000, qualified: 30 },
-];
+const statusConfig = {
+  qualified: { label: 'Qualified', color: '#10b981', badge: 'qualified' as const, weight: 0.72 },
+  prospect: { label: 'Lead', color: '#6366f1', badge: 'prospect' as const, weight: 0.38 },
+  lead: { label: 'New', color: '#3b82f6', badge: 'lead' as const, weight: 0.18 },
+  contacted: { label: 'Contacted', color: '#f59e0b', badge: 'prospect' as const, weight: 0.48 },
+  proposal: { label: 'Proposal', color: '#8b5cf6', badge: 'closed' as const, weight: 0.82 },
+  closed: { label: 'Closed Won', color: '#14b8a6', badge: 'closed' as const, weight: 1 },
+};
+
+const getInitials = (name: string) =>
+  name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
+
+const safeNumber = (value?: number | null) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+function ProgressBar({ value, className }: { value: number; className?: string }) {
+  return (
+    <div className={cn('h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800', className)}>
+      <div
+        className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500 transition-all duration-700"
+        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+      />
+    </div>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  subtitle,
+  trend,
+  icon: Icon,
+  tone,
+}: {
+  title: string;
+  value: string | number;
+  subtitle: string;
+  trend: string;
+  icon: React.ElementType;
+  tone: 'indigo' | 'emerald' | 'sky' | 'amber';
+}) {
+  const tones = {
+    indigo: 'bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-300 dark:border-indigo-500/20',
+    emerald: 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/20',
+    sky: 'bg-sky-50 text-sky-600 border-sky-100 dark:bg-sky-500/10 dark:text-sky-300 dark:border-sky-500/20',
+    amber: 'bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/20',
+  };
+
+  return (
+    <Card className="group overflow-hidden border-slate-200/80 bg-white shadow-sm hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10 dark:bg-slate-950/70">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{title}</p>
+            <div className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{value}</div>
+          </div>
+          <div className={cn('rounded-2xl border p-2.5 shadow-sm', tones[tone])}>
+            <Icon className="h-5 w-5" />
+          </div>
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{subtitle}</p>
+          <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[11px] font-bold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+            <ArrowUpRight className="mr-1 h-3 w-3" />
+            {trend}
+          </Badge>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
   prospects,
@@ -59,6 +143,76 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
   const [quickQualifyName, setQuickQualifyName] = useState('');
   const [quickResult, setQuickResult] = useState<QualificationResult | null>(null);
   const [isQualifying, setIsQualifying] = useState(false);
+
+  const derived = useMemo(() => {
+    const forecastPool = safeNumber(forecast.q3_projection) || safeNumber(forecast.next_month) || safeNumber(forecast.this_month);
+    const scoreWeight = prospects.reduce((sum, p) => sum + Math.max(1, safeNumber(p.opportunityScore)), 0) || 1;
+    const dealValueById = prospects.reduce<Record<string, number>>((acc, p) => {
+      const explicitRevenue = safeNumber(p.revenueEstimate);
+      acc[p.id] = explicitRevenue > 0
+        ? explicitRevenue
+        : forecastPool * (Math.max(1, safeNumber(p.opportunityScore)) / scoreWeight);
+      return acc;
+    }, {});
+
+    const totalRevenue = prospects.reduce((sum, p) => sum + (dealValueById[p.id] || 0), 0);
+    const avgTicket = prospects.length ? totalRevenue / prospects.length : 0;
+    const weightedPipeline = prospects.reduce((sum, p) => {
+      const config = statusConfig[p.status as keyof typeof statusConfig] || statusConfig.prospect;
+      return sum + (dealValueById[p.id] || 0) * config.weight;
+    }, 0);
+
+    const industries = prospects.reduce<Record<string, { count: number; revenue: number }>>((acc, p) => {
+      const key = p.industry || 'Não classificado';
+      acc[key] = acc[key] || { count: 0, revenue: 0 };
+      acc[key].count += 1;
+      acc[key].revenue += dealValueById[p.id] || 0;
+      return acc;
+    }, {});
+
+    const industryChart = Object.entries(industries)
+      .map(([name, value]) => ({ name, count: value.count, revenue: value.revenue }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+
+    const pipeline = Object.entries(statusConfig).map(([status, config]) => {
+      const rows = prospects.filter((p) => p.status === status);
+      const revenue = rows.reduce((sum, p) => sum + (dealValueById[p.id] || 0), 0);
+      return {
+        status,
+        label: config.label,
+        count: rows.length,
+        revenue,
+        color: config.color,
+        pct: prospects.length ? Math.round((rows.length / prospects.length) * 100) : 0,
+      };
+    }).filter((stage) => stage.count > 0 || ['qualified', 'prospect', 'lead'].includes(stage.status));
+
+    const qRate = Math.round((analytics.qualification_rate || 0) * 100);
+    const targetProgress = Math.min(100, Math.round((analytics.qualified / Math.max(analytics.total_prospects || 1, 1)) * 100));
+    const highIntent = prospects.filter((p) => safeNumber(p.opportunityScore) >= 75).length;
+
+    const revenueChart = [
+      { month: 'Hoje', revenue: totalRevenue, deals: prospects.length },
+      { month: 'Mês atual', revenue: forecast.this_month, deals: Math.max(analytics.qualified, 1) },
+      { month: 'Próx. mês', revenue: forecast.next_month, deals: Math.max(analytics.qualified + analytics.prospects, 1) },
+      { month: 'Q3', revenue: forecast.q3_projection, deals: Math.max(prospects.length + analytics.leads, 1) },
+    ];
+
+    const priorityTasks = prospects
+      .slice()
+      .sort((a, b) => safeNumber(b.opportunityScore) - safeNumber(a.opportunityScore))
+      .slice(0, 3)
+      .map((p, index) => ({
+        title: index === 0 ? `Follow up executivo com ${p.companyName}` : index === 1 ? `Preparar proposta para ${p.companyName}` : `Validar dados CNPJ de ${p.companyName}`,
+        subtitle: `${p.industry || 'Empresa'} · Score ${p.opportunityScore}/100`,
+        priority: index === 0 ? 'High' : index === 1 ? 'Medium' : 'Low',
+        due: index === 0 ? 'Hoje' : index === 1 ? 'Amanhã' : 'Esta semana',
+        prospect: p,
+      }));
+
+    return { totalRevenue, avgTicket, weightedPipeline, industryChart, pipeline, qRate, targetProgress, highIntent, revenueChart, priorityTasks, dealValueById };
+  }, [prospects, analytics, forecast]);
 
   const handleQuickQualify = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,367 +228,349 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
     }
   };
 
-  const statusBreakdownData = [
-    { name: 'Qualificados', count: analytics.qualified, color: '#10b981' },
-    { name: 'Prospectos', count: analytics.prospects, color: '#f59e0b' },
-    { name: 'Leads', count: analytics.leads, color: '#3b82f6' },
-  ];
+  const topProspects = prospects
+    .slice()
+    .sort((a, b) => safeNumber(b.opportunityScore) - safeNumber(a.opportunityScore))
+    .slice(0, 5);
 
   return (
-    <div className="space-y-8 animate-fadeIn">
-      {/* Top Banner Callout */}
-      <div className="relative rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-slate-900 p-6 md:p-8 overflow-hidden shadow-xl text-white">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white border border-white/20 text-xs font-bold">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Inteligência de Mercado B2B & CNPJ Engine</span>
+    <div className="space-y-6 animate-fadeIn">
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
+        <div className="relative overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-slate-950">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(79,70,229,0.16),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.12),transparent_32%)]" />
+          <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className="border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300" variant="outline">
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Enterprise CNPJ Intelligence
+                </Badge>
+                <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300" variant="outline">
+                  PostgreSQL live data
+                </Badge>
+              </div>
+              <div>
+                <h1 className="max-w-4xl text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-5xl">
+                  CRM executivo para inteligência comercial, forecast e qualificação CNPJ.
+                </h1>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+                  Uma experiência enterprise com dados reais do pipeline, scoring de oportunidade e ações de vendas priorizadas pela base persistida no PostgreSQL.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button onClick={onOpenCreateModal} className="h-11 gap-2 rounded-xl bg-slate-950 px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200">
+                  <Plus className="h-4 w-4" /> Novo prospecto
+                </Button>
+                <Button onClick={() => onNavigateToTab('prospects')} variant="outline" className="h-11 gap-2 rounded-xl border-slate-200 bg-white/70 px-5 dark:border-white/10 dark:bg-white/5">
+                  Ver base de CNPJs <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-              Painel de Performance & Qualificação CNPJ
-            </h1>
-            <p className="text-sm text-indigo-100 leading-relaxed">
-              Monitore métricas de conversão de leads, forecast de vendas e execute qualificação automática integrada ao banco PostgreSQL.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button 
-              onClick={() => onNavigateToTab('prospects')}
-              variant="outline" 
-              className="border-white/30 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold"
-            >
-              Ver Todos Prospectos ({prospects.length})
-            </Button>
-            <Button 
-              onClick={onOpenCreateModal}
-              className="bg-white text-indigo-700 hover:bg-slate-100 font-bold gap-2 text-xs shadow-lg"
-            >
-              <Plus className="h-4 w-4" />
-              Novo Prospecto
-            </Button>
+
+            <div className="min-w-[280px] rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Meta comercial</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{derived.targetProgress}% completo</p>
+                </div>
+                <Target className="h-10 w-10 text-indigo-500" />
+              </div>
+              <ProgressBar value={derived.targetProgress} className="mt-4" />
+              <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                {analytics.qualified} de {analytics.total_prospects || prospects.length} empresas já estão qualificadas para avanço comercial.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Metric Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-        {/* Card 1: Total Prospects */}
-        <Card className="glass-card">
+        <Card className="border-slate-200 bg-slate-950 text-white shadow-xl dark:border-white/10">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
-                Total de Prospectos
-              </span>
-              <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20">
-                <Building2 className="h-5 w-5" />
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Pipeline ponderado</p>
+                <p className="mt-3 text-3xl font-black">{formatCurrency(derived.weightedPipeline)}</p>
+              </div>
+              <CircleDollarSign className="h-11 w-11 text-emerald-300" />
+            </div>
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-white/10 p-3">
+                <p className="text-[11px] text-slate-400">Ticket médio</p>
+                <p className="mt-1 text-sm font-bold">{formatCurrency(derived.avgTicket)}</p>
+              </div>
+              <div className="rounded-2xl bg-white/10 p-3">
+                <p className="text-[11px] text-slate-400">Alta intenção</p>
+                <p className="mt-1 text-sm font-bold">{derived.highIntent} contas</p>
               </div>
             </div>
-            <div className="mt-4 flex items-baseline justify-between">
-              <span className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-foreground">
-                {analytics.total_prospects}
-              </span>
-              <Badge variant="outline" className="border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-500/30 dark:text-emerald-400 dark:bg-emerald-500/10 text-[11px]">
-                <ArrowUpRight className="h-3 w-3 mr-0.5" /> +14.2%
-              </Badge>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground mt-2">
-              Empresas cadastradas no banco
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Card 2: Qualified Leads */}
-        <Card className="glass-card">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
-                Leads Qualificados
-              </span>
-              <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20">
-                <CheckCircle2 className="h-5 w-5" />
+            <div className="mt-6 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="flex items-center gap-3">
+                <div className="rounded-full bg-emerald-400/15 p-2 text-emerald-300">
+                  <TrendingUp className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold">Forecast Q3</p>
+                  <p className="text-[11px] text-slate-400">Projeção via API real</p>
+                </div>
               </div>
-            </div>
-            <div className="mt-4 flex items-baseline justify-between">
-              <span className="text-3xl font-extrabold tracking-tight text-emerald-600 dark:text-emerald-400">
-                {analytics.qualified}
-              </span>
-              <Badge variant="outline" className="border-emerald-200 text-emerald-700 bg-emerald-50 dark:border-emerald-500/30 dark:text-emerald-400 dark:bg-emerald-500/10 text-[11px]">
-                Prontos para Venda
-              </Badge>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground mt-2">
-              Superaram os critérios de score
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Card 3: Qualification Rate */}
-        <Card className="glass-card">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
-                Taxa de Qualificação
-              </span>
-              <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 border border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20">
-                <TrendingUp className="h-5 w-5" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline justify-between">
-              <span className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-foreground">
-                {Math.round(analytics.qualification_rate * 100)}%
-              </span>
-              <span className="text-xs text-amber-700 dark:text-amber-400 font-bold">
-                Meta: 75%
-              </span>
-            </div>
-            {/* Mini Progress Bar */}
-            <div className="w-full bg-slate-100 dark:bg-secondary h-2 rounded-full mt-3 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-amber-500 to-emerald-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${analytics.qualification_rate * 100}%` }}
-              />
+              <p className="text-sm font-black">{formatCurrency(forecast.q3_projection)}</p>
             </div>
           </CardContent>
         </Card>
+      </section>
 
-        {/* Card 4: Forecast Revenue */}
-        <Card className="glass-card">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
-                Forecast Este Mês
-              </span>
-              <div className="p-2.5 rounded-xl bg-purple-50 text-purple-600 border border-purple-100 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20">
-                <DollarSign className="h-5 w-5" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline justify-between">
-              <span className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-foreground">
-                {formatCurrency(forecast.this_month)}
-              </span>
-              <Badge variant="outline" className="border-purple-200 text-purple-700 bg-purple-50 dark:border-purple-500/30 dark:text-purple-400 dark:bg-purple-500/10 text-[11px]">
-                Q3 Forecast
-              </Badge>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground mt-2">
-              Projeção Q3: {formatCurrency(forecast.q3_projection)}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="Clientes alvo" value={analytics.total_prospects || prospects.length} subtitle="Contas persistidas" trend="Live" icon={Building2} tone="indigo" />
+        <MetricCard title="Deals qualificados" value={analytics.qualified} subtitle="Prontos para venda" trend={`${derived.qRate}%`} icon={Trophy} tone="emerald" />
+        <MetricCard title="Receita potencial" value={formatCurrency(derived.totalRevenue)} subtitle="Soma da base atual" trend="DB" icon={Landmark} tone="sky" />
+        <MetricCard title="Em prospecção" value={analytics.prospects + analytics.leads} subtitle="Aguardando maturação" trend="Ativo" icon={Users} tone="amber" />
+      </section>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Area Chart - Revenue Projections */}
-        <Card className="glass-card lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 border-b border-slate-100 dark:border-border/60">
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+        <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+          <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 pb-4 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-bold text-slate-900 dark:text-foreground">Projeção de Receita & Conversão</CardTitle>
-              <CardDescription className="text-slate-500 dark:text-muted-foreground">Evolução mensal de faturamento e entrada de leads qualificados</CardDescription>
+              <CardTitle className="text-base font-black">Revenue Forecast</CardTitle>
+              <CardDescription>Receita real da base e projeções retornadas pela API.</CardDescription>
             </div>
-            <Badge variant="outline" className="text-xs border-indigo-200 text-indigo-700 bg-indigo-50 dark:border-indigo-500/30 dark:text-indigo-400 dark:bg-indigo-500/10 font-bold">
-              6 Meses
-            </Badge>
+            <Button variant="outline" size="sm" className="gap-2 text-xs">
+              <Download className="h-3.5 w-3.5" /> Export
+            </Button>
           </CardHeader>
-          <CardContent className="pt-6">
-            <div className="h-[280px] w-full">
+          <CardContent className="p-6">
+            <div className="h-[320px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockRevenueChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={derived.revenueChart} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.25}/>
-                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.0}/>
+                    <linearGradient id="enterpriseRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.28} />
+                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="month" stroke="#64748b" fontSize={11} />
-                  <YAxis stroke="#64748b" fontSize={11} tickFormatter={(val) => `R$${val/1000}k`} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#ffffff', 
-                      borderColor: '#e2e8f0',
-                      borderRadius: '8px',
-                      color: '#0f172a',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                      fontSize: '12px'
-                    }}
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(val) => `R$${Number(val) / 1000}k`} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 14, borderColor: '#e2e8f0', boxShadow: '0 20px 45px rgba(15,23,42,0.12)', fontSize: 12 }}
                     formatter={(value: any) => [formatCurrency(Number(value)), 'Receita']}
                   />
-                  <Area 
-                    type="monotone" 
-                    dataKey="revenue" 
-                    stroke="#4f46e5" 
-                    strokeWidth={3}
-                    fillOpacity={1} 
-                    fill="url(#colorRevenue)" 
-                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={3} fill="url(#enterpriseRevenue)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
 
-        {/* Quick CNPJ Qualification Engine Widget */}
-        <Card className="glass-card flex flex-col justify-between">
-          <CardHeader className="pb-3 border-b border-slate-100 dark:border-border/60">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 dark:bg-indigo-500/20 dark:text-indigo-400">
-                <Zap className="h-4 w-4" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-bold text-slate-900 dark:text-foreground">Qualificador Express AI</CardTitle>
-                <CardDescription className="text-slate-500 dark:text-muted-foreground">Qualifique qualquer empresa em tempo real</CardDescription>
-              </div>
-            </div>
+        <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+          <CardHeader className="border-b border-slate-100 dark:border-white/10">
+            <CardTitle className="text-base font-black">Leads by Industry</CardTitle>
+            <CardDescription>Segmentos calculados a partir dos prospectos reais.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4 pt-4">
-            <form onSubmit={handleQuickQualify} className="space-y-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-muted-foreground">
-                  Razão Social ou Nome Fantasia
-                </label>
-                <Input
-                  placeholder="Ex: Mercado Livre Brasil LTDA"
-                  value={quickQualifyName}
-                  onChange={(e) => setQuickQualifyName(e.target.value)}
-                  className="bg-slate-50 dark:bg-secondary/40 text-xs border-slate-200 dark:border-border"
-                />
-              </div>
-              <Button 
-                type="submit" 
-                disabled={isQualifying || !quickQualifyName.trim()}
-                className="w-full h-9 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md shadow-indigo-600/20"
-              >
-                {isQualifying ? (
-                  <>Analisando Dados CNPJ...</>
-                ) : (
-                  <>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Executar Análise AI
-                  </>
-                )}
-              </Button>
-            </form>
-
-            {/* Quick Result Output */}
-            {quickResult && (
-              <div className="p-4 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-500/30 space-y-2 animate-fadeIn">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-indigo-900 dark:text-indigo-300 uppercase">Score Oportunidade</span>
-                  <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">{quickResult.score}/100</span>
+          <CardContent className="space-y-5 p-6">
+            <div className="h-[210px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={derived.industryChart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} interval={0} />
+                  <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ borderRadius: 14, borderColor: '#e2e8f0', fontSize: 12 }} />
+                  <Bar dataKey="count" radius={[8, 8, 0, 0]} fill="#4f46e5" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid gap-3">
+              {derived.industryChart.map((item, index) => (
+                <div key={item.name} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
+                      {index === 0 ? <Factory className="h-4 w-4" /> : <BriefcaseBusiness className="h-4 w-4" />}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-950 dark:text-white">{item.name}</p>
+                      <p className="text-[11px] text-slate-500">{formatCurrency(item.revenue)}</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="bg-white dark:bg-white/5">{item.count}</Badge>
                 </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600 dark:text-muted-foreground font-semibold">Classificação:</span>
-                  <Badge variant={quickResult.level === 'qualified' ? 'qualified' : 'prospect'}>
-                    {quickResult.level.toUpperCase()}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-600 dark:text-muted-foreground font-semibold">Grau de Confiança:</span>
-                  <span className="font-bold text-slate-900 dark:text-slate-200">{(Number(quickResult.confidence) * 100).toFixed(0)}%</span>
-                </div>
-              </div>
-            )}
+              ))}
+            </div>
           </CardContent>
         </Card>
-      </div>
+      </section>
 
-      {/* Top Prospects Table & Pipeline Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* High-Value Prospects Table */}
-        <Card className="glass-card lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-border/60">
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+          <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-bold text-slate-900 dark:text-foreground">Principais Prospectos no Banco</CardTitle>
-              <CardDescription className="text-slate-500 dark:text-muted-foreground">Registros persistidos e sincronizados com PostgreSQL</CardDescription>
+              <CardTitle className="text-base font-black">Tasks</CardTitle>
+              <CardDescription>Próximas ações priorizadas por score e valor.</CardDescription>
             </div>
-            <Button 
-              onClick={() => onNavigateToTab('prospects')}
-              variant="ghost" 
-              size="sm" 
-              className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold gap-1"
-            >
-              Ver Todos <ChevronRight className="h-3.5 w-3.5" />
+            <Button onClick={() => onNavigateToTab('workflows')} size="sm" variant="outline" className="gap-2 text-xs">
+              <Plus className="h-3.5 w-3.5" /> Add Task
             </Button>
+          </CardHeader>
+          <CardContent className="space-y-3 p-5">
+            {derived.priorityTasks.map((task) => (
+              <button
+                key={task.title}
+                onClick={() => onSelectProspect(task.prospect)}
+                className="w-full rounded-2xl border border-slate-100 bg-slate-50 p-4 text-left transition hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-indigo-500/10"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex gap-3">
+                    <div className="mt-0.5 rounded-xl bg-white p-2 text-indigo-600 shadow-sm dark:bg-white/10 dark:text-indigo-300">
+                      {task.priority === 'High' ? <Flag className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-950 dark:text-white">{task.title}</p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{task.subtitle}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <Badge variant={task.priority === 'High' ? 'destructive' : 'outline'} className="text-[10px]">{task.priority}</Badge>
+                    <p className="mt-2 text-[11px] font-medium text-slate-500">{task.due}</p>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+          <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
+            <div>
+              <CardTitle className="text-base font-black">Sales Pipeline</CardTitle>
+              <CardDescription>Deals atuais por estágio do funil comercial.</CardDescription>
+            </div>
+            <Button onClick={() => onNavigateToTab('pipeline')} variant="ghost" size="sm" className="gap-1 text-xs text-indigo-600 dark:text-indigo-300">
+              Pipeline <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-4 p-6">
+            {derived.pipeline.map((stage) => (
+              <div key={stage.status} className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: stage.color }} />
+                    <span className="text-sm font-bold text-slate-900 dark:text-white">{stage.label}</span>
+                  </div>
+                  <span className="text-xs font-medium text-slate-500">
+                    {stage.count} deals · {formatCurrency(stage.revenue)}
+                  </span>
+                </div>
+                <ProgressBar value={stage.pct} />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr]">
+        <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+          <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
+            <div>
+              <CardTitle className="text-base font-black">Leads</CardTitle>
+              <CardDescription>Contas de maior prioridade sincronizadas com PostgreSQL.</CardDescription>
+            </div>
+            <Button onClick={() => onNavigateToTab('prospects')} variant="outline" size="sm" className="text-xs">Ver todos</Button>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 dark:bg-secondary/40 text-slate-500 dark:text-muted-foreground uppercase text-[10px] font-bold tracking-wider border-b border-slate-200 dark:border-border/80">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-[0.16em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03]">
                   <tr>
-                    <th className="px-6 py-3.5">Empresa</th>
-                    <th className="px-6 py-3.5">CNPJ</th>
-                    <th className="px-6 py-3.5">Setor</th>
-                    <th className="px-6 py-3.5">Score</th>
-                    <th className="px-6 py-3.5">Status</th>
+                    <th className="px-6 py-3.5 font-black">Empresa</th>
+                    <th className="px-6 py-3.5 font-black">Status</th>
+                    <th className="px-6 py-3.5 font-black">CNPJ</th>
+                    <th className="px-6 py-3.5 font-black">Valor</th>
+                    <th className="px-6 py-3.5 font-black">Score</th>
+                    <th className="px-6 py-3.5 text-right font-black">Ação</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-border/60">
-                  {prospects.slice(0, 5).map((p) => (
-                    <tr 
-                      key={p.id} 
-                      onClick={() => onSelectProspect(p)}
-                      className="hover:bg-slate-50 dark:hover:bg-secondary/30 transition-colors cursor-pointer"
-                    >
-                      <td className="px-6 py-3.5 font-bold text-slate-900 dark:text-foreground">
-                        {p.companyName}
-                      </td>
-                      <td className="px-6 py-3.5 font-mono text-slate-500 dark:text-muted-foreground">
-                        {formatCNPJ(p.cnpj)}
-                      </td>
-                      <td className="px-6 py-3.5 text-slate-600 dark:text-foreground/90">
-                        {p.industry || 'Tecnologia'}
-                      </td>
-                      <td className="px-6 py-3.5">
-                        <span className="font-extrabold text-indigo-600 dark:text-indigo-400">
-                          {p.opportunityScore}/100
-                        </span>
-                      </td>
-                      <td className="px-6 py-3.5">
-                        <Badge variant={p.status === 'qualified' ? 'qualified' : p.status === 'prospect' ? 'prospect' : 'lead'}>
-                          {p.status}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
+                <tbody className="divide-y divide-slate-100 dark:divide-white/10">
+                  {topProspects.map((p) => {
+                    const config = statusConfig[p.status as keyof typeof statusConfig] || statusConfig.prospect;
+                    return (
+                      <tr key={p.id} className="transition hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-sky-500 text-xs font-black text-white shadow-sm">
+                              {getInitials(p.companyName)}
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-950 dark:text-white">{p.companyName}</p>
+                              <p className="text-[11px] text-slate-500">{p.industry || 'Não classificado'}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4"><Badge variant={config.badge}>{config.label}</Badge></td>
+                        <td className="px-6 py-4 font-mono font-medium text-slate-500">{formatCNPJ(p.cnpj)}</td>
+                        <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">{formatCurrency(derived.dealValueById[p.id] || safeNumber(p.revenueEstimate))}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-indigo-600 dark:text-indigo-300">{p.opportunityScore}</span>
+                            <div className="w-16"><ProgressBar value={p.opportunityScore} className="h-1.5" /></div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <Button onClick={() => onSelectProspect(p)} variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </CardContent>
         </Card>
 
-        {/* Pipeline Distribution Bar Chart */}
-        <Card className="glass-card">
-          <CardHeader className="border-b border-slate-100 dark:border-border/60">
-            <CardTitle className="text-base font-bold text-slate-900 dark:text-foreground">Distribuição do Funil</CardTitle>
-            <CardDescription className="text-slate-500 dark:text-muted-foreground">Quantidade de prospectos por estágio</CardDescription>
+        <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+          <CardHeader className="border-b border-slate-100 dark:border-white/10">
+            <CardTitle className="flex items-center gap-2 text-base font-black"><Zap className="h-4 w-4 text-indigo-500" /> Qualificador Express AI</CardTitle>
+            <CardDescription>Use o endpoint real de inteligência para simular qualificação.</CardDescription>
           </CardHeader>
-          <CardContent className="pt-4">
-            <div className="h-[220px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={statusBreakdownData} layout="vertical" margin={{ left: 10, right: 20 }}>
-                  <XAxis type="number" stroke="#64748b" fontSize={11} />
-                  <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={11} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#ffffff', 
-                      borderColor: '#e2e8f0',
-                      borderRadius: '8px',
-                      color: '#0f172a',
-                      fontSize: '12px'
-                    }}
-                  />
-                  <Bar dataKey="count" radius={[0, 6, 6, 0]}>
-                    {statusBreakdownData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+          <CardContent className="space-y-4 p-5">
+            <form onSubmit={handleQuickQualify} className="space-y-3">
+              <Input
+                placeholder="Ex: Mercado Livre Brasil LTDA"
+                value={quickQualifyName}
+                onChange={(e) => setQuickQualifyName(e.target.value)}
+                className="h-11 rounded-xl bg-slate-50 text-xs dark:bg-white/[0.04]"
+              />
+              <Button type="submit" disabled={isQualifying || !quickQualifyName.trim()} className="h-11 w-full gap-2 rounded-xl bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700">
+                <Sparkles className="h-4 w-4" /> {isQualifying ? 'Analisando...' : 'Executar análise AI'}
+              </Button>
+            </form>
+            {quickResult ? (
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/10">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-indigo-700 dark:text-indigo-300">Resultado</p>
+                  <Badge variant={quickResult.level === 'qualified' ? 'qualified' : quickResult.level === 'prospect' ? 'prospect' : 'lead'}>{quickResult.level}</Badge>
+                </div>
+                <div className="mt-4 flex items-end justify-between">
+                  <div>
+                    <p className="text-[11px] text-slate-500">Score oportunidade</p>
+                    <p className="text-3xl font-black text-slate-950 dark:text-white">{quickResult.score}/100</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[11px] text-slate-500">Confiança</p>
+                    <p className="text-lg font-black text-emerald-600">{Math.round(Number(quickResult.confidence) * 100)}%</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="h-8 w-8 text-emerald-500" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-950 dark:text-white">Pronto para análise</p>
+                    <p className="text-xs text-slate-500">Sem dados mockados. Resultado vem do backend.</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
-      </div>
+      </section>
     </div>
   );
 };

@@ -1,15 +1,19 @@
 import React from 'react';
-import { 
-  LayoutDashboard, 
-  Building2, 
-  Kanban, 
-  ShieldCheck, 
-  Workflow, 
-  Settings, 
-  Sparkles, 
-  Sun, 
-  Moon, 
-  Database
+import {
+  BarChart3,
+  Building2,
+  ChevronDown,
+  CreditCard,
+  Database,
+  Kanban,
+  LayoutDashboard,
+  LifeBuoy,
+  Moon,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  Workflow,
 } from 'lucide-react';
 import { ActiveTab } from '@/types';
 import { cn } from '@/lib/utils';
@@ -31,68 +35,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
   totalProspectsCount,
 }) => {
   const navItems = [
-    {
-      id: 'dashboard' as ActiveTab,
-      label: 'Visão Geral (Dashboard)',
-      icon: LayoutDashboard,
-      badge: null,
-    },
-    {
-      id: 'prospects' as ActiveTab,
-      label: 'Diretório de CNPJs',
-      icon: Building2,
-      badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null,
-    },
-    {
-      id: 'pipeline' as ActiveTab,
-      label: 'Pipeline & Funil CRM',
-      icon: Kanban,
-      badge: 'Kanban',
-    },
-    {
-      id: 'risk' as ActiveTab,
-      label: 'Risco de Crédito & AI',
-      icon: ShieldCheck,
-      badge: 'AI Engine',
-      isNew: true,
-    },
-    {
-      id: 'workflows' as ActiveTab,
-      label: 'Automações & Regras',
-      icon: Workflow,
-      badge: null,
-    },
+    { id: 'dashboard' as ActiveTab, label: 'CRM Dashboard', icon: LayoutDashboard, badge: null },
+    { id: 'prospects' as ActiveTab, label: 'Leads & CNPJs', icon: Building2, badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
+    { id: 'pipeline' as ActiveTab, label: 'Sales Pipeline', icon: Kanban, badge: 'Live' },
+    { id: 'risk' as ActiveTab, label: 'Credit Risk AI', icon: ShieldCheck, badge: 'AI' },
+    { id: 'workflows' as ActiveTab, label: 'Workflow Automation', icon: Workflow, badge: null },
+  ];
+
+  const appItems = [
+    { label: 'Revenue Analytics', icon: BarChart3 },
+    { label: 'Billing Intelligence', icon: CreditCard },
+    { label: 'Support Center', icon: LifeBuoy },
   ];
 
   return (
-    <aside className="w-72 bg-sidebar border-r border-sidebar-border flex flex-col justify-between h-screen sticky top-0 z-40 transition-colors duration-200">
-      {/* Top Brand Header */}
-      <div>
-        <div className="h-16 px-6 border-b border-sidebar-border flex items-center justify-between">
+    <aside className="sticky top-0 z-40 hidden h-screen w-72 shrink-0 border-r border-slate-200 bg-white/95 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/95 lg:flex lg:flex-col">
+      <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5 dark:border-white/10">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/15 dark:bg-white dark:text-slate-950">
+            <Database className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-base font-black tracking-tight text-slate-950 dark:text-white">SalesIntel</h1>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Enterprise CRM</p>
+          </div>
+        </div>
+        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] font-black text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+          PROD
+        </Badge>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        <button className="mb-5 flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-indigo-500/10">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-600/25">
-              <Database className="h-5 w-5" />
-            </div>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-xs font-black text-white">AP</div>
             <div>
-              <h1 className="font-extrabold text-base tracking-tight leading-none text-sidebar-foreground">
-                Sales<span className="text-indigo-600 dark:text-indigo-400">Intel</span>
-              </h1>
-              <p className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-0.5">
-                Enterprise CRM
-              </p>
+              <p className="text-xs font-black text-slate-950 dark:text-white">Álvaro Paco</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">SalesIntel Demo</p>
             </div>
           </div>
-          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-emerald-300 text-emerald-700 bg-emerald-50 dark:border-emerald-500/30 dark:text-emerald-400 dark:bg-emerald-500/10">
-            PROD
-          </Badge>
-        </div>
+          <ChevronDown className="h-4 w-4 text-slate-400" />
+        </button>
 
-        {/* Navigation Section */}
-        <div className="p-4 space-y-6">
+        <div className="space-y-6">
           <div>
-            <p className="px-3 text-[11px] font-bold text-slate-400 dark:text-muted-foreground uppercase tracking-wider mb-2">
-              Plataforma
-            </p>
+            <p className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Dashboards</p>
             <nav className="space-y-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
@@ -102,86 +89,59 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     key={item.id}
                     onClick={() => setActiveTab(item.id)}
                     className={cn(
-                      "w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-xs font-semibold transition-all duration-150 group relative",
+                      'group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-bold transition-all',
                       isActive
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                        : "text-slate-600 dark:text-sidebar-foreground/80 hover:bg-slate-100 dark:hover:bg-sidebar-accent hover:text-slate-900 dark:hover:text-sidebar-foreground"
+                        ? 'bg-slate-950 text-white shadow-lg shadow-slate-900/15 dark:bg-white dark:text-slate-950'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white'
                     )}
                   >
-                    <div className="flex items-center gap-3">
-                      <Icon className={cn("h-4 w-4 transition-transform group-hover:scale-110", isActive ? "text-white" : "text-slate-400 dark:text-muted-foreground")} />
-                      <span>{item.label}</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {item.isNew && (
-                        <span className="h-2 w-2 rounded-full bg-indigo-400 animate-ping" />
-                      )}
-                      {item.badge && (
-                        <span className={cn(
-                          "px-2 py-0.5 text-[10px] rounded-full font-bold",
-                          isActive
-                            ? "bg-white/20 text-white"
-                            : "bg-slate-100 text-slate-600 dark:bg-sidebar-accent dark:text-muted-foreground"
-                        )}>
-                          {item.badge}
-                        </span>
-                      )}
-                    </div>
+                    <span className="flex items-center gap-3">
+                      <Icon className={cn('h-4 w-4', isActive ? 'text-current' : 'text-slate-400 group-hover:text-indigo-500')} />
+                      {item.label}
+                    </span>
+                    {item.badge && (
+                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-black', isActive ? 'bg-white/15 text-current dark:bg-slate-950/10' : 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300')}>
+                        {item.badge}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </nav>
           </div>
 
-          {/* Quick Metrics Callout Card */}
-          <div className="rounded-xl border border-indigo-200 dark:border-indigo-500/20 bg-indigo-50/60 dark:bg-gradient-to-b dark:from-indigo-500/10 dark:to-transparent p-4 relative overflow-hidden">
-            <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 mb-1.5">
-              <Sparkles className="h-4 w-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">CNPJ Engine AI</span>
+          <div>
+            <p className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Apps</p>
+            <div className="space-y-1">
+              {appItems.map((item) => (
+                <button key={item.label} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white">
+                  <item.icon className="h-4 w-4 text-slate-400" />
+                  {item.label}
+                </button>
+              ))}
             </div>
-            <p className="text-xs text-slate-600 dark:text-muted-foreground leading-relaxed">
-              Base enriquecida conectada ao PostgreSQL com inteligência comercial em tempo real.
-            </p>
           </div>
         </div>
       </div>
 
-      {/* Bottom Sidebar Settings & User Profile */}
-      <div className="p-4 border-t border-sidebar-border space-y-3">
-        {/* Dark/Light mode toggle */}
-        <button
-          onClick={() => setIsDark(!isDark)}
-          className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-sidebar-foreground/80 hover:bg-slate-100 dark:hover:bg-sidebar-accent transition-colors border border-slate-200/80 dark:border-sidebar-border bg-white dark:bg-transparent"
-        >
-          <div className="flex items-center gap-2.5">
-            {isDark ? <Moon className="h-4 w-4 text-indigo-400" /> : <Sun className="h-4 w-4 text-amber-500" />}
-            <span>{isDark ? 'Modo Escuro' : 'Modo Claro'}</span>
+      <div className="space-y-3 border-t border-slate-200 p-4 dark:border-white/10">
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/10">
+          <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
+            <Sparkles className="h-4 w-4" />
+            <span className="text-xs font-black uppercase tracking-[0.14em]">CNPJ Engine AI</span>
           </div>
-          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 dark:bg-sidebar-accent text-slate-600 dark:text-muted-foreground">
-            {isDark ? 'Dark' : 'Light (Padrão)'}
-          </span>
-        </button>
+          <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">Dados PostgreSQL, scoring e MCP prontos para workflows com LLM.</p>
+        </div>
 
-        {/* User Card */}
-        <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-100/70 dark:bg-sidebar-accent/50 border border-slate-200/80 dark:border-sidebar-border">
-          <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shadow-sm">
-              AP
-            </div>
-            <div className="truncate">
-              <p className="text-xs font-bold text-slate-900 dark:text-sidebar-foreground truncate">
-                Álvaro Paco
-              </p>
-              <p className="text-[10px] text-slate-500 dark:text-muted-foreground truncate">
-                SalesIntel Demo
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setActiveTab('settings')}
-            className="p-1 text-slate-400 hover:text-slate-900 dark:text-muted-foreground dark:hover:text-foreground rounded transition-colors"
+            onClick={() => setIsDark(!isDark)}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-200 dark:hover:bg-white/[0.06]"
           >
+            {isDark ? <Moon className="h-4 w-4 text-indigo-300" /> : <Sun className="h-4 w-4 text-amber-500" />}
+            {isDark ? 'Dark' : 'Light'}
+          </button>
+          <button onClick={() => setActiveTab('settings')} className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white">
             <Settings className="h-4 w-4" />
           </button>
         </div>

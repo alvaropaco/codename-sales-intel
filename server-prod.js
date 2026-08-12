@@ -10,10 +10,16 @@ const fs = require('fs');
 
 // Middleware
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'apps', 'web', 'dist')));
 app.use(express.static('public'));
 
-// Dashboard route - serve HTML file
+// Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
 app.get('/', async (req, res) => {
+  const reactDashboardPath = path.join(__dirname, 'apps', 'web', 'dist', 'index.html');
+  if (fs.existsSync(reactDashboardPath)) {
+    return res.sendFile(reactDashboardPath);
+  }
+
   const dashboardPath = path.join(__dirname, 'public', 'dashboard.html');
   if (fs.existsSync(dashboardPath)) {
     return res.sendFile(dashboardPath);

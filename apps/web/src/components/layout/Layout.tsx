@@ -29,7 +29,7 @@ export const Layout: React.FC<LayoutProps> = ({
   onOpenQualifyModal,
 }) => {
   return (
-    <div className={`min-h-screen flex ${isDark ? 'dark bg-background text-foreground' : 'light bg-slate-50 text-slate-900'}`}>
+    <div className={`min-h-screen flex bg-slate-50 text-slate-900 ${isDark ? 'dark bg-slate-950 text-foreground' : ''}`}>
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -45,7 +45,7 @@ export const Layout: React.FC<LayoutProps> = ({
           onOpenCreateModal={onOpenCreateModal}
           onOpenQualifyModal={onOpenQualifyModal}
         />
-        <main className="flex-1 p-8 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 xl:p-8">
           {children}
         </main>
       </div>
