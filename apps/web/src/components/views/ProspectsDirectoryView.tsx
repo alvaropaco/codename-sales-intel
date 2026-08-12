@@ -7,6 +7,7 @@ import {
   MapPin,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Trash2,
   Users,
 } from 'lucide-react';
@@ -14,7 +15,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Prospect } from '@/types';
+import { CommercialProfile, Prospect } from '@/types';
 import { formatCNPJ } from '@/lib/utils';
 
 interface ProspectsDirectoryViewProps {
@@ -24,6 +25,8 @@ interface ProspectsDirectoryViewProps {
   onSelectProspect: (prospect: Prospect) => void;
   onDeleteProspect: (id: string) => void;
   onRefresh: () => void;
+  commercialProfile: CommercialProfile | null;
+  onOpenSettings: () => void;
 }
 
 const statusLabels: Record<string, string> = {
@@ -57,6 +60,8 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   onSelectProspect,
   onDeleteProspect,
   onRefresh,
+  commercialProfile,
+  onOpenSettings,
 }) => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
@@ -66,6 +71,11 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [selectedAge, setSelectedAge] = useState('all');
 
   const industries = Array.from(new Set(prospects.map((p) => p.industry).filter(Boolean)));
+  const profileSegments = [
+    ...(commercialProfile?.targetSegments || []),
+    ...(commercialProfile?.targetCnaes || []),
+  ];
+  const profileLocations = commercialProfile?.targetLocations || [];
 
   const filteredProspects = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -165,6 +175,28 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
           </Button>
         </div>
       </div>
+
+      <Card className="border-indigo-100 bg-indigo-50/70 shadow-sm dark:border-indigo-500/20 dark:bg-indigo-500/10">
+        <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-200">
+              <SlidersHorizontal className="h-4 w-4" />
+              <span className="text-xs font-black uppercase tracking-[0.16em]">Perfil usado na descoberta</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {profileSegments.length ? profileSegments.slice(0, 6).map((item) => (
+                <Badge key={item} variant="outline" className="rounded-full bg-white/80 text-indigo-800 dark:bg-white/10 dark:text-indigo-100">{item}</Badge>
+              )) : <span className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">Defina segmentos ou CNAEs para orientar as recomendações.</span>}
+              {profileLocations.length ? profileLocations.slice(0, 4).map((item) => (
+                <Badge key={item} variant="outline" className="rounded-full bg-white/80 text-indigo-800 dark:bg-white/10 dark:text-indigo-100">{item}</Badge>
+              )) : null}
+            </div>
+          </div>
+          <Button onClick={onOpenSettings} variant="outline" className="h-10 shrink-0 gap-2 rounded-xl bg-white/80 text-xs font-bold dark:bg-white/10">
+            Ajustar preferências
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card className="glass-card">
         <CardContent className="p-4 space-y-4">

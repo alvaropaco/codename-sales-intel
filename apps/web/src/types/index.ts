@@ -57,6 +57,25 @@ export interface WorkflowItem {
   createdAt: string;
 }
 
+export interface CommercialProfile {
+  id?: string | null;
+  orgId?: string | null;
+  onboardingCompleted: boolean;
+  companyName: string;
+  salesTeamSize: string;
+  targetSegments: string[];
+  targetCnaes: string[];
+  targetLocations: string[];
+  companyStatuses: string[];
+  targetSizes: string[];
+  ageRanges: string[];
+  averageTicket?: number | null;
+  salesCycle: string;
+  valueProposition: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface CnpjPartner {
   name?: string;
   qualification?: string;

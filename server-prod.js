@@ -57,11 +57,131 @@ async function getOrCreateOrganization(orgId) {
   return org.id;
 }
 
+function asStringArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function emptyCommercialProfile() {
+  return {
+    id: null,
+    orgId: null,
+    onboardingCompleted: false,
+    companyName: '',
+    salesTeamSize: '',
+    targetSegments: [],
+    targetCnaes: [],
+    targetLocations: [],
+    companyStatuses: ['active'],
+    targetSizes: [],
+    ageRanges: [],
+    averageTicket: null,
+    salesCycle: '',
+    valueProposition: '',
+    createdAt: null,
+    updatedAt: null,
+  };
+}
+
+function formatCommercialProfile(settings, organization) {
+  if (!settings) return { ...emptyCommercialProfile(), companyName: organization?.name || '' };
+
+  return {
+    id: settings.id,
+    orgId: settings.orgId,
+    onboardingCompleted: settings.onboardingCompleted,
+    companyName: settings.companyName || organization?.name || '',
+    salesTeamSize: settings.salesTeamSize || '',
+    targetSegments: Array.isArray(settings.targetSegments) ? settings.targetSegments : [],
+    targetCnaes: Array.isArray(settings.targetCnaes) ? settings.targetCnaes : [],
+    targetLocations: Array.isArray(settings.targetLocations) ? settings.targetLocations : [],
+    companyStatuses: Array.isArray(settings.companyStatuses) && settings.companyStatuses.length ? settings.companyStatuses : ['active'],
+    targetSizes: Array.isArray(settings.targetSizes) ? settings.targetSizes : [],
+    ageRanges: Array.isArray(settings.ageRanges) ? settings.ageRanges : [],
+    averageTicket: settings.averageTicket,
+    salesCycle: settings.salesCycle || '',
+    valueProposition: settings.valueProposition || '',
+    createdAt: settings.createdAt,
+    updatedAt: settings.updatedAt,
+  };
+}
+
+function normalizeCommercialProfilePayload(body = {}) {
+  return {
+    onboardingCompleted: Boolean(body.onboardingCompleted),
+    companyName: String(body.companyName || '').trim() || null,
+    salesTeamSize: String(body.salesTeamSize || '').trim() || null,
+    targetSegments: asStringArray(body.targetSegments),
+    targetCnaes: asStringArray(body.targetCnaes),
+    targetLocations: asStringArray(body.targetLocations),
+    companyStatuses: asStringArray(body.companyStatuses).length ? asStringArray(body.companyStatuses) : ['active'],
+    targetSizes: asStringArray(body.targetSizes),
+    ageRanges: asStringArray(body.ageRanges),
+    averageTicket: body.averageTicket === '' || body.averageTicket === null || body.averageTicket === undefined ? null : Number(body.averageTicket) || null,
+    salesCycle: String(body.salesCycle || '').trim() || null,
+    valueProposition: String(body.valueProposition || '').trim() || null,
+  };
+}
+
 let DEFAULT_ORG_ID;
 
 // ============================================================================
 // API ENDPOINTS
 // ============================================================================
+
+// GET /api/settings/commercial-profile - Commercial preferences and onboarding state
+app.get('/api/settings/commercial-profile', async (req, res) => {
+  try {
+    const org = await prisma.organization.findFirst();
+    if (!org) {
+      return res.json({ success: true, data: emptyCommercialProfile(), timestamp: new Date().toISOString() });
+    }
+
+    const settings = await prisma.commercialSettings.findUnique({ where: { orgId: org.id } });
+    res.json({
+      success: true,
+      data: formatCommercialProfile(settings, org),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PUT /api/settings/commercial-profile - Save commercial preferences from onboarding/settings
+app.put('/api/settings/commercial-profile', async (req, res) => {
+  try {
+    const data = normalizeCommercialProfilePayload(req.body || {});
+    const orgId = await getOrCreateOrganization(req.body?.orgId);
+
+    if (data.companyName) {
+      await prisma.organization.update({
+        where: { id: orgId },
+        data: { name: data.companyName }
+      });
+    }
+
+    const settings = await prisma.commercialSettings.upsert({
+      where: { orgId },
+      create: { ...data, orgId },
+      update: data,
+    });
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
+
+    res.json({
+      success: true,
+      data: formatCommercialProfile(settings, org),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // GET /api/prospects - Get all prospects
 app.get('/api/prospects', async (req, res) => {

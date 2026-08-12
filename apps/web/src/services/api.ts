@@ -6,7 +6,8 @@ import {
   QualificationResult, 
   CreditRiskResult,
   WorkflowItem,
-  EnrichedCnpjContact
+  EnrichedCnpjContact,
+  CommercialProfile
 } from '../types';
 
 const API_BASE = '/api';
@@ -146,6 +147,28 @@ export async function createWorkflow(data: { name: string; trigger: string; acti
     throw new Error(json.error || 'Erro ao criar workflow');
   }
   return json.workflow;
+}
+
+export async function fetchCommercialProfile(): Promise<CommercialProfile> {
+  const res = await fetch(`${API_BASE}/settings/commercial-profile`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar preferências comerciais');
+  }
+  return json.data;
+}
+
+export async function saveCommercialProfile(data: CommercialProfile): Promise<CommercialProfile> {
+  const res = await fetch(`${API_BASE}/settings/commercial-profile`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao salvar preferências comerciais');
+  }
+  return json.data;
 }
 
 export async function fetchEnrichedCnpjContacts(filters: {

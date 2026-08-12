@@ -6,10 +6,12 @@ import { PipelineKanbanView } from '@/components/views/PipelineKanbanView';
 import { CreditRiskView } from '@/components/views/CreditRiskView';
 import { WorkflowsView } from '@/components/views/WorkflowsView';
 import { CnpjEnrichmentView } from '@/components/views/CnpjEnrichmentView';
+import { SettingsView } from '@/components/views/SettingsView';
+import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
 import { ProspectModal } from '@/components/modals/ProspectModal';
 import { ProspectDetailDrawer } from '@/components/modals/ProspectDetailDrawer';
-import { ActiveTab, Prospect, PipelineAnalytics, ForecastAnalytics } from '@/types';
-import { fetchProspects, fetchPipelineAnalytics, fetchForecastAnalytics, deleteProspect } from '@/services/api';
+import { ActiveTab, Prospect, PipelineAnalytics, ForecastAnalytics, CommercialProfile } from '@/types';
+import { fetchProspects, fetchPipelineAnalytics, fetchForecastAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -33,19 +35,26 @@ export function App() {
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
+  const [commercialProfile, setCommercialProfile] = useState<CommercialProfile | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const loadData = async () => {
     try {
-      const [prospectsData, analyticsData, forecastData] = await Promise.all([
+      const [prospectsData, analyticsData, forecastData, profileData] = await Promise.all([
         fetchProspects(),
         fetchPipelineAnalytics(),
         fetchForecastAnalytics(),
+        fetchCommercialProfile(),
       ]);
       setProspects(prospectsData);
       setAnalytics(analyticsData);
       setForecast(forecastData);
+      setCommercialProfile(profileData);
     } catch (err) {
       console.error('Error loading data:', err);
+    } finally {
+      setIsLoadingProfile(false);
     }
   };
 
@@ -57,6 +66,17 @@ export function App() {
     if (!confirm('Deseja realmente excluir este prospecto?')) return;
     await deleteProspect(id);
     await loadData();
+  };
+
+  const handleSaveCommercialProfile = async (profile: CommercialProfile) => {
+    setIsSavingProfile(true);
+    try {
+      const saved = await saveCommercialProfile(profile);
+      setCommercialProfile(saved);
+      await loadData();
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   return (
@@ -89,6 +109,8 @@ export function App() {
           onSelectProspect={(p) => setSelectedProspect(p)}
           onDeleteProspect={handleDeleteProspect}
           onRefresh={loadData}
+          commercialProfile={commercialProfile}
+          onOpenSettings={() => setActiveTab('settings')}
         />
       )}
 
@@ -106,14 +128,7 @@ export function App() {
 
       {activeTab === 'enrichment' && <CnpjEnrichmentView />}
 
-      {activeTab === 'settings' && (
-        <div className="p-8 max-w-xl mx-auto space-y-4 text-center">
-          <h2 className="text-xl font-bold text-foreground">Preferências SalesIntel</h2>
-          <p className="text-xs text-muted-foreground">
-            Ajuste segmentos de interesse, regiões prioritárias e critérios comerciais da organização.
-          </p>
-        </div>
-      )}
+      {activeTab === 'settings' && <SettingsView profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />}
 
       {/* Modals & Drawers */}
       <ProspectModal
@@ -127,6 +142,10 @@ export function App() {
         onClose={() => setSelectedProspect(null)}
         onDelete={handleDeleteProspect}
       />
+
+      {!isLoadingProfile && !commercialProfile?.onboardingCompleted && (
+        <OnboardingModal profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />
+      )}
     </Layout>
   );
 }
