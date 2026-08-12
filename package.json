@@ -1,0 +1,33 @@
+{
+  "name": "salesintel-platform",
+  "version": "1.0.0",
+  "description": "B2B SaaS platform for CNPJ data intelligence and prospect management",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm run dev:api\" \"pnpm run dev:web\"",
+    "dev:api": "pnpm --filter api dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm --filter api build && pnpm --filter web build",
+    "install-all": "pnpm install",
+    "db:push": "pnpm --filter api prisma db push",
+    "db:migrate": "pnpm --filter api prisma migrate dev",
+    "db:studio": "pnpm --filter api prisma studio"
+  },
+  "pnpm": {
+    "overrides": {
+      "@apollo/client": "3.8.0",
+      "@radix-ui/react-dialog": "1.1.1",
+      "prisma": "^5.22.0"
+    }
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@prisma/client": "^5.22.0",
+    "express": "^5.2.1",
+    "prisma": "^5.22.0"
+  }
+}

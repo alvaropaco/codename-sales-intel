@@ -1,0 +1,88 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String     @id @default(cuid())
+  name      String
+  cnpj      String?    @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  
+  users     User[]
+  prospects Prospect[]
+  activities Activity[]
+  workflows Workflow[]
+}
+
+model User {
+  id       String   @id @default(cuid())
+  email    String   @unique
+  name     String?
+  role     String   @default("member")
+  orgId    String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Prospect {
+  id                    String   @id @default(cuid())
+  cnpj                  String   @unique
+  companyName           String
+  status                String   @default("prospect") // prospect, qualified, lead
+  opportunityScore      Int      @default(0)
+  revenueEstimate       Int?
+  employees             Int?
+  industry              String?
+  activitiesCount       Int      @default(0)
+  lastContact           DateTime?
+  qualificationStage    String   @default("initial_contact")
+  creditRiskScore       Int?
+  creditRiskLevel       String?
+  orgId                 String
+  organization          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  activities            Activity[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  @@index([orgId])
+  @@index([status])
+}
+
+model Activity {
+  id         String   @id @default(cuid())
+  type       String   // call, email, meeting, note
+  description String?
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  orgId      String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@index([prospectId])
+  @@index([orgId])
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String
+  trigger     String   // prospect_created, score_changed, etc
+  action      String   // send_email, create_task, etc
+  status      String   @default("active")
+  orgId       String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([orgId])
+}

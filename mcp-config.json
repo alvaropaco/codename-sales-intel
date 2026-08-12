@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "salesintel": {
+      "command": "node",
+      "args": ["/Users/alvaropaco/salesintel-platform/mcp-server.js"],
+      "env": {
+        "DATABASE_URL": "postgresql://cnpj:cnpj@localhost:5432/cnpj?schema=public",
+        "NODE_ENV": "production"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
