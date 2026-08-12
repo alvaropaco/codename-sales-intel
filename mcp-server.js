@@ -33,6 +33,9 @@ const prisma = new PrismaClient();
 const server = new Server({
   name: "salesintel-mcp",
   version: "1.0.0",
+}, {
+  resources: {},
+  tools: {},
 });
 
 // ============================================================================
@@ -384,6 +387,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Prospect with CNPJ ${cnpj} already exists`);
       }
 
+      // Get or create default organization
+      let org = await prisma.organization.findFirst();
+      if (!org) {
+        org = await prisma.organization.create({
+          data: { name: "Default Organization" },
+        });
+      }
+
       // Create new prospect
       const prospect = await prisma.prospect.create({
         data: {
@@ -394,6 +405,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           employees: employees || 0,
           revenueEstimate: revenue_estimate || 0,
           opportunityScore: 65, // Default score
+          orgId: org.id,
         },
       });
 
