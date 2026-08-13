@@ -18,7 +18,15 @@
 FROM node:22-alpine AS builder
 
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@9 --activate
+RUN apk add --no-cache openssl \
+  && corepack enable && corepack prepare pnpm@9 --activate
+
+# IMPORTANT: override any build-time NODE_ENV from the platform (e.g. Coolify
+# injects NODE_ENV=production at build time, which makes pnpm skip
+# devDependencies — and the web build needs tsc + vite from devDependencies).
+# Setting NODE_ENV=development here guarantees a full install in the builder.
+# The runtime stage sets NODE_ENV=production below.
+ENV NODE_ENV=development
 
 # Install root workspace deps (apps/*)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
