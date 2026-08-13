@@ -277,6 +277,24 @@ Configure in Claude or other MCP clients:
 
 ---
 
+## 🧬 NATS Enrichment Integration (Novo)
+
+Integração com o pipeline `enrichment-worker` via NATS JetStream. Quando um lead
+entra na esteira de **"Em Qualificação"** (status `prospect`), o backend publica
+`enrichment.company.requested.v1` e um consumer durável (`salesintel-results`)
+persiste os resultados de forma idempotente (`companyId + enrichmentVersion`),
+ACK somente após persistir.
+
+| Arquivo | Papel |
+|---------|-------|
+| `nats-enrichment.js` | publish + consumer durável + DLQ monitor + persistência idempotente |
+| `server-prod.js` | trigger no kanban (Em Qualificação) + boot do consumer/DLQ + graceful shutdown |
+| `prisma/...20260813180000_add_nats_enrichment` | tabela `CnpjEnrichment` + `enrichmentVersion` em `Prospect` |
+| `NATS_ENRICHMENT.md` | Documentação + variáveis de deploy (Coolify) |
+
+Habilite via env: `NATS_ENABLED=true` e `NATS_URL` (ver `NATS_ENRICHMENT.md`).
+Com `NATS_ENABLED=false` o app usa o fallback síncrono BrasilAPI.
+
 ## 📞 Support
 
 - **API Questions**: See `server-prod.js` comments

@@ -50,6 +50,7 @@ const {
   listEnrichedProspects,
   formatEnrichedProspect
 } = require('./cnpj-enrichment');
+const natsEnrichment = require('./nats-enrichment');
 
 // Middleware
 app.use(express.json());
@@ -304,7 +305,26 @@ app.post('/api/prospects', async (req, res) => {
       }
     });
 
-    const enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
+    // Enriquecimento: quando NATS está habilitado, publicamos o pedido para a
+    // esteira de "Em Qualificação" (status prospect) e o consumer persiste o
+    // resultado de forma assíncrona e idempotente. Caso contrário, cai no
+    // enriquecimento síncrono via BrasilAPI (fallback para dev sem NATS).
+    let enrichedProspect;
+    if (natsEnrichment.isNatsEnabled()) {
+      const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+      enrichedProspect = await prisma.prospect.update({
+        where: { id: prospect.id },
+        data: {
+          enrichmentStatus: 'pending',
+          enrichmentSource: 'nats.enrichment',
+          enrichmentError: null,
+        },
+      });
+      // Mantém o payload de resposta enxuto sem bloquear o request.
+      if (eventId) enrichedProspect._enrichmentEventId = eventId;
+    } else {
+      enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
+    }
 
     res.json({
       success: true,
@@ -324,9 +344,27 @@ app.post('/api/prospects', async (req, res) => {
   }
 });
 
-// POST /api/prospects/:id/enrich - Enrich a specific prospect CNPJ from BrasilAPI
+// POST /api/prospects/:id/enrich - Enrich a specific prospect CNPJ
 app.post('/api/prospects/:id/enrich', async (req, res) => {
   try {
+    // Com NATS habilitado, encaminhamos para o pipeline de enriquecimento.
+    if (natsEnrichment.isNatsEnabled()) {
+      const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+      if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+      const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+      const updated = await prisma.prospect.update({
+        where: { id: req.params.id },
+        data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
+      });
+      return res.json({
+        success: true,
+        data: updated,
+        enrichment: { status: 'pending', source: 'nats.enrichment', error: null },
+        eventId,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     const enriched = await enrichProspectWithCnpj(prisma, req.params.id);
     res.json({
       success: true,
@@ -346,10 +384,23 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
 // PUT /api/prospects/:id - Update prospect
 app.put('/api/prospects/:id', async (req, res) => {
   try {
+    const previous = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+
     const prospect = await prisma.prospect.update({
       where: { id: req.params.id },
       data: req.body
     });
+
+    // Dispara enriquecimento quando o lead entra na esteira de "Em Qualificação"
+    // (status 'prospect'), inclusive ao trocar de coluna no kanban.
+    const enteredQualification =
+      prospect.status === 'prospect' && (!previous || previous.status !== 'prospect');
+
+    if (enteredQualification && natsEnrichment.isNatsEnabled()) {
+      natsEnrichment.requestEnrichment(prisma, prospect).catch((err) => {
+        console.error('[nats] falha ao encadear enriquecimento no update:', err.message);
+      });
+    }
 
     res.json({ success: true, data: prospect });
   } catch (error) {
@@ -754,6 +805,38 @@ app.get('/api/discovery/stats', async (req, res) => {
   }
 });
 
+// GET /api/enrichment/status/:id - Status do enriquecimento (resultados NATS)
+app.get('/api/enrichment/status/:id', async (req, res) => {
+  try {
+    const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+
+    const results = await prisma.cnpjEnrichment.findMany({
+      where: { companyId: prospect.id },
+      orderBy: { enrichmentVersion: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        prospect: {
+          id: prospect.id,
+          cnpj: prospect.cnpj,
+          enrichmentStatus: prospect.enrichmentStatus,
+          enrichmentSource: prospect.enrichmentSource,
+          enrichmentError: prospect.enrichmentError,
+          enrichmentVersion: prospect.enrichmentVersion,
+          enrichedAt: prospect.enrichedAt,
+        },
+        results,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Error handling for 404
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route not found' });
@@ -763,7 +846,16 @@ app.use((req, res) => {
 async function start() {
   try {
     DEFAULT_ORG_ID = await initDatabase();
-    
+
+    // Inicia o pipeline NATS (consumer de resultados + monitor de DLQ) quando
+    // habilitado. Não bloqueia o boot caso o NATS esteja indisponível.
+    if (natsEnrichment.isNatsEnabled()) {
+      natsEnrichment.startEnrichmentConsumer(prisma);
+      natsEnrichment.startDlqMonitor();
+    } else {
+      console.log('[nats] NATS desabilitado - usando enriquecimento síncrono BrasilAPI.');
+    }
+
     app.listen(PORT, () => {
       console.log('');
       console.log('╔════════════════════════════════════════════╗');
@@ -773,6 +865,7 @@ async function start() {
       console.log('║  📊 Database: PostgreSQL (localhost:5432) ║');
       console.log(`║  🌐 Dashboard: http://localhost:${PORT}          ║`);
       console.log('║                                            ║');
+      console.log(`║  📡 NATS enrichment: ${natsEnrichment.isNatsEnabled() ? 'ON' : 'OFF'}        ║`);
       console.log('║  ✅ Real data from database (no mock!)     ║');
       console.log('║  ✅ All CRUD operations supported          ║');
       console.log('║  ✅ Error handling & validation            ║');
@@ -791,6 +884,13 @@ async function start() {
 
 process.on('SIGINT', async () => {
   console.log('\nShutting down...');
+  await natsEnrichment.shutdown();
+  await prisma.$disconnect();
+  process.exit(0);
+});
+process.on('SIGTERM', async () => {
+  console.log('\nShutting down (SIGTERM)...');
+  await natsEnrichment.shutdown();
   await prisma.$disconnect();
   process.exit(0);
 });
