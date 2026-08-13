@@ -1,0 +1,30 @@
+# Git / CI
+.git
+.gitignore
+
+# Local env + secrets (never ship into the image)
+.env
+.env.local
+*.env.local
+
+# Dependencies (installed inside the image)
+node_modules/
+apps/*/node_modules/
+
+# Build outputs regenerated in the image
+apps/web/dist/
+
+# Logs & temp
+*.log
+.DS_Store
+*.tmp
+
+# Docs (not needed at runtime)
+DELIVERABLES.md
+DISCOVERY.md
+MCP_INTEGRATION.md
+MCP_SUMMARY.md
+NATS_ENRICHMENT.md
+PLATFORM_STATUS.md
+PRODUCTION_SETUP.md
+*.molpro

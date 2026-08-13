@@ -11,14 +11,11 @@
     "install-all": "pnpm install",
     "db:push": "pnpm --filter api prisma db push",
     "db:migrate": "pnpm --filter api prisma migrate dev",
-    "db:studio": "pnpm --filter api prisma studio"
-  },
-  "pnpm": {
-    "overrides": {
-      "@apollo/client": "3.8.0",
-      "@radix-ui/react-dialog": "1.1.1",
-      "prisma": "^5.22.0"
-    }
+    "db:studio": "pnpm --filter api prisma studio",
+    "db:deploy": "npx prisma migrate deploy",
+    "db:generate": "npx prisma generate",
+    "start": "node server-prod.js",
+    "docker:build": "docker build -t salesintel ."
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
