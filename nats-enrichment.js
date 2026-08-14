@@ -43,6 +43,31 @@ function deterministicCompanyId(cnpj) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toIntOrNull(value) {
+  const n = toNumberOrNull(value);
+  return n === null ? null : Math.round(n);
+}
+
+// O worker envia um `summary` reduzido no evento completed.v1. Normalizamos
+// exatamente as chaves que ele publica (ver _summary no job_runner do worker).
+function buildEnrichmentSummary(summary) {
+  return {
+    domain: summary.domain ?? null,
+    website_active: summary.website_active != null ? Boolean(summary.website_active) : null,
+    corporate_email: summary.corporate_email != null ? Boolean(summary.corporate_email) : null,
+    launch_velocity: toNumberOrNull(summary.launch_velocity),
+    operational_readiness: toNumberOrNull(summary.operational_readiness),
+    commercial_potential: toNumberOrNull(summary.commercial_potential),
+    tech_count: toIntOrNull(summary.tech_count),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Config (env com defaults)
 // ---------------------------------------------------------------------------
@@ -180,17 +205,7 @@ async function persistEnrichmentResult(prisma, result) {
       status,
       errorCode: summary.error_code || null,
       errorMessage: summary.error_message || null,
-      companyName: summary.company_name ?? summary.legal_name ?? null,
-      tradeName: summary.trade_name ?? null,
-      industry: summary.industry ?? summary.cnae ?? null,
-      revenueEstimate: summary.revenue ?? null,
-      employees: summary.employees ?? null,
-      cnpjEmail: summary.email ?? null,
-      cnpjPhones: Array.isArray(summary.phones) ? summary.phones : null,
-      cnpjPartners: summary.partners ? summary.partners : null,
-      cnpjOpenedAt: summary.opened_at ? new Date(summary.opened_at) : null,
-      cnpjLegalNature: summary.legal_nature ?? null,
-      score: summary.score ?? null,
+      score: toIntOrNull(summary.commercial_potential),
       rawPayload: result,
     },
     update: {
@@ -214,19 +229,12 @@ async function persistEnrichmentResult(prisma, result) {
     const appliedVersion = prospect.enrichmentVersion || 0;
     if (status === 'COMPLETED' || status === 'PARTIAL') {
       if (enrichmentVersion > appliedVersion) {
+        const commercialPotential = toIntOrNull(summary.commercial_potential);
         await prisma.prospect.update({
           where: { id: prospect.id },
           data: {
-            ...(row.companyName ? { companyName: row.companyName } : {}),
-            ...(row.tradeName ? { tradeName: row.tradeName } : {}),
-            ...(row.industry ? { industry: row.industry } : {}),
-            ...(row.cnpjEmail ? { cnpjEmail: row.cnpjEmail } : {}),
-            ...(row.cnpjPhones ? { cnpjPhones: row.cnpjPhones } : {}),
-            ...(row.cnpjPartners ? { cnpjPartners: row.cnpjPartners } : {}),
-            ...(row.revenueEstimate != null ? { revenueEstimate: row.revenueEstimate } : {}),
-            ...(row.employees != null ? { employees: row.employees } : {}),
-            ...(row.cnpjOpenedAt ? { cnpjOpenedAt: row.cnpjOpenedAt } : {}),
-            ...(row.cnpjLegalNature ? { cnpjLegalNature: row.cnpjLegalNature } : {}),
+            ...(commercialPotential != null ? { opportunityScore: commercialPotential } : {}),
+            enrichmentSummary: buildEnrichmentSummary(summary),
             enrichmentStatus: status === 'PARTIAL' ? 'partial' : 'enriched',
             enrichmentSource: 'nats.enrichment',
             enrichmentError: null,

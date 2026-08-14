@@ -1,5 +1,15 @@
 export type ProspectStatus = 'qualified' | 'prospect' | 'lead' | 'contacted' | 'proposal' | 'closed';
 
+export interface EnrichmentSummary {
+  domain?: string | null;
+  website_active?: boolean | null;
+  corporate_email?: boolean | null;
+  launch_velocity?: number | null;
+  operational_readiness?: number | null;
+  commercial_potential?: number | null;
+  tech_count?: number | null;
+}
+
 export interface Prospect {
   id: string;
   cnpj: string;
@@ -12,6 +22,18 @@ export interface Prospect {
   qualificationStage?: string | null;
   lastContact?: string | null;
   orgId?: string;
+  tradeName?: string | null;
+  cnpjEmail?: string | null;
+  cnpjPhones?: string[] | null;
+  cnpjPartners?: CnpjPartner[] | null;
+  cnpjOpenedAt?: string | null;
+  cnpjLegalNature?: string | null;
+  enrichmentStatus?: string | null;
+  enrichmentSource?: string | null;
+  enrichmentError?: string | null;
+  enrichmentVersion?: number | null;
+  enrichmentSummary?: EnrichmentSummary | null;
+  enrichedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

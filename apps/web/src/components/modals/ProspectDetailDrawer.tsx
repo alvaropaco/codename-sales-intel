@@ -1,16 +1,19 @@
 import React from 'react';
-import { 
-  X, 
-  Building2, 
-  ShieldCheck, 
-  CheckCircle2, 
-  Users, 
-  DollarSign, 
-  Calendar, 
-  Activity,
-  FileText,
+import {
+  X,
+  Building2,
+  ShieldCheck,
+  Users,
+  DollarSign,
+  Calendar,
   Trash2,
-  Edit3
+  Mail,
+  Phone,
+  Globe,
+  Rocket,
+  Target,
+  Cpu,
+  Landmark,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,12 +26,28 @@ interface ProspectDetailDrawerProps {
   onDelete: (id: string) => void;
 }
 
+function scoreLabel(value: number | null | undefined): string {
+  return value != null ? `${Math.round(value)}/100` : '—';
+}
+
+function boolLabel(value: boolean | null | undefined): string {
+  if (value === true) return 'Sim';
+  if (value === false) return 'Não';
+  return '—';
+}
+
 export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
   prospect,
   onClose,
   onDelete,
 }) => {
   if (!prospect) return null;
+
+  const summary = prospect.enrichmentSummary;
+  const hasSummary =
+    summary && Object.values(summary).some((v) => v !== null && v !== undefined);
+  const phones = prospect.cnpjPhones || [];
+  const partners = prospect.cnpjPartners || [];
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm animate-fadeIn">
@@ -50,7 +69,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                   </p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={onClose}
                 className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary"
               >
@@ -69,19 +88,26 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
               </Badge>
             </div>
 
-            {/* Details Grid */}
+            {/* Firmographics */}
             <div className="space-y-4 text-xs">
               <div className="space-y-1">
                 <span className="text-muted-foreground font-semibold">Segmento de atuação</span>
                 <p className="font-medium text-foreground">{prospect.industry || 'Segmento a confirmar'}</p>
               </div>
 
+              {prospect.tradeName && (
+                <div className="space-y-1">
+                  <span className="text-muted-foreground font-semibold">Nome fantasia</span>
+                  <p className="font-medium text-foreground">{prospect.tradeName}</p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <span className="text-muted-foreground font-semibold">Funcionários</span>
                   <p className="font-medium text-foreground flex items-center gap-1">
                     <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                    {prospect.employees || 150} colaboradores
+                    {prospect.employees != null ? `${prospect.employees} colaboradores` : 'A confirmar'}
                   </p>
                 </div>
 
@@ -94,31 +120,136 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-400 font-bold">
-                  <ShieldCheck className="h-4 w-4" />
-                  <span>Saúde financeira: favorável</span>
+              {(prospect.cnpjLegalNature || prospect.cnpjOpenedAt) && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground font-semibold flex items-center gap-1">
+                      <Landmark className="h-3.5 w-3.5 text-muted-foreground" /> Natureza jurídica
+                    </span>
+                    <p className="font-medium text-foreground">{prospect.cnpjLegalNature || '—'}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground font-semibold flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5 text-muted-foreground" /> Abertura
+                    </span>
+                    <p className="font-medium text-foreground">
+                      {prospect.cnpjOpenedAt ? new Date(prospect.cnpjOpenedAt).toLocaleDateString('pt-BR') : '—'}
+                    </p>
+                  </div>
                 </div>
-                <p className="text-[11px] text-emerald-300/80 leading-relaxed">
-                  Sem pendências fiscais na Receita Federal. Histórico de pagamento pontual verificado.
+              )}
+
+              {(prospect.cnpjEmail || phones.length > 0) && (
+                <div className="space-y-2">
+                  {prospect.cnpjEmail && (
+                    <p className="font-medium text-foreground flex items-center gap-1.5">
+                      <Mail className="h-3.5 w-3.5 text-muted-foreground" /> {prospect.cnpjEmail}
+                    </p>
+                  )}
+                  {phones.length > 0 && (
+                    <p className="font-medium text-foreground flex items-center gap-1.5">
+                      <Phone className="h-3.5 w-3.5 text-muted-foreground" /> {phones.join(' · ')}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {partners.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-muted-foreground font-semibold">Sócios / representantes</span>
+                  {partners.map((partner, i) => (
+                    <p key={i} className="font-medium text-foreground">
+                      {partner.name || 'Sócio'}
+                      {partner.qualification ? ` · ${partner.qualification}` : ''}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Enrichment intelligence */}
+            {hasSummary && summary ? (
+              <div className="mt-5 pt-4 border-t border-border space-y-3">
+                <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Target className="h-3.5 w-3.5 text-indigo-400" />
+                  Inteligência de enriquecimento
+                </h4>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-center">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground">Potencial</span>
+                    <p className="text-lg font-black text-indigo-400">{scoreLabel(summary.commercial_potential)}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground">Prontidão</span>
+                    <p className="text-lg font-black text-emerald-400">{scoreLabel(summary.operational_readiness)}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground">Lançamento</span>
+                    <p className="text-lg font-black text-amber-400">{scoreLabel(summary.launch_velocity)}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground font-semibold flex items-center gap-1.5">
+                      <Globe className="h-3.5 w-3.5 text-muted-foreground" /> Domínio
+                    </span>
+                    <span className="font-medium text-foreground">{summary.domain || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground font-semibold">Site ativo</span>
+                    <span className="font-medium text-foreground">{boolLabel(summary.website_active)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground font-semibold">E-mail corporativo</span>
+                    <span className="font-medium text-foreground">{boolLabel(summary.corporate_email)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground font-semibold flex items-center gap-1.5">
+                      <Cpu className="h-3.5 w-3.5 text-muted-foreground" /> Tecnologias detectadas
+                    </span>
+                    <span className="font-medium text-foreground">
+                      {summary.tech_count != null ? summary.tech_count : '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Fonte: {prospect.enrichmentSource || '—'}</span>
+                  <span>v{prospect.enrichmentVersion ?? 1}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5 pt-4 border-t border-border">
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {prospect.enrichmentStatus === 'pending'
+                    ? 'Enriquecimento em andamento...'
+                    : 'Dados de enriquecimento ainda não disponíveis.'}
                 </p>
               </div>
+            )}
 
-              {/* Activity Timeline */}
-              <div className="pt-4 border-t border-border space-y-3">
-                <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Activity className="h-3.5 w-3.5 text-indigo-400" />
-                  Histórico de Atividades
-                </h4>
-                <div className="space-y-2.5 text-[11px]">
-                  <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                    <p className="font-semibold text-foreground">Disparo de Qualificação Automática</p>
-                    <p className="text-muted-foreground text-[10px]">Hoje, 11:35 • Recomendação comercial</p>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                    <p className="font-semibold text-foreground">Empresa salva na sua lista</p>
-                    <p className="text-muted-foreground text-[10px]">Data de criação: {new Date(prospect.createdAt).toLocaleDateString('pt-BR')}</p>
-                  </div>
+            {/* Activity Timeline (real status) */}
+            <div className="pt-4 border-t border-border space-y-3 mt-5">
+              <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground">Linha do tempo</h4>
+              <div className="space-y-2.5 text-[11px]">
+                <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
+                  <p className="font-semibold text-foreground">
+                    {prospect.enrichmentStatus === 'enriched' ? 'Enriquecimento concluído' : 'Enriquecimento pendente'}
+                  </p>
+                  <p className="text-muted-foreground text-[10px]">
+                    {prospect.enrichedAt
+                      ? new Date(prospect.enrichedAt).toLocaleString('pt-BR')
+                      : 'Aguardando pipeline'}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
+                  <p className="font-semibold text-foreground">Empresa salva na sua lista</p>
+                  <p className="text-muted-foreground text-[10px]">
+                    {new Date(prospect.createdAt).toLocaleDateString('pt-BR')}
+                  </p>
                 </div>
               </div>
             </div>
@@ -139,12 +270,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
               Excluir
             </Button>
 
-            <Button
-              onClick={onClose}
-              variant="outline"
-              size="sm"
-              className="text-xs"
-            >
+            <Button onClick={onClose} variant="outline" size="sm" className="text-xs">
               Fechar
             </Button>
           </div>

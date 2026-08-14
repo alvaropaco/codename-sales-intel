@@ -244,6 +244,8 @@ app.get('/api/prospects', async (req, res) => {
         enrichmentStatus: true,
         enrichmentSource: true,
         enrichmentError: true,
+        enrichmentVersion: true,
+        enrichmentSummary: true,
         enrichedAt: true,
         createdAt: true,
         updatedAt: true,

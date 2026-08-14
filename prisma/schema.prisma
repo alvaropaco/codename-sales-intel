@@ -78,6 +78,7 @@ model Prospect {
   enrichmentSource      String?
   enrichmentError       String?
   enrichmentVersion     Int      @default(0)
+  enrichmentSummary     Json?
   enrichedAt            DateTime?
   activitiesCount       Int      @default(0)
   lastContact           DateTime?
