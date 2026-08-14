@@ -44,22 +44,6 @@ COPY apps/web/package.json apps/web/
 COPY apps/api/package.json apps/api/
 RUN pnpm install --frozen-lockfile
 
-# Firebase Web SDK config baked into the Vite build. These are public by design
-# (they ship in the JS bundle); pass them via `docker build --build-arg ...`.
-# Defaults cover the shadowtrace-7199f project; API key / app id must be supplied.
-ARG VITE_FIREBASE_PROJECT_ID=shadowtrace-7199f
-ARG VITE_FIREBASE_API_KEY
-ARG VITE_FIREBASE_APP_ID
-ARG VITE_FIREBASE_AUTH_DOMAIN=shadowtrace-7199f.firebaseapp.com
-ARG VITE_FIREBASE_STORAGE_BUCKET=shadowtrace-7199f.firebasestorage.app
-ARG VITE_FIREBASE_MESSAGING_SENDER_ID=421752671625
-ENV VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID \
-    VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
-    VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID \
-    VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN \
-    VITE_FIREBASE_STORAGE_BUCKET=$VITE_FIREBASE_STORAGE_BUCKET \
-    VITE_FIREBASE_MESSAGING_SENDER_ID=$VITE_FIREBASE_MESSAGING_SENDER_ID
-
 # Copy source (skips .env, node_modules, dist via .dockerignore)
 COPY . .
 
