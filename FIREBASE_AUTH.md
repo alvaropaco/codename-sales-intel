@@ -26,6 +26,10 @@ com sessão persistente por cookie httpOnly.
 6. Nas próximas visitas o cookie é enviado automaticamente e `GET /api/auth/session`
    resolve o usuário sem exigir novo login.
 
+O JWT inclui um `sessionVersion` do usuário. No logout esse valor é incrementado no
+banco, então cookies capturados anteriormente passam a responder `401` — a sessão é
+revogada no servidor, não apenas apagada do navegador.
+
 ## Política de e-mail corporativo
 
 Por padrão **qualquer domínio que não seja um provedor gratuito** é aceito. A lista
@@ -41,10 +45,20 @@ AUTH_ALLOWED_DOMAINS=minhaempresa.com.br,parceiro.com
 
 Com essa variável definida, **somente** esses domínios são aceitos.
 
-## Configuração no Firebase Console (obrigatória)
+## Configuração no Firebase Console
+
+Status já verificado no projeto `shadowtrace-7199f`:
+
+- Providers **Google** e **GitHub** estão **habilitados** (Identity Toolkit).
+- O Web app **"SalesIntel Web"** foi criado e o config real está em
+  `apps/web/.env.local` (ignorado pelo git). O `apps/web/.env.example` documenta
+  as mesmas chaves.
 
 A service account (`firebase-adminsdk`) só permite ao backend **verificar** tokens.
-Para o login funcionar no navegador, o projeto precisa de um **Web app** no Firebase.
+O `apiKey`/`appId` do Web app são públicos (vão no bundle) e foram obtidos via
+Firebase Management API a partir da própria service account.
+
+Se precisar recriar em outro projeto:
 
 1. Acesse <https://console.firebase.google.com/project/shadowtrace-7199f>.
 2. **Authentication → Sign-in method** e habilite **Google** e **GitHub**.
@@ -100,3 +114,23 @@ node server-prod.js
 Com o build do frontend presente, `GET /` serve o SPA (que exibe a tela de login
 quando não há sessão) e todas as rotas `/api/*` — exceto `/api/auth/*` — respondem
 `401` sem cookie válido.
+
+## Validação (integração real)
+
+Teste end-to-end executado contra o servidor com **ID tokens reais** (mintados via
+Admin SDK e trocados pela API real do Identity Toolkit):
+
+| Cenário | Resultado |
+|---------|-----------|
+| Login corporativo (`@acme-example.com`) → 200 + cookie | ✅ |
+| `/api/prospects` com cookie válido → 200 | ✅ |
+| `GET /api/auth/session` com cookie → usuário persistente | ✅ |
+| Login com `@gmail.com` → 403 `NON_CORPORATE_EMAIL` | ✅ |
+| Logout → 200 | ✅ |
+| Cookie antigo após logout → 401 (revogado) | ✅ |
+| `GET /api/auth/session` pós-logout → 401 `SESSION_REVOKED` | ✅ |
+| `POST /api/auth/session` sem `idToken` → 400 | ✅ |
+| `POST /api/auth/session` com token inválido → 401 | ✅ |
+| `/api/prospects` sem cookie → 401 | ✅ |
+
+Os usuários de teste do Firebase e do banco são removidos ao final do teste.

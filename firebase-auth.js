@@ -244,6 +244,7 @@ function createSessionToken(user) {
       name: user.name,
       role: user.role,
       orgId: user.orgId,
+      ver: Number(user.sessionVersion ?? 0),
     },
     getSessionSecret(),
     {
@@ -296,23 +297,48 @@ function cookieParserMiddleware(req, _res, next) {
   next();
 }
 
-async function requireAuth(req, res, next) {
-  const token = req.cookies && req.cookies[SESSION_COOKIE_NAME];
-  if (!token) {
-    return res
-      .status(401)
-      .json({ success: false, error: 'Não autenticado', code: 'UNAUTHENTICATED' });
-  }
+async function isSessionRevoked(prisma, payload) {
+  const user = await prisma.user.findUnique({ where: { id: payload.uid } });
+  if (!user) return true;
+  return Number(payload.ver ?? 0) !== Number(user.sessionVersion ?? 0);
+}
 
-  try {
-    req.user = verifySessionToken(token);
+function createRequireAuth(prisma) {
+  return async function requireAuth(req, res, next) {
+    const token = req.cookies && req.cookies[SESSION_COOKIE_NAME];
+    if (!token) {
+      return res
+        .status(401)
+        .json({ success: false, error: 'Não autenticado', code: 'UNAUTHENTICATED' });
+    }
+
+    let payload;
+    try {
+      payload = verifySessionToken(token);
+    } catch (_err) {
+      clearSessionCookie(res);
+      return res
+        .status(401)
+        .json({ success: false, error: 'Sessão expirada', code: 'SESSION_EXPIRED' });
+    }
+
+    try {
+      if (await isSessionRevoked(prisma, payload)) {
+        clearSessionCookie(res);
+        return res
+          .status(401)
+          .json({ success: false, error: 'Sessão encerrada', code: 'SESSION_REVOKED' });
+      }
+    } catch (_err) {
+      // DB outage must not silently allow access.
+      return res
+        .status(401)
+        .json({ success: false, error: 'Não foi possível validar a sessão', code: 'AUTH_ERROR' });
+    }
+
+    req.user = payload;
     return next();
-  } catch (_err) {
-    clearSessionCookie(res);
-    return res
-      .status(401)
-      .json({ success: false, error: 'Sessão expirada', code: 'SESSION_EXPIRED' });
-  }
+  };
 }
 
 async function upsertUserFromDecodedToken(prisma, decodedToken) {
@@ -430,6 +456,15 @@ function createAuthRouter(prisma) {
           code: 'USER_NOT_FOUND',
         });
       }
+      if (Number(payload.ver ?? 0) !== Number(user.sessionVersion ?? 0)) {
+        clearSessionCookie(res);
+        return res.status(401).json({
+          success: false,
+          authenticated: false,
+          error: 'Sessão encerrada',
+          code: 'SESSION_REVOKED',
+        });
+      }
       res.json({
         success: true,
         authenticated: true,
@@ -447,8 +482,21 @@ function createAuthRouter(prisma) {
     }
   });
 
-  // POST /api/auth/logout - clear the session cookie.
-  router.post('/logout', (_req, res) => {
+  // POST /api/auth/logout - clear the session cookie and revoke the session
+  // server-side so a previously captured cookie no longer works.
+  router.post('/logout', async (req, res) => {
+    const token = req.cookies && req.cookies[SESSION_COOKIE_NAME];
+    if (token) {
+      try {
+        const payload = verifySessionToken(token);
+        await prisma.user.update({
+          where: { id: payload.uid },
+          data: { sessionVersion: { increment: 1 } },
+        });
+      } catch (_err) {
+        // The token is already invalid/expired; the cookie clear below is enough.
+      }
+    }
     clearSessionCookie(res);
     res.json({ success: true, message: 'Logout realizado' });
   });
@@ -459,7 +507,7 @@ function createAuthRouter(prisma) {
 module.exports = {
   createAuthRouter,
   cookieParserMiddleware,
-  requireAuth,
+  createRequireAuth,
   isAllowedEmailDomain,
   FREE_EMAIL_DOMAINS,
   SESSION_COOKIE_NAME,

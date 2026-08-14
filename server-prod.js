@@ -66,7 +66,7 @@ app.use(express.static('public'));
 // /api/auth/* é público (login/logout/resolver sessão); todo o restante de /api
 // exige um cookie de sessão válido emitido após a verificação do Firebase ID token.
 app.use('/api/auth', firebaseAuth.createAuthRouter(prisma));
-app.use('/api', firebaseAuth.requireAuth);
+app.use('/api', firebaseAuth.createRequireAuth(prisma));
 
 // Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
 app.get('/', async (req, res) => {
