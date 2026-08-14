@@ -749,17 +749,34 @@ app.post('/api/discovery/import', async (req, res) => {
         industry: industry || null,
         status: status === 'active' ? 'prospect' : 'lead',
         opportunityScore: 60,
-        enrichmentStatus: 'enriched',
-        enrichmentSource: 'mcp.cnpj',
-        enrichedAt: new Date(),
+        // Não marcamos como 'enriched': a esteira de enriquecimento (NATS) ou o
+        // fallback síncrono BrasilAPI é quem completa firmografia + scoring.
+        enrichmentStatus: 'pending',
         orgId,
       },
     });
 
+    // Empresas descobertas também entram na esteira de enriquecimento.
+    let enriched = prospect;
+    if (natsEnrichment.isNatsEnabled()) {
+      const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+      if (eventId) {
+        enriched = await prisma.prospect.update({
+          where: { id: prospect.id },
+          data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
+        });
+      } else {
+        enriched = await enrichProspectWithCnpj(prisma, prospect);
+      }
+    } else {
+      enriched = await enrichProspectWithCnpj(prisma, prospect);
+    }
+
     res.json({
       success: true,
-      data: formatEnrichedProspect(prospect),
+      data: formatEnrichedProspect(enriched),
       alreadyExists: false,
+      enrichment: { status: enriched.enrichmentStatus, source: enriched.enrichmentSource },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
