@@ -312,16 +312,21 @@ app.post('/api/prospects', async (req, res) => {
     let enrichedProspect;
     if (natsEnrichment.isNatsEnabled()) {
       const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-      enrichedProspect = await prisma.prospect.update({
-        where: { id: prospect.id },
-        data: {
-          enrichmentStatus: 'pending',
-          enrichmentSource: 'nats.enrichment',
-          enrichmentError: null,
-        },
-      });
-      // Mantém o payload de resposta enxuto sem bloquear o request.
-      if (eventId) enrichedProspect._enrichmentEventId = eventId;
+      if (eventId) {
+        // Pedido publicado no pipeline — aguardamos a persistência do worker.
+        enrichedProspect = await prisma.prospect.update({
+          where: { id: prospect.id },
+          data: {
+            enrichmentStatus: 'pending',
+            enrichmentSource: 'nats.enrichment',
+            enrichmentError: null,
+          },
+        });
+        enrichedProspect._enrichmentEventId = eventId;
+      } else {
+        // Pipeline indisponível — cai no enriquecimento síncrono BrasilAPI.
+        enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
+      }
     } else {
       enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
     }
@@ -396,13 +401,23 @@ app.put('/api/prospects/:id', async (req, res) => {
     const enteredQualification =
       prospect.status === 'prospect' && (!previous || previous.status !== 'prospect');
 
-    if (enteredQualification && natsEnrichment.isNatsEnabled()) {
-      natsEnrichment.requestEnrichment(prisma, prospect).catch((err) => {
-        console.error('[nats] falha ao encadear enriquecimento no update:', err.message);
-      });
+    let responseData = prospect;
+    if (enteredQualification) {
+      if (natsEnrichment.isNatsEnabled()) {
+        const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+        if (!eventId) {
+          // Pipeline indisponível — enriquece de forma síncrona via BrasilAPI.
+          responseData = await enrichProspectWithCnpj(prisma, prospect);
+        }
+      } else {
+        // NATS desligado: usa o fallback síncrono BrasilAPI, igual ao fluxo de
+        // criação. Sem isso, mover uma empresa para "Em Qualificação" não
+        // disparava enriquecimento nenhum (ficava 'pending' para sempre).
+        responseData = await enrichProspectWithCnpj(prisma, prospect);
+      }
     }
 
-    res.json({ success: true, data: prospect });
+    res.json({ success: true, data: responseData });
   } catch (error) {
     if (error.code === 'P2025') {
       return res.status(404).json({ success: false, error: 'Prospect not found' });
