@@ -14,6 +14,7 @@ import {
   Target,
   Cpu,
   Landmark,
+  MapPin,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -94,6 +95,16 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                 <span className="text-muted-foreground font-semibold">Segmento de atuação</span>
                 <p className="font-medium text-foreground">{prospect.industry || 'Segmento a confirmar'}</p>
               </div>
+
+              {(prospect.city || prospect.state) && (
+                <div className="space-y-1">
+                  <span className="text-muted-foreground font-semibold">Localização</span>
+                  <p className="font-medium text-foreground flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+                    {[prospect.city, prospect.state].filter(Boolean).join(' — ')}
+                  </p>
+                </div>
+              )}
 
               {prospect.tradeName && (
                 <div className="space-y-1">

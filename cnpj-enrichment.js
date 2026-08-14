@@ -101,7 +101,6 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
   if (!prospect) {
     throw new Error('Prospect not found for enrichment');
   }
-
   try {
     const lookup = await fetchBrasilApiCnpj(prospect.cnpj);
 
@@ -210,6 +209,63 @@ module.exports = {
   normalizeCnpj,
   fetchBrasilApiCnpj,
   enrichProspectWithCnpj,
+  hydrateFirmographics,
   listEnrichedProspects,
   formatEnrichedProspect,
 };
+
+// Hidrata apenas a firmografia (razão social, nome fantasia, e-mail, telefones,
+// sócios, natureza jurídica, abertura, cidade/UF) via BrasilAPI, SEM tocar em
+// enrichmentStatus/enrichmentSource/enrichmentVersion/opportunityScore — esses
+// pertencem à esteira NATS (scoring). Usado como complemento ao pipeline.
+async function hydrateFirmographics(prisma, prospectOrId) {
+  const prospect = typeof prospectOrId === 'string'
+    ? await prisma.prospect.findUnique({ where: { id: prospectOrId } })
+    : prospectOrId;
+
+  if (!prospect) return null;
+
+  try {
+    const lookup = await fetchBrasilApiCnpj(prospect.cnpj);
+    if (!lookup.found) return prospect;
+
+    const data = lookup.data;
+    const phones = extractPhones(data);
+    const partners = extractPartners(data);
+
+    const merge = (current, incoming) => {
+      if (current === null || current === undefined || current === '' || current === false) {
+        return incoming;
+      }
+      return current;
+    };
+
+    const hasCurrentPhones = Array.isArray(prospect.cnpjPhones) && prospect.cnpjPhones.length > 0;
+    const hasCurrentPartners = Array.isArray(prospect.cnpjPartners) && prospect.cnpjPartners.length > 0;
+
+    const update = compactObject({
+      companyName: merge(prospect.companyName, data.razao_social || data.nome_fantasia),
+      tradeName: merge(prospect.tradeName, data.nome_fantasia),
+      industry: merge(prospect.industry, data.cnae_fiscal_descricao),
+      city: merge(prospect.city, data.municipio),
+      state: merge(prospect.state, data.uf),
+      cnpjEmail: merge(prospect.cnpjEmail, data.email),
+      cnpjOpenedAt: merge(prospect.cnpjOpenedAt, parseDate(data.data_inicio_atividade)),
+      cnpjLegalNature: merge(prospect.cnpjLegalNature, data.natureza_juridica),
+      cnpjRawData: merge(prospect.cnpjRawData, data),
+    });
+
+    if (!hasCurrentPhones && phones.length > 0) update.cnpjPhones = phones;
+    if (!hasCurrentPartners && partners.length > 0) update.cnpjPartners = partners;
+
+    if (Object.keys(update).length === 0) return prospect;
+
+    return prisma.prospect.update({
+      where: { id: prospect.id },
+      data: update,
+    });
+  } catch (error) {
+    console.error(`[firmographics] falha ao hidratar ${prospect.id}: ${error.message}`);
+    return prospect;
+  }
+}

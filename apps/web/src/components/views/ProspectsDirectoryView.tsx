@@ -113,6 +113,11 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
         tradeName: company.tradeName || null,
         industry: company.industry || null,
         status: company.status || 'active',
+        email: company.email || null,
+        city: company.city || null,
+        state: company.state || null,
+        openingDate: company.openingDate || null,
+        legalNature: company.legalNature || null,
       });
       // Refresh the registered list and drop the just-imported company.
       await onRefresh();

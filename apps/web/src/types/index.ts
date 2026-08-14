@@ -22,6 +22,8 @@ export interface Prospect {
   qualificationStage?: string | null;
   lastContact?: string | null;
   orgId?: string;
+  city?: string | null;
+  state?: string | null;
   tradeName?: string | null;
   cnpjEmail?: string | null;
   cnpjPhones?: string[] | null;

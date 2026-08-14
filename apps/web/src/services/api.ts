@@ -275,6 +275,11 @@ export async function importDiscoveredCompany(data: {
   tradeName?: string | null;
   industry?: string | null;
   status?: string;
+  email?: string | null;
+  city?: string | null;
+  state?: string | null;
+  openingDate?: string | null;
+  legalNature?: string | null;
 }): Promise<{ prospect: Prospect; alreadyExists: boolean }> {
   const res = await fetch(`${API_BASE}/discovery/import`, {
     method: 'POST',

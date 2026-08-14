@@ -68,6 +68,8 @@ model Prospect {
   revenueEstimate       Int?
   employees             Int?
   industry              String?
+  city                  String?
+  state                 String?
   cnpjEmail             String?
   cnpjPhones            Json?
   cnpjPartners          Json?

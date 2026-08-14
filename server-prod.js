@@ -47,6 +47,7 @@ const {
 } = require('./mcp-cnpj');
 const {
   enrichProspectWithCnpj,
+  hydrateFirmographics,
   listEnrichedProspects,
   formatEnrichedProspect
 } = require('./cnpj-enrichment');
@@ -235,6 +236,8 @@ app.get('/api/prospects', async (req, res) => {
         revenueEstimate: true,
         employees: true,
         industry: true,
+        city: true,
+        state: true,
         tradeName: true,
         cnpjEmail: true,
         cnpjPhones: true,
@@ -325,6 +328,11 @@ app.post('/api/prospects', async (req, res) => {
           },
         });
         enrichedProspect._enrichmentEventId = eventId;
+        // Complemento: hidrata firmografia (telefones/sócios) via BrasilAPI em
+        // paralelo, sem sobrescrever o scoring da esteira NATS.
+        hydrateFirmographics(prisma, enrichedProspect).catch((err) => {
+          console.error('[firmographics] erro ao hidratar (create):', err.message);
+        });
       } else {
         // Pipeline indisponível — cai no enriquecimento síncrono BrasilAPI.
         enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
@@ -725,7 +733,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
 // POST /api/discovery/import - persist a discovered company as a Prospect
 app.post('/api/discovery/import', async (req, res) => {
   try {
-    const { cnpj, legalName, tradeName, industry, status } = req.body || {};
+    const { cnpj, legalName, tradeName, industry, status, email, city, state, openingDate, legalNature } = req.body || {};
     if (!cnpj || !legalName) {
       return res.status(400).json({ success: false, error: 'CNPJ and company name required' });
     }
@@ -749,6 +757,11 @@ app.post('/api/discovery/import', async (req, res) => {
         companyName: legalName || tradeName || normalizedCnpj,
         tradeName: tradeName || null,
         industry: industry || null,
+        city: city || null,
+        state: state || null,
+        cnpjEmail: email || null,
+        cnpjOpenedAt: openingDate ? new Date(openingDate) : null,
+        cnpjLegalNature: legalNature || null,
         status: status === 'active' ? 'prospect' : 'lead',
         opportunityScore: 60,
         // Não marcamos como 'enriched': a esteira de enriquecimento (NATS) ou o
@@ -766,6 +779,11 @@ app.post('/api/discovery/import', async (req, res) => {
         enriched = await prisma.prospect.update({
           where: { id: prospect.id },
           data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
+        });
+        // Complemento: hidrata firmografia (telefones/sócios) via BrasilAPI em
+        // paralelo, sem sobrescrever o scoring da esteira NATS.
+        hydrateFirmographics(prisma, enriched).catch((err) => {
+          console.error('[firmographics] erro ao hidratar (import):', err.message);
         });
       } else {
         enriched = await enrichProspectWithCnpj(prisma, prospect);
