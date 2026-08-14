@@ -12,6 +12,9 @@ import { ProspectModal } from '@/components/modals/ProspectModal';
 import { ProspectDetailDrawer } from '@/components/modals/ProspectDetailDrawer';
 import { ActiveTab, Prospect, PipelineAnalytics, ForecastAnalytics, CommercialProfile } from '@/types';
 import { fetchProspects, fetchPipelineAnalytics, fetchForecastAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
+import { getSession, logoutSession, type SessionUser } from '@/services/auth';
+import { signOutFirebase } from '@/services/firebase';
+import { LoginView } from '@/components/auth/LoginView';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -39,6 +42,9 @@ export function App() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  const [session, setSession] = useState<SessionUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const loadData = async () => {
     try {
       const [prospectsData, analyticsData, forecastData, profileData] = await Promise.all([
@@ -59,8 +65,37 @@ export function App() {
   };
 
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+    // Persistent session: on the next visits the httpOnly cookie is sent
+    // automatically and resolves the user without any re-login.
+    getSession().then((user) => {
+      if (cancelled) return;
+      setSession(user);
+      setAuthLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (session) {
+      loadData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  useEffect(() => {
+    const handleUnauthorized = () => setSession(null);
+    window.addEventListener('salesintel:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('salesintel:unauthorized', handleUnauthorized);
+  }, []);
+
+  const handleLogout = async () => {
+    await signOutFirebase();
+    await logoutSession();
+    setSession(null);
+  };
 
   const handleDeleteProspect = async (id: string) => {
     if (!confirm('Deseja realmente excluir este prospecto?')) return;
@@ -79,6 +114,18 @@ export function App() {
     }
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm font-semibold text-slate-400">
+        <span className="animate-pulse">Carregando sessão…</span>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginView onAuthenticated={(user) => setSession(user)} />;
+  }
+
   return (
     <Layout
       activeTab={activeTab}
@@ -90,6 +137,9 @@ export function App() {
       setSearchQuery={setSearchQuery}
       onOpenCreateModal={() => setActiveTab('prospects')}
       onOpenQualifyModal={() => setActiveTab('risk')}
+      userName={session.name || session.email}
+      userEmail={session.email}
+      onLogout={handleLogout}
     >
       {activeTab === 'dashboard' && (
         <ExecutiveDashboardView

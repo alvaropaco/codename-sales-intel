@@ -4,6 +4,7 @@ import {
   CalendarDays,
   ChevronRight,
   Command,
+  LogOut,
   Menu,
   Search,
   Sparkles,
@@ -19,6 +20,9 @@ interface HeaderProps {
   setSearchQuery: (q: string) => void;
   onOpenCreateModal: () => void;
   onOpenQualifyModal: () => void;
+  userName: string;
+  userEmail: string;
+  onLogout: () => void;
 }
 
 const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
@@ -27,8 +31,8 @@ const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
     subtitle: '16 Jul 2026 - 12 Ago 2026 · prioridades, oportunidades e próximos passos de venda.',
   },
   prospects: {
-    title: 'Descobrir empresas',
-    subtitle: 'Empresas sugeridas a partir dos segmentos e perfis comerciais definidos no onboarding.',
+    title: 'Descobrir leads',
+    subtitle: 'Leads sugeridos a partir dos segmentos e perfis comerciais definidos no onboarding.',
   },
   pipeline: {
     title: 'Pipeline de vendas',
@@ -44,7 +48,7 @@ const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
   },
   enrichment: {
     title: 'Inteligência comercial',
-    subtitle: 'Informações da empresa, contatos e sinais úteis para transformar leads em oportunidades.',
+    subtitle: 'Informações do lead, contatos e sinais úteis para transformar leads em oportunidades.',
   },
   settings: {
     title: 'Preferências',
@@ -58,6 +62,9 @@ export const Header: React.FC<HeaderProps> = ({
   setSearchQuery,
   onOpenCreateModal,
   onOpenQualifyModal,
+  userName,
+  userEmail,
+  onLogout,
 }) => {
   const info = tabTitles[activeTab];
 
@@ -119,7 +126,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="h-10 gap-2 rounded-xl bg-slate-950 px-4 text-xs font-bold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
           >
             <Target className="h-4 w-4" />
-            Descobrir empresas
+            Descobrir leads
           </Button>
           <button className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white">
             <Bell className="h-4 w-4" />
@@ -128,6 +135,27 @@ export const Header: React.FC<HeaderProps> = ({
           <button className="hidden rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white md:block">
             <CalendarDays className="h-4 w-4" />
           </button>
+
+          <div className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2 dark:border-white/10 dark:bg-white/[0.03] sm:flex">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-xs font-black text-white">
+              {userName.charAt(0).toUpperCase()}
+            </span>
+            <div className="min-w-0 leading-tight">
+              <p className="max-w-[140px] truncate text-xs font-bold text-slate-950 dark:text-white">
+                {userName}
+              </p>
+              <p className="max-w-[140px] truncate text-[10px] text-slate-400">{userEmail}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              title="Sair"
+              aria-label="Sair"
+              className="ml-1 rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-950 dark:hover:bg-white/10 dark:hover:text-white"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
     </header>

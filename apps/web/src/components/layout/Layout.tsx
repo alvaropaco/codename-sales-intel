@@ -15,6 +15,9 @@ interface LayoutProps {
   setSearchQuery: (q: string) => void;
   onOpenCreateModal: () => void;
   onOpenQualifyModal: () => void;
+  userName: string;
+  userEmail: string;
+  onLogout: () => void;
 }
 
 export const Layout: React.FC<LayoutProps> = ({
@@ -28,10 +31,13 @@ export const Layout: React.FC<LayoutProps> = ({
   setSearchQuery,
   onOpenCreateModal,
   onOpenQualifyModal,
+  userName,
+  userEmail,
+  onLogout,
 }) => {
   const mobileNavItems: Array<{ id: ActiveTab; label: string; badge?: string | null }> = [
     { id: 'dashboard', label: 'Visão comercial' },
-    { id: 'prospects', label: 'Descobrir empresas', badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
+    { id: 'prospects', label: 'Descobrir leads', badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
     { id: 'pipeline', label: 'Pipeline de vendas', badge: 'Ao vivo' },
     { id: 'risk', label: 'Risco e potencial' },
     { id: 'workflows', label: 'Ações automáticas' },
@@ -54,6 +60,9 @@ export const Layout: React.FC<LayoutProps> = ({
           setSearchQuery={setSearchQuery}
           onOpenCreateModal={onOpenCreateModal}
           onOpenQualifyModal={onOpenQualifyModal}
+          userName={userName}
+          userEmail={userEmail}
+          onLogout={onLogout}
         />
         <nav id="mobile-dashboard-navigation" aria-label="Navegação principal mobile" className="border-b border-slate-200 bg-white/95 px-3 py-2 dark:border-white/10 dark:bg-slate-950/95 lg:hidden">
           <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

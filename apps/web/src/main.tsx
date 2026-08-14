@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import './services/authGuard';
 
 class RuntimeErrorBoundary extends React.Component<React.PropsWithChildren, { error?: Error }> {
   state: { error?: Error } = {};

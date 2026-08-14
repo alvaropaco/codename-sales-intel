@@ -52,11 +52,21 @@ const {
   formatEnrichedProspect
 } = require('./cnpj-enrichment');
 const natsEnrichment = require('./nats-enrichment');
+const firebaseAuth = require('./firebase-auth');
 
 // Middleware
 app.use(express.json());
+app.use(firebaseAuth.cookieParserMiddleware);
 app.use(express.static(path.join(__dirname, 'apps', 'web', 'dist')));
 app.use(express.static('public'));
+
+// ============================================================================
+// AUTHENTICATION
+// ============================================================================
+// /api/auth/* é público (login/logout/resolver sessão); todo o restante de /api
+// exige um cookie de sessão válido emitido após a verificação do Firebase ID token.
+app.use('/api/auth', firebaseAuth.createAuthRouter(prisma));
+app.use('/api', firebaseAuth.requireAuth);
 
 // Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
 app.get('/', async (req, res) => {
@@ -610,6 +620,48 @@ function getStateFromLocation(location) {
   return match ? match[1].toUpperCase() : undefined;
 }
 
+// Deterministic helpers so the discovery listing can rotate results per "seed"
+// (a new seed on "Buscar novamente" reveals a different order) while keeping a
+// page stable within the same seed. The MCP-CNPJ source has no offset support,
+// so we fetch a wide pool once, cache it briefly, and page through it locally.
+function hashSeed(input) {
+  let h = 2166136261 >>> 0;
+  const str = String(input || '');
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleWithSeed(array, seed) {
+  const arr = array.slice();
+  const rand = mulberry32(hashSeed(seed));
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+// In-memory pool cache: same criteria + seed within TTL reuses the fetched MCP
+// window, so paging through results does not hit the external server per page.
+const discoveryPoolCache = new Map();
+const DISCOVERY_POOL_TTL_MS = 10 * 60 * 1000;
+
 // GET /api/discovery/profile - onboarding criteria that drive discovery
 app.get('/api/discovery/profile', async (req, res) => {
   try {
@@ -640,9 +692,14 @@ app.get('/api/discovery/profile', async (req, res) => {
 });
 
 // GET /api/discovery/candidates - search real companies by CNAE/segment/location
+// Supports pagination (?page=&pageSize=) and seeded rotation (?seed=) so the
+// listing can browse through the full pool of discovered leads. Companies that
+// were already added to the lead list are always excluded from the results.
 app.get('/api/discovery/candidates', async (req, res) => {
   try {
-    const limit = Math.max(1, Math.min(Number(req.query.limit) || 10, 50));
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(parseInt(req.query.pageSize, 10) || Number(req.query.limit) || 12, 25));
+    const seed = req.query.seed ? String(req.query.seed).slice(0, 64) : 'default';
     const explicitCnae = req.query.cnae ? String(req.query.cnae) : null;
     const explicitSegment = req.query.segment ? String(req.query.segment) : null;
     const explicitLocation = req.query.location ? String(req.query.location) : null;
@@ -671,58 +728,102 @@ app.get('/api/discovery/candidates', async (req, res) => {
       if (explicitLocation) locations.push(explicitLocation);
     }
 
-    const candidates = [];
     const state = locations.length ? getStateFromLocation(locations[0]) : undefined;
+    const orgId = await getOrCreateOrganization();
 
-    // 1) Structured CNAE filter when we have codes.
-    for (const code of segments) {
-      if (!/^\d+$/.test(code)) continue;
-      const filtered = await filterCompanies({
-        cnae: code,
-        state,
-        isActive: activeOnly || undefined,
-        limit: Math.min(limit, 20),
+    if (!segments.length && !state) {
+      return res.json({
+        success: true,
+        data: [],
+        page,
+        pageSize,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+        source: [],
+        criteria: { segments, locations, activeOnly, usedProfile },
+        message: 'Configure segmentos ou CNAEs no onboarding para descobrir leads.',
+        timestamp: new Date().toISOString(),
       });
-      filtered.forEach((company) => candidates.push(company));
-      if (candidates.length >= limit) break;
     }
 
-    // 2) Semantic search for segment/natural-language criteria.
-    if (candidates.length < limit) {
+    // Cache key: same criteria + seed reuses the fetched MCP window (10 min TTL),
+    // so paging between pages does not call the external server again.
+    const cacheKey = [orgId, segments.join('|'), locations.join('|'), activeOnly ? '1' : '0', seed].join('::');
+    let unique = null;
+    const cached = discoveryPoolCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      unique = cached.unique;
+    } else {
+      const candidates = [];
+
+      // 1) Structured CNAE filter when we have codes. Fetch a wide pool (up to the
+      //    MCP ceiling of 100) so pagination can show different leads per page.
+      for (const code of segments.slice(0, 6)) {
+        if (!/^\d+$/.test(code)) continue;
+        const filtered = await filterCompanies({
+          cnae: code,
+          state,
+          isActive: activeOnly || undefined,
+          limit: 100,
+        });
+        filtered.forEach((company) => candidates.push(company));
+      }
+
+      // 2) Semantic search for segment/natural-language criteria (MCP caps at 40).
       const query = explicitSegment || segments[0] || '';
       if (query && !/^\d+$/.test(query)) {
         const found = await searchCompanies({
           query,
           state,
-          limit: Math.min(limit, 20),
+          limit: 50,
         });
         found.forEach((company) => candidates.push(company));
-      } else if (!query && segments.length === 0) {
-        // No usable criteria: return empty rather than fabricated data.
-        return res.json({
-          success: true,
-          data: [],
-          source: [],
-          criteria: { segments, locations, activeOnly, usedProfile },
-          message: 'Configure segmentos ou CNAEs no onboarding para descobrir empresas.',
-          timestamp: new Date().toISOString(),
-        });
+      }
+
+      const seen = new Set();
+      unique = [];
+      for (const c of candidates.slice(0, 400)) {
+        if (!c || seen.has(c.cnpj)) continue;
+        seen.add(c.cnpj);
+        unique.push(c);
+      }
+
+      discoveryPoolCache.set(cacheKey, { unique, expiresAt: Date.now() + DISCOVERY_POOL_TTL_MS });
+      if (discoveryPoolCache.size > 60) {
+        const oldestKey = discoveryPoolCache.keys().next().value;
+        if (oldestKey) discoveryPoolCache.delete(oldestKey);
       }
     }
 
-    const seen = new Set();
-    const unique = [];
-    for (const c of candidates) {
-      if (!c || seen.has(c.cnpj)) continue;
-      seen.add(c.cnpj);
-      unique.push(c);
-    }
+    // Always exclude CNPJs already registered as leads (fresh check per request,
+    // so an import disappears from the listing immediately).
+    const existing = await prisma.prospect.findMany({ select: { cnpj: true } });
+    const existingCnpjs = new Set(existing.map((p) => String(p.cnpj).replace(/\D/g, '')));
+    const available = unique.filter((c) => !existingCnpjs.has(String(c.cnpj).replace(/\D/g, '')));
+
+    // Rotate deterministically by seed: stable within a seed, different order
+    // when the user asks for a fresh batch ("Buscar novamente").
+    const pool = shuffleWithSeed(available, seed);
+
+    const total = pool.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const start = (page - 1) * pageSize;
+    const data = pool.slice(start, start + pageSize);
 
     res.json({
       success: true,
-      data: unique.slice(0, limit),
+      data,
+      page,
+      pageSize,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
       source: ['mcp.cnpj'],
       criteria: { segments, locations, activeOnly, usedProfile },
+      message: !total
+        ? 'Nenhum lead novo encontrado para os critérios atuais. Ajuste o nicho ou a localização.'
+        : undefined,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -918,6 +1019,7 @@ async function start() {
       console.log(`║  🌐 Dashboard: http://localhost:${PORT}          ║`);
       console.log('║                                            ║');
       console.log(`║  📡 NATS enrichment: ${natsEnrichment.isNatsEnabled() ? 'ON' : 'OFF'}        ║`);
+      console.log('║  🔐 Firebase auth: Google + GitHub (corporate only)     ║');
       console.log('║  ✅ Real data from database (no mock!)     ║');
       console.log('║  ✅ All CRUD operations supported          ║');
       console.log('║  ✅ Error handling & validation            ║');
