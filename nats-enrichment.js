@@ -21,10 +21,27 @@
 // =============================================================================
 
 const { connect, StringCodec, JSONCodec, headers } = require('nats');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHash } = require('crypto');
 
 const sc = StringCodec();
 const jc = JSONCodec();
+
+// Namespace fixo para derivar um UUID determinístico (uuidv5) do CNPJ.
+// O enrichment-worker exige `company_id` como UUID e usa esse ID para versionar
+// os enriquecimentos (enrichment_version). Derivar do CNPJ garante estabilidade
+// entre chamadas (re-enriquecimento mantém a mesma empresa no lado do worker).
+const SALESINTEL_NAMESPACE = '6f4c1a2e-9b7d-4e3a-8c5f-1d2e3a4b5c6d';
+
+function deterministicCompanyId(cnpj) {
+  const ns = Buffer.from(SALESINTEL_NAMESPACE.replace(/-/g, ''), 'hex');
+  const hash = createHash('sha1')
+    .update(Buffer.concat([ns, Buffer.from(String(cnpj || ''), 'utf8')]))
+    .digest();
+  hash[6] = (hash[6] & 0x0f) | 0x50; // version 5
+  hash[8] = (hash[8] & 0x3f) | 0x80; // variant RFC 4122
+  const hex = hash.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Config (env com defaults)
@@ -91,19 +108,24 @@ async function requestEnrichment(prisma, prospectOrId) {
   }
 
   const eventId = randomUUID();
-  const companyId = prospect.id;
   const cnpj = normalizeCnpj(prospect.cnpj);
+  // O worker valida `company_id` como UUID (Pydantic uuid.UUID). O id do
+  // Prospect é um CUID, então derivamos um UUID estável do CNPJ.
+  const companyId = deterministicCompanyId(cnpj);
 
   if (cnpj.length !== 14) {
-    console.warn(`[nats] CNPJ inválido para prospect ${companyId}: "${prospect.cnpj}" -> irá para a DLQ.`);
+    console.warn(`[nats] CNPJ inválido para prospect ${prospect.id}: "${prospect.cnpj}" -> irá para a DLQ.`);
     // Ainda publicamos; o worker manda para a DLQ enrichment.company.dlq.v1.
   }
 
   const payload = {
-    cnpj,
+    version: '1',
+    event_id: eventId,
     company_id: companyId,
-    request_event_id: eventId,
-    requested_at: new Date().toISOString(),
+    cnpj,
+    company_name: prospect.companyName || undefined,
+    trade_name: prospect.tradeName || undefined,
+    published_at: new Date().toISOString(),
   };
 
   try {
@@ -132,8 +154,8 @@ async function requestEnrichment(prisma, prospectOrId) {
 // a já aplicada (protege contra reordering / mensagens antigas chegando depois).
 async function persistEnrichmentResult(prisma, result) {
   const summary = result.summary || result || {};
-  const companyId = summary.company_id || result.company_id;
   const cnpj = normalizeCnpj(summary.cnpj || result.cnpj);
+  const companyId = summary.company_id || result.company_id || deterministicCompanyId(cnpj);
   const enrichmentVersion = summary.enrichment_version ?? summary.version ?? 1;
   const status = (summary.status || 'COMPLETED').toUpperCase();
   const requestEventId = summary.request_event_id || result.request_event_id || null;
@@ -182,9 +204,11 @@ async function persistEnrichmentResult(prisma, result) {
   });
 
   // Aplica no Prospect apenas se for um resultado mais novo do que o aplicado.
-  const prospect = companyId
-    ? await prisma.prospect.findUnique({ where: { id: companyId } })
-    : await prisma.prospect.findUnique({ where: { cnpj } });
+  // Correlacionamos por CNPJ (único), pois o `company_id` do pipeline é um UUID
+  // derivado do CNPJ (não é o id CUID do Prospect).
+  const prospect = cnpj
+    ? await prisma.prospect.findUnique({ where: { cnpj } })
+    : null;
 
   if (prospect) {
     const appliedVersion = prospect.enrichmentVersion || 0;
