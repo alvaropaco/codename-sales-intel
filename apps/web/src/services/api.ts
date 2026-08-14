@@ -9,7 +9,8 @@ import {
   EnrichedCnpjContact,
   CommercialProfile,
   DiscoveredCompany,
-  DiscoveryCriteria
+  DiscoveryCriteria,
+  DiscoveryPage
 } from '../types';
 
 const API_BASE = '/api';
@@ -244,14 +245,26 @@ export async function fetchDiscoveryProfile(): Promise<{
   }
 }
 
+export interface DiscoveryCandidatesResult {
+  companies: DiscoveredCompany[];
+  criteria: DiscoveryCriteria;
+  page: DiscoveryPage;
+  message?: string;
+}
+
 export async function fetchDiscoveryCandidates(
-  options: { cnae?: string; segment?: string; location?: string; limit?: number } = {}
-): Promise<{ companies: DiscoveredCompany[]; criteria: DiscoveryCriteria; message?: string }> {
+  options: { cnae?: string; segment?: string; location?: string; limit?: number; page?: number; pageSize?: number; seed?: string } = {}
+): Promise<DiscoveryCandidatesResult> {
   const params = new URLSearchParams();
   if (options.cnae) params.set('cnae', options.cnae);
   if (options.segment) params.set('segment', options.segment);
   if (options.location) params.set('location', options.location);
   if (options.limit) params.set('limit', String(options.limit));
+  if (options.page) params.set('page', String(options.page));
+  if (options.pageSize) params.set('pageSize', String(options.pageSize));
+  if (options.seed) params.set('seed', options.seed);
+
+  const emptyPage: DiscoveryPage = { page: 1, pageSize: 12, total: 0, totalPages: 0, hasMore: false };
 
   try {
     const res = await fetch(`${API_BASE}/discovery/candidates?${params.toString()}`);
@@ -260,12 +273,19 @@ export async function fetchDiscoveryCandidates(
       return {
         companies: json.data || [],
         criteria: json.criteria || { segments: [], locations: [], activeOnly: false, usedProfile: false },
+        page: {
+          page: json.page || 1,
+          pageSize: json.pageSize || 12,
+          total: json.total || 0,
+          totalPages: json.totalPages || 0,
+          hasMore: Boolean(json.hasMore),
+        },
         message: json.message,
       };
     }
-    return { companies: [], criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false } };
+    return { companies: [], criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false }, page: emptyPage };
   } catch {
-    return { companies: [], criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false } };
+    return { companies: [], criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false }, page: emptyPage };
   }
 }
 
@@ -288,7 +308,7 @@ export async function importDiscoveredCompany(data: {
   });
   const json = await res.json();
   if (!res.ok || !json.success) {
-    throw new Error(json.error || 'Erro ao importar empresa');
+    throw new Error(json.error || 'Erro ao importar lead');
   }
   return { prospect: json.data, alreadyExists: json.alreadyExists || false };
 }
@@ -300,7 +320,7 @@ export async function enrichProspectViaMcp(id: string): Promise<Prospect> {
   });
   const json = await res.json();
   if (!res.ok || !json.success) {
-    throw new Error(json.error || 'Erro ao enriquecer empresa');
+    throw new Error(json.error || 'Erro ao enriquecer lead');
   }
   return json.data;
 }

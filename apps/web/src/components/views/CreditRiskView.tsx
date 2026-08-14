@@ -41,10 +41,10 @@ export const CreditRiskView: React.FC = () => {
     <div className="space-y-6 animate-fadeIn">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Risco e potencial da empresa
+          Risco e potencial do lead
         </h1>
         <p className="text-xs text-muted-foreground">
-          Avalie se uma empresa tem perfil financeiro adequado para avançar no funil comercial.
+          Avalie se um lead tem perfil financeiro adequado para avançar no funil comercial.
         </p>
       </div>
 
@@ -57,15 +57,15 @@ export const CreditRiskView: React.FC = () => {
                 <ShieldCheck className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className="text-base font-bold">Consultar empresa</CardTitle>
-                <CardDescription>Informe a identificação da empresa para análise</CardDescription>
+                <CardTitle className="text-base font-bold">Consultar lead</CardTitle>
+                <CardDescription>Informe a identificação do lead para análise</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAnalyze} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Identificação da empresa</label>
+                <label className="text-xs font-semibold text-muted-foreground">Identificação do lead</label>
                 <Input
                   placeholder="Ex: 12.345.678/0001-95"
                   value={cnpjInput}
@@ -98,7 +98,7 @@ export const CreditRiskView: React.FC = () => {
           <CardHeader>
             <CardTitle className="text-base font-bold">Resumo financeiro e comercial</CardTitle>
             <CardDescription>
-              {riskData ? `Resultado para ${formatCNPJ(cnpjInput)}` : 'Aguardando consulta da empresa'}
+              {riskData ? `Resultado para ${formatCNPJ(cnpjInput)}` : 'Aguardando consulta do lead'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -146,7 +146,7 @@ export const CreditRiskView: React.FC = () => {
               <div className="py-12 flex flex-col items-center justify-center text-muted-foreground text-center">
                 <ShieldAlert className="h-12 w-12 text-muted-foreground/40 mb-3" />
                 <p className="text-sm font-semibold">Nenhuma consulta realizada ainda</p>
-                <p className="text-xs mt-1">Insira um CNPJ no campo ao lado para visualizar a avaliação de risco completa.</p>
+                <p className="text-xs mt-1">Insira o CNPJ de um lead no campo ao lado para visualizar a avaliação de risco completa.</p>
               </div>
             )}
           </CardContent>

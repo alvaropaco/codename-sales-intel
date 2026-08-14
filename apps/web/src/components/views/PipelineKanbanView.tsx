@@ -49,7 +49,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
           Pipeline de oportunidades
         </h1>
         <p className="text-xs text-slate-500 dark:text-muted-foreground">
-          Acompanhe a evolução das empresas sugeridas até virarem oportunidades comerciais reais.
+          Acompanhe a evolução dos leads sugeridos até virarem oportunidades comerciais reais.
         </p>
       </div>
 
@@ -142,7 +142,7 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                   ))
                 ) : (
                   <div className="h-32 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 dark:border-border/60 text-slate-400 dark:text-muted-foreground text-xs text-center p-4">
-                    <p className="font-semibold">Nenhuma empresa neste estágio</p>
+                    <p className="font-semibold">Nenhum lead neste estágio</p>
                   </div>
                 )}
               </div>

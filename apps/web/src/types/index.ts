@@ -132,6 +132,14 @@ export interface DiscoveryCriteria {
   usedProfile: boolean;
 }
 
+export interface DiscoveryPage {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
 export interface EnrichedCnpjContact {
   id: string;
   cnpj: string;

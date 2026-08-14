@@ -233,7 +233,7 @@ export function CommercialProfileForm({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle className="text-base font-black">Perfil comercial</CardTitle>
-              <CardDescription>Defina quem você vende, onde quer vender e quais empresas merecem prioridade.</CardDescription>
+              <CardDescription>Defina quem você vende, onde quer vender e quais leads merecem prioridade.</CardDescription>
             </div>
             <Badge variant={readiness === 100 ? 'qualified' : 'outline'} className="w-fit rounded-full px-3 py-1.5 text-xs">
               {readiness}% preenchido
@@ -284,10 +284,10 @@ export function CommercialProfileForm({
       <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
         <CardHeader className="border-b border-slate-100 dark:border-white/10">
           <CardTitle className="text-base font-black">Critérios de oportunidade</CardTitle>
-          <CardDescription>Use critérios comerciais para priorizar empresas com maior chance de compra.</CardDescription>
+          <CardDescription>Use critérios comerciais para priorizar leads com maior chance de compra.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5 p-5">
-          <ToggleGroup label="Situação da empresa" options={statusOptions} value={form.companyStatuses} onChange={(items) => update('companyStatuses', items)} />
+          <ToggleGroup label="Situação dos leads" options={statusOptions} value={form.companyStatuses} onChange={(items) => update('companyStatuses', items)} />
           <ToggleGroup label="Porte desejado" options={sizeOptions} value={form.targetSizes} onChange={(items) => update('targetSizes', items)} />
           <ToggleGroup label="Tempo de atividade" options={ageOptions} value={form.ageRanges} onChange={(items) => update('ageRanges', items)} />
 

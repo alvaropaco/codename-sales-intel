@@ -36,7 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navItems = [
     { id: 'dashboard' as ActiveTab, label: 'Visão comercial', icon: LayoutDashboard, badge: null },
-    { id: 'prospects' as ActiveTab, label: 'Descobrir empresas', icon: Building2, badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
+    { id: 'prospects' as ActiveTab, label: 'Descobrir leads', icon: Building2, badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
     { id: 'pipeline' as ActiveTab, label: 'Pipeline de vendas', icon: Kanban, badge: 'Ao vivo' },
     { id: 'risk' as ActiveTab, label: 'Risco e potencial', icon: ShieldCheck, badge: null },
     { id: 'workflows' as ActiveTab, label: 'Ações automáticas', icon: Workflow, badge: null },
@@ -131,7 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Sparkles className="h-4 w-4" />
             <span className="text-xs font-black uppercase tracking-[0.14em]">Recomendação de oportunidades</span>
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">Empresas sugeridas, sinais de compra e próximos passos para o time comercial.</p>
+          <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">Leads sugeridos, sinais de compra e próximos passos para o time comercial.</p>
         </div>
 
         <div className="flex items-center gap-2">

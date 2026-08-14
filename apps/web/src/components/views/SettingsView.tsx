@@ -30,7 +30,7 @@ export function SettingsView({
               Ajuste como a SalesIntel encontra oportunidades para o seu time.
             </h1>
             <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
-              Essas preferências orientam a descoberta de empresas, os filtros principais e a priorização comercial. Você pode alterar tudo quando o perfil de cliente ideal mudar.
+              Essas preferências orientam a descoberta de leads, os filtros principais e a priorização comercial. Você pode alterar tudo quando o perfil de cliente ideal mudar.
             </p>
           </div>
           <Badge variant={completed ? 'qualified' : 'outline'} className="w-fit rounded-full px-4 py-2 text-xs font-black">
@@ -76,7 +76,7 @@ export function SettingsView({
         <div className="flex items-start gap-3">
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            Quanto mais específico for o perfil, melhores serão as recomendações de empresas. Priorize nichos, regiões e características que realmente indicam chance de compra.
+            Quanto mais específico for o perfil, melhores serão as recomendações de leads. Priorize nichos, regiões e características que realmente indicam chance de compra.
           </p>
         </div>
       </div>

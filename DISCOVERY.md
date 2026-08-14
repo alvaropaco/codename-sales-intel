@@ -27,19 +27,30 @@ CNPJ_MCP_TOKEN=<seu-token>
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/api/discovery/profile` | Critérios do onboarding (CNAEs/segmentos/regiões) |
-| GET | `/api/discovery/candidates` | Empresas reais por CNAE/segmento/região |
-| POST | `/api/discovery/import` | Adiciona empresa descoberta como prospecto |
-| POST | `/api/prospects/:id/enrich-mcp` | Enriquece prospecto existente via MCP |
+| GET | `/api/discovery/candidates` | Leads reais por CNAE/segmento/região (paginado) |
+| POST | `/api/discovery/import` | Adiciona lead descoberto à lista |
+| POST | `/api/prospects/:id/enrich-mcp` | Enriquece lead existente via MCP |
 | GET | `/api/discovery/stats` | Agregados do dataset |
 
 `/api/discovery/candidates` sem parâmetros usa o perfil do onboarding como
-critério. Também aceita `?segment=&location=&cnae=&limit=` para busca manual.
+critério. Também aceita busca manual e paginação:
+
+- `?segment=&location=&cnae=` para busca manual;
+- `&page=1` (padrão 1) e `&pageSize=12` (padrão 12, máx. 25) para paginar;
+- `&seed=<token>` para rotacionar a ordem dos resultados — um seed novo
+  ("Buscar novamente") revela uma outra ordem do mesmo pool, enquanto o mesmo
+  seed mantém a paginação estável.
+
+O servidor busca uma janela ampla do MCP (filtro por CNAE até 100 registros,
+busca semântica até 40), exclui CNPJs que já estão na lista de leads e devolve
+`total`, `totalPages`, `hasMore` para montar a paginação no cliente.
 
 ## Frontend
 
-Em **Descobrir empresas**, o card "Empresas descobertas agora" carrega sugestões
+Em **Descobrir leads**, o bloco "Leads descobertos agora" carrega sugestões
 reais via MCP a partir dos critérios do onboarding (ou do nicho/lugar digitado)
-e permite adicioná-las à lista de prospectos.
+em uma listagem paginada — o cliente pode navegar por todas as páginas — e
+permite adicioná-las à lista de leads.
 
 ## Segurança
 

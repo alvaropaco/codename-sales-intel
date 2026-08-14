@@ -78,7 +78,7 @@ const cnaeSuggestions = [
 ];
 
 const statusOptions = [
-  { value: 'active', label: 'Ativas', icon: TrendingUp, helper: 'Empresas em pleno funcionamento' },
+  { value: 'active', label: 'Ativas', icon: TrendingUp, helper: 'Leads em pleno funcionamento' },
   { value: 'new', label: 'Abertas recentemente', icon: Sparkles, helper: 'Novas oportunidades de mercado' },
   { value: 'inactive', label: 'Baixadas ou inativas', icon: CalendarClock, helper: 'Eventual retomada ou recuperação' },
 ];
@@ -92,12 +92,12 @@ const sizeOptions = [
 const ageOptions = [
   { value: 'new', label: 'Até 2 anos', icon: Clock3, helper: 'Engrenagens em formação' },
   { value: 'growing', label: '2 a 10 anos', icon: TrendingUp, helper: 'Crescimento acelerado' },
-  { value: 'established', label: 'Mais de 10 anos', icon: CheckCircle2, helper: 'Empresas consolidadas' },
+  { value: 'established', label: 'Mais de 10 anos', icon: CheckCircle2, helper: 'Leads consolidados' },
 ];
 
 const salesCycleOptions = ['Até 30 dias', '30 a 90 dias', '90 a 180 dias', 'Mais de 180 dias'];
 
-const stepTitles = ['Sua empresa', 'Mercado-alvo', 'Regiões', 'Perfil de empresa', 'Decisão comercial'];
+const stepTitles = ['Sua empresa', 'Mercado-alvo', 'Regiões', 'Perfil de lead', 'Decisão comercial'];
 
 function normalizeProfile(profile?: CommercialProfile | null): CommercialProfile {
   return {
@@ -424,7 +424,7 @@ export function OnboardingModal({
                   'Primeiro, conte sobre sua empresa',
                   'Para quem você quer vender?',
                   'Onde seu time vai prospectar?',
-                  'Que tipo de empresa merece prioridade?',
+                  'Que tipo de lead merece prioridade?',
                   'Resumo e decisão comercial',
                 ][step]}
               </h1>
@@ -433,7 +433,7 @@ export function OnboardingModal({
                   'Comece pelo essencial. Você poderá ajustar tudo depois em Preferências.',
                   'Escolha os mercados que fazem sentido para o seu negócio ou adicione os seus.',
                   'Defina as regiões prioritárias para concentrar a prospecção.',
-                  'Selecione os perfis de empresa que melhor se encaixam no seu alvo.',
+                  'Selecione os perfis de lead que melhor se encaixam no seu alvo.',
                   'Ajuste os critérios comerciais e conclua a configuração.',
                 ][step]}
               </p>
@@ -569,7 +569,7 @@ export function OnboardingModal({
             {step === 3 && (
               <div className="space-y-6">
                 <div>
-                  <p className="mb-2.5 text-sm font-black text-slate-900 dark:text-white">Situação da empresa</p>
+                  <p className="mb-2.5 text-sm font-black text-slate-900 dark:text-white">Situação dos leads</p>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     {statusOptions.map((option) => {
                       const active = form.companyStatuses.includes(option.value);
@@ -689,7 +689,7 @@ export function OnboardingModal({
                   </p>
                   <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
-                      <dt className="text-[11px] font-bold text-slate-400">Empresa</dt>
+                      <dt className="text-[11px] font-bold text-slate-400">Lead</dt>
                       <dd className="text-sm font-black text-slate-900 dark:text-white">{form.companyName || '—'}</dd>
                     </div>
                     <div>

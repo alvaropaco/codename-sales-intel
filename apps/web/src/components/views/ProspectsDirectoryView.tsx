@@ -2,6 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Building,
   Building2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Download,
   Eye,
   MapPin,
@@ -17,7 +21,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { CommercialProfile, DiscoveredCompany, Prospect } from '@/types';
+import { CommercialProfile, DiscoveredCompany, DiscoveryPage, Prospect } from '@/types';
 import { formatCNPJ } from '@/lib/utils';
 import {
   fetchDiscoveryCandidates,
@@ -59,6 +63,12 @@ const ageRanges = [
   { value: 'established', label: 'Mais de 10 anos' },
 ];
 
+const DISCOVERY_PAGE_SIZE = 12;
+
+function newDiscoverySeed() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   prospects,
   searchQuery,
@@ -78,30 +88,57 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
 
   const [discovered, setDiscovered] = useState<DiscoveredCompany[]>([]);
   const [discoveryCriteria, setDiscoveryCriteria] = useState<{ segments: string[]; locations: string[]; activeOnly: boolean; usedProfile: boolean }>({ segments: [], locations: [], activeOnly: false, usedProfile: false });
+  const [discoveryPage, setDiscoveryPage] = useState(1);
+  const [discoveryPageInfo, setDiscoveryPageInfo] = useState<DiscoveryPage>({ page: 1, pageSize: 12, total: 0, totalPages: 0, hasMore: false });
+  const [discoverySeed, setDiscoverySeed] = useState(() => newDiscoverySeed());
   const [isLoadingDiscovery, setIsLoadingDiscovery] = useState(false);
   const [discoveryMessage, setDiscoveryMessage] = useState('');
   const [isImporting, setIsImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState('');
 
-  const loadDiscovery = async () => {
+  const loadDiscovery = async (page = 1, seed = discoverySeed) => {
     setIsLoadingDiscovery(true);
     setImportError('');
     const segment = searchQuery.trim() || undefined;
     const location = selectedLocation.trim() || undefined;
-    const result = await fetchDiscoveryCandidates({ segment, location, limit: 12 });
+    const result = await fetchDiscoveryCandidates({ segment, location, page, pageSize: DISCOVERY_PAGE_SIZE, seed });
     setDiscovered(result.companies);
     setDiscoveryCriteria(result.criteria);
     setDiscoveryMessage(result.message || '');
+    setDiscoveryPageInfo(result.page);
+    setDiscoveryPage(result.page.page);
+    // The pool shrank (e.g. after imports): clamp to the last valid page.
+    if (!result.companies.length && result.page.totalPages > 0 && page > result.page.totalPages) {
+      void loadDiscovery(result.page.totalPages, seed);
+      return;
+    }
     setIsLoadingDiscovery(false);
   };
 
   useEffect(() => {
-    // Load discovered companies on mount, and when the seller changes the
-    // searched niche or location so results follow the active criteria.
-    const timer = setTimeout(() => loadDiscovery(), 400);
+    // Load discovered leads on mount, and when the seller changes the searched
+    // niche or location. A fresh seed rotates the pool so each search reveals a
+    // different order; pagination is stable within the same seed.
+    const freshSeed = newDiscoverySeed();
+    setDiscoverySeed(freshSeed);
+    setDiscoveryPage(1);
+    const timer = setTimeout(() => loadDiscovery(1, freshSeed), 400);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, selectedLocation]);
+
+  const handlePageChange = (page: number) => {
+    if (page === discoveryPage || page < 1 || page > discoveryPageInfo.totalPages) return;
+    setDiscoveryPage(page);
+    void loadDiscovery(page);
+  };
+
+  const handleRefreshDiscovery = () => {
+    const freshSeed = newDiscoverySeed();
+    setDiscoverySeed(freshSeed);
+    setDiscoveryPage(1);
+    void loadDiscovery(1, freshSeed);
+  };
 
   const handleImport = async (company: DiscoveredCompany) => {
     setIsImporting(company.cnpj);
@@ -119,15 +156,36 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
         openingDate: company.openingDate || null,
         legalNature: company.legalNature || null,
       });
-      // Refresh the registered list and drop the just-imported company.
+      // Refresh the registered list and drop the just-imported lead.
       await onRefresh();
-      setDiscovered((current) => current.filter((c) => c.cnpj !== company.cnpj));
+      const remaining = discovered.filter((c) => c.cnpj !== company.cnpj);
+      setDiscovered(remaining);
+      if (!remaining.length && discoveryPage > 1) {
+        void loadDiscovery(discoveryPage - 1);
+      }
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : 'Não foi possível adicionar a empresa.');
+      setImportError(error instanceof Error ? error.message : 'Não foi possível adicionar o lead.');
     } finally {
       setIsImporting(null);
     }
   };
+
+  const discoveryPageNumbers = useMemo(() => {
+    const totalPages = discoveryPageInfo.totalPages;
+    const current = discoveryPage;
+    const wanted = new Set([1, totalPages, current - 1, current, current + 1]);
+    const sorted = Array.from(wanted)
+      .filter((p) => p >= 1 && p <= totalPages)
+      .sort((a, b) => a - b);
+    const items: (number | '…')[] = [];
+    let previous = 0;
+    for (const p of sorted) {
+      if (previous && p - previous > 1) items.push('…');
+      items.push(p);
+      previous = p;
+    }
+    return items;
+  }, [discoveryPage, discoveryPageInfo.totalPages]);
 
   const industries = Array.from(new Set(prospects.map((p) => p.industry).filter(Boolean)));
   const profileSegments = [
@@ -188,7 +246,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   }, [prospects, searchQuery, selectedAge, selectedIndustry, selectedLocation, selectedSituation, selectedSize, selectedStatus]);
 
   const handleExportList = () => {
-    const headers = ['Empresa', 'Segmento', 'Colaboradores', 'Potencial', 'Momento comercial'];
+    const headers = ['Lead', 'Segmento', 'Colaboradores', 'Potencial', 'Momento comercial'];
     const rows = filteredProspects.map((p) => [
       `"${p.companyName}"`,
       p.industry || 'Não classificado',
@@ -215,10 +273,10 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
             <span className="text-[11px] font-black uppercase tracking-[0.18em]">Descoberta de oportunidades</span>
           </div>
           <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-foreground">
-            Empresas sugeridas para o seu perfil comercial
+            Leads sugeridos para o seu perfil comercial
           </h1>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500 dark:text-muted-foreground">
-            Lista inicial criada a partir dos segmentos selecionados no onboarding. Use filtros de vendedor para encontrar empresas por nicho, localização, porte, momento e potencial de compra.
+            Lista inicial criada a partir dos segmentos selecionados no onboarding. Use filtros de vendedor para encontrar leads por nicho, localização, porte, momento e potencial de compra.
           </p>
         </div>
 
@@ -257,16 +315,16 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
         </CardContent>
       </Card>
 
-      {/* Empresas descobertas agora via inteligência comercial */}
+      {/* Leads descobertos agora via inteligência comercial */}
       <Card className="overflow-hidden border-emerald-100 bg-gradient-to-br from-white to-emerald-50/40 dark:border-emerald-500/20 dark:from-slate-900 dark:to-emerald-500/5">
         <CardContent className="p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
               <Sparkles className="h-4 w-4" />
-              <span className="text-xs font-black uppercase tracking-[0.16em]">Empresas descobertas agora</span>
+              <span className="text-xs font-black uppercase tracking-[0.16em]">Leads descobertos agora</span>
             </div>
             <Button
-              onClick={() => loadDiscovery()}
+              onClick={handleRefreshDiscovery}
               variant="ghost"
               size="sm"
               className="h-8 gap-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
@@ -281,48 +339,113 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
               ? `Sugestões reais a partir do perfil do onboarding (${discoveryCriteria.segments.join(', ') || 'segmentos'}).`
               : discoveryCriteria.segments.length
               ? `Buscando por "${discoveryCriteria.segments.join(', ')}"${discoveryCriteria.locations[0] ? ` em ${discoveryCriteria.locations[0]}` : ''}.`
-              : 'Digite um nicho acima ou finalize o onboarding para ver empresas reais com potencial.'}
+              : 'Digite um nicho acima ou finalize o onboarding para ver leads reais com potencial.'}
           </p>
 
           {importError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs font-bold text-red-700">{importError}</p>}
           {discoveryMessage && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{discoveryMessage}</p>}
 
           {isLoadingDiscovery ? (
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-32 animate-pulse rounded-xl border border-slate-100 bg-slate-50 dark:border-white/5 dark:bg-white/5" />
+            <div className="mt-4 space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-12 animate-pulse rounded-lg border border-slate-100 bg-slate-50 dark:border-white/5 dark:bg-white/5" />
               ))}
             </div>
           ) : discovered.length ? (
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {discovered.map((company) => (
-                <div key={company.cnpj} className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-emerald-200 dark:border-white/10 dark:bg-white/[0.03]">
-                  <div className="flex items-start gap-2.5">
-                    <div className="h-9 w-9 shrink-0 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:border-emerald-500/20 flex items-center justify-center">
-                      <Building className="h-4 w-4" />
+            <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-white/[0.03]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-100 bg-slate-50 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3">Lead</th>
+                      <th className="px-4 py-3">Segmento</th>
+                      <th className="px-4 py-3">Localização</th>
+                      <th className="px-4 py-3">Situação</th>
+                      <th className="px-4 py-3 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/10">
+                    {discovered.map((company) => (
+                      <tr key={company.cnpj} className="transition hover:bg-emerald-50/40 dark:hover:bg-emerald-500/5">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+                              <Building className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate font-bold text-slate-900 dark:text-white">{company.legalName}</p>
+                              <p className="text-[10px] text-slate-400">ID do lead · {formatCNPJ(company.cnpj)}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{company.industry || 'Segmento a confirmar'}</td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-slate-400" />
+                            {company.city ? `${company.city}${company.state ? ` (${company.state})` : ''}` : company.state || 'Local a confirmar'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant={company.status === 'active' ? 'qualified' : company.status === 'inactive' ? 'outline' : 'secondary'}>
+                            {company.status === 'active' ? 'Ativa' : company.status === 'inactive' ? 'Inativa' : 'A confirmar'}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Button onClick={() => handleImport(company)} disabled={isImporting === company.cnpj} size="sm" className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700">
+                            <UserPlus className="h-3.5 w-3.5" />
+                            {isImporting === company.cnpj ? 'Adicionando...' : 'Adicionar lead'}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {discoveryPageInfo.total > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-white/10">
+                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    Mostrando {Math.min((discoveryPage - 1) * discoveryPageInfo.pageSize + 1, discoveryPageInfo.total)}–
+                    {Math.min(discoveryPage * discoveryPageInfo.pageSize, discoveryPageInfo.total)} de {discoveryPageInfo.total} leads
+                  </span>
+                  {discoveryPageInfo.totalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={discoveryPage === 1} onClick={() => handlePageChange(1)} title="Primeira página">
+                        <ChevronsLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={discoveryPage === 1} onClick={() => handlePageChange(discoveryPage - 1)} title="Página anterior">
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      {discoveryPageNumbers.map((item, idx) =>
+                        item === '…' ? (
+                          <span key={`ellipsis-${idx}`} className="px-1 text-[11px] text-slate-400">…</span>
+                        ) : (
+                          <Button
+                            key={item}
+                            variant={item === discoveryPage ? 'default' : 'outline'}
+                            size="icon"
+                            className="h-8 w-8 text-[11px] font-bold"
+                            onClick={() => handlePageChange(item)}
+                          >
+                            {item}
+                          </Button>
+                        )
+                      )}
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={!discoveryPageInfo.hasMore} onClick={() => handlePageChange(discoveryPage + 1)} title="Próxima página">
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={!discoveryPageInfo.hasMore} onClick={() => handlePageChange(discoveryPageInfo.totalPages)} title="Última página">
+                        <ChevronsRight className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-black text-slate-900 dark:text-white">{company.legalName}</p>
-                      <p className="text-[10px] text-slate-400">{formatCNPJ(company.cnpj)}</p>
-                    </div>
-                  </div>
-                  <p className="mt-3 line-clamp-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">{company.industry || 'Segmento a confirmar'}</p>
-                  <div className="mt-auto flex items-center justify-between pt-3">
-                    <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                      <MapPin className="h-3 w-3" /> {company.city ? `${company.city}${company.state ? ` (${company.state})` : ''}` : company.state || 'Local a confirmar'}
-                    </span>
-                    <Button onClick={() => handleImport(company)} disabled={isImporting === company.cnpj} size="sm" className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700">
-                      <UserPlus className="h-3.5 w-3.5" />
-                      {isImporting === company.cnpj ? 'Adicionando...' : 'Adicionar à lista'}
-                    </Button>
-                  </div>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
           ) : (
             !discoveryMessage && (
               <div className="mt-4 rounded-xl border border-dashed border-slate-200 p-6 text-center dark:border-white/10">
-                <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Nenhuma empresa encontrada</p>
+                <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Nenhum lead encontrado</p>
                 <p className="mt-1 text-xs text-slate-400">Ajuste o nicho ou finalize o onboarding para ver sugestões reais.</p>
               </div>
             )
@@ -363,7 +486,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
             </select>
 
             <select value={selectedSituation} onChange={(e) => setSelectedSituation(e.target.value)} className="h-10 rounded-lg border border-slate-200 dark:border-border/80 bg-slate-50 dark:bg-secondary/50 px-3 text-xs font-semibold text-slate-900 dark:text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500">
-              <option value="active">Empresas ativas</option>
+              <option value="active">Leads ativos</option>
               <option value="all">Todas as situações</option>
               <option value="inactive">Baixadas ou inativas</option>
             </select>
@@ -403,7 +526,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
             <table className="w-full text-xs text-left">
               <thead className="bg-slate-50 dark:bg-secondary/60 text-slate-500 dark:text-muted-foreground uppercase text-[10px] font-bold tracking-wider border-b border-slate-200 dark:border-border/80">
                 <tr>
-                  <th className="px-6 py-3.5">Empresa</th>
+                  <th className="px-6 py-3.5">Lead</th>
                   <th className="px-6 py-3.5">Segmento</th>
                   <th className="px-6 py-3.5">Porte</th>
                   <th className="px-6 py-3.5">Potencial</th>
@@ -422,7 +545,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
                           </div>
                           <div>
                             <p className="font-bold text-slate-900 dark:text-foreground">{p.companyName}</p>
-                            <p className="text-[10px] text-slate-400 dark:text-muted-foreground">Identificação: {formatCNPJ(p.cnpj)}</p>
+                            <p className="text-[10px] text-slate-400 dark:text-muted-foreground">ID do lead: {formatCNPJ(p.cnpj)}</p>
                           </div>
                         </div>
                       </td>
@@ -453,7 +576,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
 
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button onClick={() => onSelectProspect(p)} variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-slate-900 dark:text-muted-foreground dark:hover:text-foreground" title="Ver perfil da empresa">
+                          <Button onClick={() => onSelectProspect(p)} variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-slate-900 dark:text-muted-foreground dark:hover:text-foreground" title="Ver perfil do lead">
                             <Eye className="h-4 w-4" />
                           </Button>
 
@@ -467,7 +590,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
                 ) : (
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center text-slate-500 dark:text-muted-foreground">
-                      <p className="text-sm font-semibold">Nenhuma empresa encontrada</p>
+                      <p className="text-sm font-semibold">Nenhum lead encontrado</p>
                       <p className="text-xs mt-1">Ajuste nicho, localização, porte ou momento comercial para revelar novas oportunidades.</p>
                     </td>
                   </tr>

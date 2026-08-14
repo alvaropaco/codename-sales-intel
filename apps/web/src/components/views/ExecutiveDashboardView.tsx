@@ -203,7 +203,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
       .slice(0, 3)
       .map((p, index) => ({
         title: index === 0 ? `Retomar conversa com ${p.companyName}` : index === 1 ? `Preparar proposta para ${p.companyName}` : `Confirmar informações de ${p.companyName}`,
-        subtitle: `${p.industry || 'Empresa'} · Potencial ${p.opportunityScore}/100`,
+        subtitle: `${p.industry || 'Lead'} · Potencial ${p.opportunityScore}/100`,
         priority: index === 0 ? 'Alta' : index === 1 ? 'Média' : 'Baixa',
         due: index === 0 ? 'Hoje' : index === 1 ? 'Amanhã' : 'Esta semana',
         prospect: p,
@@ -248,18 +248,18 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
               </div>
               <div>
                 <h1 className="max-w-4xl text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-5xl">
-                  Descubra empresas com potencial de compra e priorize as melhores oportunidades.
+                  Descubra leads com potencial de compra e priorize as melhores oportunidades.
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-                  Acompanhe sinais comerciais, potencial de receita e próximos passos para transformar empresas em oportunidades de venda.
+                  Acompanhe sinais comerciais, potencial de receita e próximos passos para transformar leads em oportunidades de venda.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Button onClick={() => onNavigateToTab('prospects')} className="h-11 gap-2 rounded-xl bg-slate-950 px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200">
-                  <Plus className="h-4 w-4" /> Descobrir empresas
+                  <Plus className="h-4 w-4" /> Descobrir leads
                 </Button>
                 <Button onClick={() => onNavigateToTab('prospects')} variant="outline" className="h-11 gap-2 rounded-xl border-slate-200 bg-white/70 px-5 dark:border-white/10 dark:bg-white/5">
-                  Ver empresas sugeridas <ChevronRight className="h-4 w-4" />
+                  Ver leads sugeridos <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -274,7 +274,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
               </div>
               <ProgressBar value={derived.targetProgress} className="mt-4" />
               <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                {analytics.qualified} de {analytics.total_prospects || prospects.length} empresas já estão qualificadas para avanço comercial.
+                {analytics.qualified} de {analytics.total_prospects || prospects.length} leads já estão qualificados para avanço comercial.
               </p>
             </div>
           </div>
@@ -316,7 +316,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="Clientes alvo" value={analytics.total_prospects || prospects.length} subtitle="Empresas sugeridas" trend="Atual" icon={Building2} tone="indigo" />
+        <MetricCard title="Leads alvo" value={analytics.total_prospects || prospects.length} subtitle="Leads sugeridos" trend="Atual" icon={Building2} tone="indigo" />
         <MetricCard title="Oportunidades qualificadas" value={analytics.qualified} subtitle="Prontas para venda" trend={`${derived.qRate}%`} icon={Trophy} tone="emerald" />
         <MetricCard title="Receita potencial" value={formatCurrency(derived.totalRevenue)} subtitle="Soma das oportunidades" trend="Previsto" icon={Landmark} tone="sky" />
         <MetricCard title="Em prospecção" value={analytics.prospects + analytics.leads} subtitle="Aguardando maturação" trend="Ativo" icon={Users} tone="amber" />
@@ -360,7 +360,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="border-b border-slate-100 dark:border-white/10">
             <CardTitle className="text-base font-black">Oportunidades por segmento</CardTitle>
-            <CardDescription>Onde há mais empresas com aderência ao seu perfil comercial.</CardDescription>
+            <CardDescription>Onde há mais leads com aderência ao seu perfil comercial.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5 p-6">
             <div className="h-[210px] w-full">
@@ -464,7 +464,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
-              <CardTitle className="text-base font-black">Empresas prioritárias</CardTitle>
+              <CardTitle className="text-base font-black">Leads prioritários</CardTitle>
               <CardDescription>Contas com maior potencial para abordagem comercial.</CardDescription>
             </div>
             <Button onClick={() => onNavigateToTab('prospects')} variant="outline" size="sm" className="text-xs">Ver todos</Button>
@@ -474,9 +474,9 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-[0.16em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03]">
                   <tr>
-                    <th className="px-6 py-3.5 font-black">Empresa</th>
+                    <th className="px-6 py-3.5 font-black">Lead</th>
                     <th className="px-6 py-3.5 font-black">Momento</th>
-                    <th className="px-6 py-3.5 font-black">CNPJ</th>
+                    <th className="px-6 py-3.5 font-black">ID do lead</th>
                     <th className="px-6 py-3.5 font-black">Valor</th>
                     <th className="px-6 py-3.5 font-black">Potencial</th>
                     <th className="px-6 py-3.5 text-right font-black">Ação</th>
@@ -524,12 +524,12 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="border-b border-slate-100 dark:border-white/10">
             <CardTitle className="flex items-center gap-2 text-base font-black"><Zap className="h-4 w-4 text-indigo-500" /> Análise rápida de potencial</CardTitle>
-            <CardDescription>Informe uma empresa e veja se ela combina com seu perfil comercial.</CardDescription>
+            <CardDescription>Informe um lead e veja se ele combina com seu perfil comercial.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 p-5">
             <form onSubmit={handleQuickQualify} className="space-y-3">
               <Input
-                placeholder="Ex: empresa do segmento escolhido"
+                placeholder="Ex: lead do segmento escolhido"
                 value={quickQualifyName}
                 onChange={(e) => setQuickQualifyName(e.target.value)}
                 className="h-11 rounded-xl bg-slate-50 text-xs dark:bg-white/[0.04]"
@@ -561,7 +561,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                   <ShieldCheck className="h-8 w-8 text-emerald-500" />
                   <div>
                     <p className="text-sm font-bold text-slate-950 dark:text-white">Pronto para análise</p>
-                    <p className="text-xs text-slate-500">Informe uma empresa para receber uma recomendação comercial.</p>
+                    <p className="text-xs text-slate-500">Informe um lead para receber uma recomendação comercial.</p>
                   </div>
                 </div>
               </div>

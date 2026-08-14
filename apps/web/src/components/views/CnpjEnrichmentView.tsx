@@ -103,7 +103,7 @@ export const CnpjEnrichmentView: React.FC = () => {
       enrichedAt: item.enrichedAt || '',
     }));
     const csv = [
-      ['Identificação', 'Empresa', 'Email', 'Telefones', 'Sócios', 'Momento', 'Atualizado em'].join(','),
+      ['Identificação', 'Lead', 'Email', 'Telefones', 'Sócios', 'Momento', 'Atualizado em'].join(','),
       ...rows.map((row) => [
         row.cnpj,
         `"${row.companyName}"`,
@@ -129,7 +129,7 @@ export const CnpjEnrichmentView: React.FC = () => {
               <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Inteligência comercial
             </Badge>
             <h1 className="text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-4xl">
-              Informações da empresa para vender melhor.
+              Informações do lead para vender melhor.
             </h1>
             <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
               Veja contatos, sócios, sinais comerciais e dados úteis para decidir quem abordar primeiro e como iniciar a conversa.
@@ -148,7 +148,7 @@ export const CnpjEnrichmentView: React.FC = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Metric title="Empresas analisadas" value={filtered.length} icon={ShieldCheck} tone="indigo" />
+        <Metric title="Leads analisados" value={filtered.length} icon={ShieldCheck} tone="indigo" />
         <Metric title="Decisores mapeados" value={totalPartners} icon={UsersRound} tone="emerald" />
         <Metric title="Emails encontrados" value={totalEmails} icon={Mail} tone="sky" />
         <Metric title="Telefones encontrados" value={totalPhones} icon={Phone} tone="amber" />
@@ -159,7 +159,7 @@ export const CnpjEnrichmentView: React.FC = () => {
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_160px_160px_170px_auto_auto] lg:items-center">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por empresa, contato, email ou decisor..." className="h-10 rounded-xl pl-9 text-xs" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por lead, contato, email ou decisor..." className="h-10 rounded-xl pl-9 text-xs" />
             </div>
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 rounded-xl text-xs" />
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-10 rounded-xl text-xs" />
@@ -182,14 +182,14 @@ export const CnpjEnrichmentView: React.FC = () => {
       <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
         <CardHeader className="border-b border-slate-100 dark:border-white/10">
           <CardTitle className="text-base font-black">Informações para contato</CardTitle>
-          <CardDescription>Dados comerciais prontos para priorizar abordagens e transformar empresas em oportunidades.</CardDescription>
+          <CardDescription>Dados comerciais prontos para priorizar abordagens e transformar leads em oportunidades.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-[0.16em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03]">
                 <tr>
-                  <th className="px-6 py-3.5 font-black">Empresa</th>
+                  <th className="px-6 py-3.5 font-black">Lead</th>
                   <th className="px-6 py-3.5 font-black">Email</th>
                   <th className="px-6 py-3.5 font-black">Telefones</th>
                   <th className="px-6 py-3.5 font-black">Sócios</th>

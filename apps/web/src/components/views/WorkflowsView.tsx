@@ -20,8 +20,8 @@ export const WorkflowsView: React.FC = () => {
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([
     {
       id: 1,
-      name: 'Priorizar empresas com alto potencial',
-      trigger: 'Quando uma nova empresa combinar com o perfil ideal',
+      name: 'Priorizar leads com alto potencial',
+      trigger: 'Quando um novo lead combinar com o perfil ideal',
       action: 'Enviar para o vendedor responsável',
       status: 'active',
       createdAt: new Date().toISOString(),
@@ -37,7 +37,7 @@ export const WorkflowsView: React.FC = () => {
   ]);
 
   const [name, setName] = useState('');
-  const [trigger, setTrigger] = useState('Nova empresa sugerida');
+  const [trigger, setTrigger] = useState('Novo lead sugerido');
   const [action, setAction] = useState('Criar próxima ação para o vendedor');
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -59,7 +59,7 @@ export const WorkflowsView: React.FC = () => {
           Ações automáticas de vendas
         </h1>
         <p className="text-xs text-muted-foreground">
-          Configure regras para priorizar oportunidades, distribuir empresas e lembrar o time dos próximos contatos.
+          Configure regras para priorizar oportunidades, distribuir leads e lembrar o time dos próximos contatos.
         </p>
       </div>
 

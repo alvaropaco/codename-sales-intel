@@ -257,7 +257,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                   </p>
                 </div>
                 <div className="p-2.5 rounded-lg bg-secondary/30 border border-border/40">
-                  <p className="font-semibold text-foreground">Empresa salva na sua lista</p>
+                  <p className="font-semibold text-foreground">Lead salvo na sua lista</p>
                   <p className="text-muted-foreground text-[10px]">
                     {new Date(prospect.createdAt).toLocaleDateString('pt-BR')}
                   </p>
