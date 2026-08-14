@@ -178,12 +178,15 @@ async function requestEnrichment(prisma, prospectOrId) {
 // Depois aplica os campos no Prospect somente se a versão for mais nova do que
 // a já aplicada (protege contra reordering / mensagens antigas chegando depois).
 async function persistEnrichmentResult(prisma, result) {
-  const summary = result.summary || result || {};
-  const cnpj = normalizeCnpj(summary.cnpj || result.cnpj);
-  const companyId = summary.company_id || result.company_id || deterministicCompanyId(cnpj);
-  const enrichmentVersion = summary.enrichment_version ?? summary.version ?? 1;
-  const status = (summary.status || 'COMPLETED').toUpperCase();
-  const requestEventId = summary.request_event_id || result.request_event_id || null;
+  // O evento CompanyResultEventV1 traz enrichment_version/status/cnpj/company_id
+  // no TOPO do payload; `summary` contém apenas os 7 campos reduzidos (domain,
+  // commercial_potential etc.). Ler essas chaves do topo evita cair no default.
+  const summary = result.summary || {};
+  const cnpj = normalizeCnpj(result.cnpj || summary.cnpj);
+  const companyId = result.company_id || summary.company_id || deterministicCompanyId(cnpj);
+  const enrichmentVersion = result.enrichment_version ?? result.version ?? 1;
+  const status = (result.status || 'COMPLETED').toUpperCase();
+  const requestEventId = result.request_event_id || null;
 
   if (!companyId && !cnpj) {
     throw new Error('Enrichment result sem company_id nem cnpj — impossível persistir');
