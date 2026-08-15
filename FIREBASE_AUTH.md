@@ -122,9 +122,10 @@ FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/para/shadowtrace-....json
 SESSION_SECRET=valor_aleatorio_de_no_minimo_32_caracteres
 SESSION_TTL_HOURS=336
 SESSION_COOKIE_SECURE=false   # true quando servir via HTTPS
-# (opcional) domínio para onde o proxy de /__/auth/* repassa os callbacks.
-# Padrão: <FIREBASE_PROJECT_ID>.firebaseapp.com
-FIREBASE_AUTH_DOMAIN=shadowtrace-7199f.firebaseapp.com
+# (opcional) origem para onde o proxy de /__/auth/* repassa os callbacks.
+# Padrão: <FIREBASE_PROJECT_ID>.firebaseapp.com. Só mude se o handler estiver
+# em um domínio customizado conectado ao Firebase Hosting.
+FIREBASE_AUTH_HANDLER_ORIGIN=shadowtrace-7199f.firebaseapp.com
 # AUTH_ALLOWED_DOMAINS=meudominio.com.br
 ```
 
@@ -134,10 +135,16 @@ FIREBASE_AUTH_DOMAIN=shadowtrace-7199f.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=shadowtrace-7199f
 VITE_FIREBASE_API_KEY=AIza...
 VITE_FIREBASE_APP_ID=1:123456789:web:abc...
-VITE_FIREBASE_AUTH_DOMAIN=shadowtrace-7199f.firebaseapp.com
+# authDomain PÚBLICO: quando usar domínio próprio, aponte para ele
+# (ex.: salesintel.0xcloud.net) e cadastre a redirect URI
+# https://SEU_DOMINIO/__/auth/handler no provedor OAuth.
+VITE_FIREBASE_AUTH_DOMAIN=salesintel.0xcloud.net
 VITE_FIREBASE_STORAGE_BUCKET=shadowtrace-7199f.appspot.com
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 ```
+
+> `VITE_FIREBASE_AUTH_DOMAIN` NÃO afeta o proxy do backend. Ele é embutido no
+> build (build arg) e diz ao SDK web onde ele deve chamar `/__/auth/*`.
 
 ## Rodando
 

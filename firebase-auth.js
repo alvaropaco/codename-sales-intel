@@ -32,20 +32,23 @@ const SESSION_TTL_SECONDS = SESSION_TTL_HOURS * 60 * 60;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'shadowtrace-7199f';
 
 /**
- * Origin used by the Firebase Auth handler callback endpoints (`/__/auth/*`).
- * By default these paths live on the Firebase hosting domain
- * (`<project>.firebaseapp.com`). When the Web SDK is pointed at a custom
- * `authDomain` (the app's own domain), the Firebase JS SDK calls those same
- * paths on the custom domain, so this server proxies them to the real handler.
+ * Origin of the real Firebase Auth handler. When the Web SDK's `authDomain`
+ * points at this app's own domain, the SDK calls `/__/auth/*` on this server.
+ * We always forward those calls to the Firebase Hosting handler for the
+ * project (`<project>.firebaseapp.com`), which is where the OAuth handshake
+ * actually runs.
+ *
+ * IMPORTANT: the public `authDomain` (`VITE_FIREBASE_AUTH_DOMAIN` on the
+ * frontend) is NOT the proxy target. If we forwarded to the app's own domain
+ * we would loop back into this same handler. Use FIREBASE_AUTH_HANDLER_ORIGIN
+ * only when the handler is served from a custom Firebase Hosting domain.
  */
 function getFirebaseAuthProxyOrigin() {
-  const domain = (
-    process.env.FIREBASE_AUTH_DOMAIN ||
-    process.env.VITE_FIREBASE_AUTH_DOMAIN ||
-    `${FIREBASE_PROJECT_ID}.firebaseapp.com`
-  )
+  const override = String(process.env.FIREBASE_AUTH_HANDLER_ORIGIN || '')
+    .trim()
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '');
+  const domain = override || `${FIREBASE_PROJECT_ID}.firebaseapp.com`;
   return `https://${domain}`;
 }
 
