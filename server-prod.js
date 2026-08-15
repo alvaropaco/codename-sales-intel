@@ -55,6 +55,9 @@ const natsEnrichment = require('./nats-enrichment');
 const firebaseAuth = require('./firebase-auth');
 
 // Middleware
+// Self-hosted Firebase Auth callback endpoints. Registered before the body
+// parsers so raw OAuth POSTs to /__/auth/* can be forwarded untouched.
+app.use('/__/auth', firebaseAuth.createFirebaseAuthHandlerProxy());
 app.use(express.json());
 app.use(firebaseAuth.cookieParserMiddleware);
 app.use(express.static(path.join(__dirname, 'apps', 'web', 'dist')));
@@ -990,8 +993,23 @@ app.get('/api/enrichment/status/:id', async (req, res) => {
   }
 });
 
-// Error handling for 404
+// SPA fallback: serve index.html for extensionless GET requests that accept
+// HTML (e.g. the Firebase OAuth redirect landing page /auth/callback and any
+// future client-side routes). API and asset requests keep a 404 JSON response.
 app.use((req, res) => {
+  if (
+    req.method === 'GET' &&
+    !req.path.startsWith('/api/') &&
+    !req.path.startsWith('/__/') &&
+    !path.extname(req.path) &&
+    req.accepts('html')
+  ) {
+    const reactIndexPath = path.join(__dirname, 'apps', 'web', 'dist', 'index.html');
+    if (fs.existsSync(reactIndexPath)) {
+      return res.sendFile(reactIndexPath);
+    }
+  }
+
   res.status(404).json({ success: false, error: 'Route not found' });
 });
 

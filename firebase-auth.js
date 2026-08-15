@@ -29,6 +29,25 @@ const { parse: parseCookie, serialize: serializeCookie } = require('cookie');
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'salesintel_session';
 const SESSION_TTL_HOURS = Math.max(1, Number(process.env.SESSION_TTL_HOURS) || 336);
 const SESSION_TTL_SECONDS = SESSION_TTL_HOURS * 60 * 60;
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'shadowtrace-7199f';
+
+/**
+ * Origin used by the Firebase Auth handler callback endpoints (`/__/auth/*`).
+ * By default these paths live on the Firebase hosting domain
+ * (`<project>.firebaseapp.com`). When the Web SDK is pointed at a custom
+ * `authDomain` (the app's own domain), the Firebase JS SDK calls those same
+ * paths on the custom domain, so this server proxies them to the real handler.
+ */
+function getFirebaseAuthProxyOrigin() {
+  const domain = (
+    process.env.FIREBASE_AUTH_DOMAIN ||
+    process.env.VITE_FIREBASE_AUTH_DOMAIN ||
+    `${FIREBASE_PROJECT_ID}.firebaseapp.com`
+  )
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+  return `https://${domain}`;
+}
 
 /**
  * Free / consumer webmail providers that are NOT allowed to sign up.
@@ -115,6 +134,74 @@ const FREE_EMAIL_DOMAINS = new Set(
 
 let cachedAdmin = null;
 let cachedSessionSecret = null;
+
+/**
+ * Friendly, user-facing messages for the Firebase Auth / session error codes
+ * that can bubble out of the Admin SDK or the client SDK. Technical error
+ * strings are never exposed to the end user.
+ */
+const AUTH_ERROR_MESSAGES = {
+  'auth/argument-error': 'Dados de autenticação inválidos. Tente novamente.',
+  'auth/id-token-expired': 'Sua sessão expirou. Entre novamente.',
+  'auth/id-token-revoked': 'Sua sessão foi encerrada. Entre novamente.',
+  'auth/invalid-id-token': 'Sessão inválida. Entre novamente.',
+  'auth/invalid-credential': 'Credenciais inválidas.',
+  'auth/session-cookie-expired': 'Sua sessão expirou. Entre novamente.',
+  'auth/session-cookie-revoked': 'Sua sessão foi encerrada. Entre novamente.',
+  'auth/user-not-found': 'Nenhuma conta encontrada para essas credenciais.',
+  'auth/wrong-password': 'Senha incorreta. Tente novamente.',
+  'auth/email-already-exists': 'Este e-mail já está cadastrado.',
+  'auth/phone-number-already-exists': 'Este telefone já está cadastrado.',
+  'auth/invalid-email': 'E-mail inválido.',
+  'auth/invalid-phone-number': 'Telefone inválido.',
+  'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns instantes e tente novamente.',
+  'auth/network-request-failed': 'Falha de conexão. Verifique sua internet e tente novamente.',
+  'auth/operation-not-allowed': 'Este método de login não está habilitado.',
+  'auth/unauthorized-continue-uri': 'O endereço de retorno do login não está autorizado.',
+  'auth/internal-error': 'Erro interno de autenticação. Tente novamente.',
+};
+
+function errorCodeOf(err) {
+  if (!err) return null;
+  if (typeof err.code === 'string' && err.code) return err.code;
+  if (err.errorInfo && typeof err.errorInfo.code === 'string' && err.errorInfo.code) {
+    return err.errorInfo.code;
+  }
+  return null;
+}
+
+/**
+ * Converts any authentication error into a safe public payload. Codes owned by
+ * this application (EMAIL_NOT_VERIFIED, NON_CORPORATE_EMAIL, ...) are kept
+ * verbatim together with their already-friendly message. Firebase Admin SDK
+ * codes are translated. Everything else is collapsed into a generic message so
+ * internal error strings never leak to the client.
+ */
+function toPublicAuthError(err) {
+  const code = errorCodeOf(err);
+
+  if (code && !code.startsWith('auth/')) {
+    return {
+      status: Number(err && err.status) || 401,
+      message: String((err && err.message) || 'Não foi possível autenticar. Tente novamente.'),
+      code,
+    };
+  }
+
+  if (code && AUTH_ERROR_MESSAGES[code]) {
+    return {
+      status: Number(err && err.status) || 401,
+      message: AUTH_ERROR_MESSAGES[code],
+      code,
+    };
+  }
+
+  return {
+    status: Number(err && err.status) || 401,
+    message: 'Não foi possível autenticar. Tente novamente.',
+    code: code || 'AUTH_FAILED',
+  };
+}
 
 function readEnvJson(key) {
   const raw = process.env[key];
@@ -403,11 +490,21 @@ async function loginWithIdToken(prisma, idToken) {
   if (!idToken) {
     const err = new Error('ID token ausente');
     err.status = 400;
+    err.code = 'MISSING_ID_TOKEN';
     throw err;
   }
 
   const auth = getAuthInstance();
-  const decoded = await auth.verifyIdToken(String(idToken));
+  let decoded;
+  try {
+    decoded = await auth.verifyIdToken(String(idToken));
+  } catch (verifyErr) {
+    const pub = toPublicAuthError(verifyErr);
+    const err = new Error(pub.message);
+    err.status = pub.status;
+    err.code = pub.code;
+    throw err;
+  }
 
   const hasEmail = Boolean(decoded.email);
   const hasPhone = Boolean(decoded.phone_number);
@@ -415,6 +512,7 @@ async function loginWithIdToken(prisma, idToken) {
   if (!hasEmail && !hasPhone) {
     const err = new Error('Não foi possível identificar um e-mail ou telefone no token.');
     err.status = 403;
+    err.code = 'IDENTITY_NOT_FOUND';
     throw err;
   }
 
@@ -461,12 +559,12 @@ function createAuthRouter(prisma) {
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      const status = err.status || 401;
-      res.status(status).json({
+      const pub = toPublicAuthError(err);
+      res.status(pub.status).json({
         success: false,
         authenticated: false,
-        error: err.message,
-        code: err.code || 'AUTH_FAILED',
+        error: pub.message,
+        code: pub.code,
       });
     }
   });
@@ -543,8 +641,118 @@ function createAuthRouter(prisma) {
   return router;
 }
 
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'content-length',
+  'host',
+  // Let fetch negotiate/decompress this itself; forwarding the client's
+  // accept-encoding would make the upstream response bytes arrive compressed
+  // while we strip content-encoding below (breaking the forwarded body).
+  'accept-encoding',
+]);
+
+async function readRawBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * Self-hosted Firebase Auth callback endpoints.
+ *
+ * The Firebase JS SDK calls `__/auth/handler`, `__/auth/iframe` and
+ * `__/auth/experiments` on the configured `authDomain`. When `authDomain` is
+ * this app's own domain, those calls would 404 unless we serve them. This
+ * middleware forwards them to the Firebase-hosted handler (which keeps the
+ * OAuth popup/redirect flows working) and passes the response back verbatim.
+ */
+function createFirebaseAuthHandlerProxy() {
+  return async function firebaseAuthHandlerProxy(req, res) {
+    let upstreamUrl;
+    try {
+      upstreamUrl = getFirebaseAuthProxyOrigin() + req.originalUrl;
+    } catch (_err) {
+      return res.status(500).type('text/plain').send('Configuração de autenticação inválida.');
+    }
+
+    const method = String(req.method || 'GET').toUpperCase();
+    const hasBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
+
+    const headers = {};
+    for (const [name, value] of Object.entries(req.headers || {})) {
+      if (name === undefined || value === undefined) continue;
+      if (HOP_BY_HOP_HEADERS.has(String(name).toLowerCase())) continue;
+      headers[name] = Array.isArray(value) ? value.join(', ') : String(value);
+    }
+
+    let body;
+    if (hasBody) {
+      try {
+        body = await readRawBody(req);
+      } catch (_err) {
+        return res.status(400).type('text/plain').send('Falha ao ler a requisição de login.');
+      }
+    }
+
+    try {
+      const upstream = await fetch(upstreamUrl, {
+        method,
+        headers,
+        body: body && body.length ? body : undefined,
+        redirect: 'manual',
+      });
+
+      const responseHeaders = {};
+      upstream.headers.forEach((value, name) => {
+        const lower = String(name).toLowerCase();
+        if (
+          lower === 'set-cookie' ||
+          lower === 'content-length' ||
+          lower === 'content-encoding' ||
+          lower === 'connection' ||
+          lower === 'keep-alive' ||
+          lower === 'transfer-encoding'
+        ) {
+          return;
+        }
+        responseHeaders[lower] = responseHeaders[lower]
+          ? `${responseHeaders[lower]}, ${value}`
+          : value;
+      });
+
+      res.status(upstream.status);
+      res.set(responseHeaders);
+
+      // Cookies minted by the Firebase handler must be scoped to this origin
+      // (host-only), so the browser stores them for the self-hosted handler.
+      if (typeof upstream.headers.getSetCookie === 'function') {
+        const cookies = upstream.headers
+          .getSetCookie()
+          .map((cookie) => cookie.replace(/\s*Domain=[^;]*;?/gi, ''));
+        if (cookies.length) res.setHeader('set-cookie', cookies);
+      }
+
+      const payload = Buffer.from(await upstream.arrayBuffer());
+      res.end(payload);
+    } catch (err) {
+      console.error('[auth] Falha ao repassar o callback do Firebase:', err);
+      res.status(502).type('text/plain').send('Não foi possível concluir o login. Tente novamente.');
+    }
+  };
+}
+
 module.exports = {
   createAuthRouter,
+  createFirebaseAuthHandlerProxy,
   cookieParserMiddleware,
   createRequireAuth,
   isAllowedEmailDomain,

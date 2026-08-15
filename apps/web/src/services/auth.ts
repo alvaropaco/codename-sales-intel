@@ -1,3 +1,5 @@
+import { getAuthErrorMessage } from '@/services/authErrors';
+
 const API_BASE = '/api';
 
 export interface SessionUser {
@@ -41,9 +43,12 @@ export async function createSession(idToken: string): Promise<SessionUser> {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.success) {
     const error = new Error(
-      json.error || 'Falha ao autenticar. Verifique se o e-mail é corporativo.'
+      getAuthErrorMessage(
+        { code: json.code, message: json.error },
+        json.error || 'Falha ao autenticar. Verifique se o e-mail é corporativo.'
+      )
     );
-    (error as Error & { code?: string }).code = json.code;
+    (error as Error & { code?: string }).code = json.code || 'AUTH_FAILED';
     throw error;
   }
 

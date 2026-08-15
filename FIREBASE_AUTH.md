@@ -18,22 +18,42 @@ persistente por cookie httpOnly.
 |--------|---------|-------|
 | Backend | `firebase-auth.js` | Verifica ID tokens (Admin SDK), bloqueia e-mails gratuitos, emite cookie de sessão assinado (JWT) e protege as rotas |
 | Backend | `server-prod.js` | Registra `POST/GET /api/auth/session`, `POST /api/auth/logout` e o middleware `requireAuth` em `/api/*` |
-| Frontend | `apps/web/src/services/firebase.ts` | SDK web do Firebase (popup Google/GitHub) |
+| Frontend | `apps/web/src/services/firebase.ts` | SDK web do Firebase (redirect Google/GitHub com fallback para popup) |
 | Frontend | `apps/web/src/services/auth.ts` | Troca o ID token por sessão, resolve a sessão atual e faz logout |
+| Frontend | `apps/web/src/services/authErrors.ts` | Traduz códigos de erro técnicos do Firebase/backend em mensagens amigáveis |
 | Frontend | `apps/web/src/components/auth/LoginView.tsx` | Tela de login (Google/GitHub) |
-| Frontend | `apps/web/src/App.tsx` | Gate de autenticação: sem sessão, mostra o login; com sessão, carrega o dashboard |
+| Frontend | `apps/web/src/App.tsx` | Gate de autenticação e processamento do callback de redirect do Firebase |
 | Frontend | `apps/web/src/services/authGuard.ts` | Detecta 401 em chamadas protegidas e volta ao login |
+
+## Endpoints de callback
+
+O fluxo OAuth do Firebase precisa de dois pontos de retorno, ambos implementados:
+
+| Endpoint | Tipo | Papel |
+|----------|------|-------|
+| `/__/auth/*` (`/__/auth/handler`, `/__/auth/iframe`, `/__/auth/experiments`) | Backend (proxy) | Endpoints que o SDK web chama no `authDomain`. São repassados para `<project>.firebaseapp.com`, permitindo usar domínio customizado como `authDomain`. |
+| `/auth/callback` (qualquer rota SPA) | Backend (SPA fallback) | O navegador volta do provedor OAuth para esta rota; o servidor devolve o `index.html` do React, que processa o resultado via `getRedirectResult`. |
 
 ## Fluxo
 
 1. O usuário clica em **Continuar com Google/GitHub**.
-2. O SDK web abre o popup do provedor e devolve um Firebase ID token.
-3. O frontend envia o token para `POST /api/auth/session`.
+2. O SDK web redireciona a página para o provedor (fallback para popup quando o
+   navegador não suporta redirect).
+3. Ao voltar, o `App` processa o callback (`getRedirectResult`) e envia o Firebase
+   ID token para `POST /api/auth/session`.
 4. O backend valida o token com o Admin SDK e aplica a política de e-mail corporativo.
 5. Se aprovado, o usuário é gravado (upsert) no banco e o backend assina um JWT
    salvo em cookie `httpOnly` (`salesintel_session`, 14 dias por padrão).
 6. Nas próximas visitas o cookie é enviado automaticamente e `GET /api/auth/session`
    resolve o usuário sem exigir novo login.
+
+## Tratamento de erros
+
+Erros do Firebase (`auth/popup-blocked`, `auth/invalid-credential`, etc.) e os
+códigos do backend (`EMAIL_NOT_VERIFIED`, `NON_CORPORATE_EMAIL`,
+`SESSION_EXPIRED`, ...) **nunca são exibidos ao usuário**. O mapeamento central
+em `apps/web/src/services/authErrors.ts` converte cada código em mensagem
+amigável em português; códigos desconhecidos caem em uma mensagem genérica.
 
 O JWT inclui um `sessionVersion` do usuário. No logout esse valor é incrementado no
 banco, então cookies capturados anteriormente passam a responder `401` — a sessão é
@@ -102,6 +122,9 @@ FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/para/shadowtrace-....json
 SESSION_SECRET=valor_aleatorio_de_no_minimo_32_caracteres
 SESSION_TTL_HOURS=336
 SESSION_COOKIE_SECURE=false   # true quando servir via HTTPS
+# (opcional) domínio para onde o proxy de /__/auth/* repassa os callbacks.
+# Padrão: <FIREBASE_PROJECT_ID>.firebaseapp.com
+FIREBASE_AUTH_DOMAIN=shadowtrace-7199f.firebaseapp.com
 # AUTH_ALLOWED_DOMAINS=meudominio.com.br
 ```
 

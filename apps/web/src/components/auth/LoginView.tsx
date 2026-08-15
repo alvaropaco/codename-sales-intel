@@ -8,8 +8,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import {
-  signInWithGoogle,
-  signInWithGithub,
+  signInWithProvider,
   signInWithEmail,
   signUpWithEmail,
   sendPhoneVerificationCode,
@@ -17,9 +16,11 @@ import {
 } from '@/services/firebase';
 import type { ConfirmationResult } from 'firebase/auth';
 import { createSession, type SessionUser } from '@/services/auth';
+import { getAuthErrorMessage } from '@/services/authErrors';
 
 interface LoginViewProps {
   onAuthenticated: (user: SessionUser) => void;
+  initialError?: string | null;
 }
 
 type Mode = 'default' | 'email' | 'phone';
@@ -45,10 +46,10 @@ const GITHUB_ICON = (
 const inputClass =
   'h-11 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-medium text-white placeholder:text-slate-500 outline-none transition focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20';
 
-export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialError }) => {
   const [mode, setMode] = useState<Mode>('default');
   const [loading, setLoading] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const [info, setInfo] = useState<string | null>(null);
 
   // email/password
@@ -69,13 +70,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
     setLoading(provider);
     resetMessages();
     try {
-      const idToken =
-        provider === 'google' ? await signInWithGoogle() : await signInWithGithub();
-      const user = await createSession(idToken);
-      onAuthenticated(user);
+      const idToken = await signInWithProvider(provider);
+      // A redirect sign-in navigates the whole page away and returns null here;
+      // the session is exchanged on the next page load. A popup fallback returns
+      // a token directly, which we exchange immediately.
+      if (idToken) {
+        const user = await createSession(idToken);
+        onAuthenticated(user);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha inesperada durante o login.');
-    } finally {
+      setError(getAuthErrorMessage(err, 'Falha inesperada durante o login.'));
       setLoading(null);
     }
   };
@@ -92,8 +96,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
       const user = await createSession(idToken);
       onAuthenticated(user);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Falha ao entrar com e-mail.';
-      setError(message);
+      setError(getAuthErrorMessage(err, 'Falha ao entrar com e-mail.'));
     } finally {
       setLoading(null);
     }
@@ -112,7 +115,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
         'Conta criada! Enviamos um link de verificação para seu e-mail. Verifique a caixa de entrada e depois entre.'
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao criar conta.');
+      setError(getAuthErrorMessage(err, 'Falha ao criar conta.'));
     } finally {
       setLoading(null);
     }
@@ -130,7 +133,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
       setConfirmation(result);
       setInfo('Código enviado por SMS. Digite o código para confirmar.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao enviar o código SMS.');
+      setError(getAuthErrorMessage(err, 'Falha ao enviar o código SMS.'));
     } finally {
       setLoading(null);
     }
@@ -148,7 +151,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
       const user = await createSession(idToken);
       onAuthenticated(user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Código inválido. Tente novamente.');
+      setError(getAuthErrorMessage(err, 'Código inválido. Tente novamente.'));
     } finally {
       setLoading(null);
     }

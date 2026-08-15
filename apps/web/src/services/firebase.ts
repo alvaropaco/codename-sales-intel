@@ -4,6 +4,8 @@ import {
   GoogleAuthProvider,
   GithubAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -12,6 +14,7 @@ import {
   type Auth,
   type ConfirmationResult,
 } from 'firebase/auth';
+import { getErrorCode } from '@/services/authErrors';
 
 const env = import.meta.env;
 
@@ -88,6 +91,70 @@ export async function signInWithGithub(): Promise<string> {
   const auth = requireAuth();
   const provider = new GithubAuthProvider();
   const result = await signInWithPopup(auth, provider);
+  return result.user.getIdToken();
+}
+
+/**
+ * Starts a full-page redirect sign-in for Google. The OAuth callback is handled
+ * by `getFirebaseRedirectResult()` when the app reloads.
+ */
+export async function signInWithGoogleRedirect(): Promise<void> {
+  const auth = requireAuth();
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  await signInWithRedirect(auth, provider);
+}
+
+/**
+ * Starts a full-page redirect sign-in for GitHub.
+ */
+export async function signInWithGithubRedirect(): Promise<void> {
+  const auth = requireAuth();
+  const provider = new GithubAuthProvider();
+  await signInWithRedirect(auth, provider);
+}
+
+/**
+ * Preferred Google/GitHub entrypoint: use the redirect flow (no popup, which is
+ * more reliable across browsers and embeds). When the environment does not
+ * support redirect sign-in, it falls back to a popup and returns the ID token.
+ *
+ * Returns null while a redirect is in progress (the browser is navigating away);
+ * the session exchange happens on the next page load via
+ * `getFirebaseRedirectResult()`.
+ */
+export async function signInWithProvider(
+  provider: 'google' | 'github'
+): Promise<string | null> {
+  const auth = requireAuth();
+  const authProvider =
+    provider === 'google' ? new GoogleAuthProvider() : new GithubAuthProvider();
+
+  if (provider === 'google') {
+    authProvider.setCustomParameters({ prompt: 'select_account' });
+  }
+
+  try {
+    await signInWithRedirect(auth, authProvider);
+    return null;
+  } catch (err) {
+    if (getErrorCode(err) === 'auth/operation-not-supported-in-this-environment') {
+      const result = await signInWithPopup(auth, authProvider);
+      return result.user.getIdToken();
+    }
+    throw err;
+  }
+}
+
+/**
+ * Resolves the OAuth redirect result after Firebase sends the user back to the
+ * app. Returns the Firebase ID token, or null when the current page load was
+ * not the result of a redirect sign-in.
+ */
+export async function getFirebaseRedirectResult(): Promise<string | null> {
+  if (!firebaseAuth) return null;
+  const result = await getRedirectResult(firebaseAuth);
+  if (!result || !result.user) return null;
   return result.user.getIdToken();
 }
 

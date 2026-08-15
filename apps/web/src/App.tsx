@@ -12,8 +12,9 @@ import { ProspectModal } from '@/components/modals/ProspectModal';
 import { ProspectDetailDrawer } from '@/components/modals/ProspectDetailDrawer';
 import { ActiveTab, Prospect, PipelineAnalytics, ForecastAnalytics, CommercialProfile } from '@/types';
 import { fetchProspects, fetchPipelineAnalytics, fetchForecastAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
-import { getSession, logoutSession, type SessionUser } from '@/services/auth';
-import { signOutFirebase } from '@/services/firebase';
+import { createSession, getSession, logoutSession, type SessionUser } from '@/services/auth';
+import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase';
+import { getAuthErrorMessage } from '@/services/authErrors';
 import { LoginView } from '@/components/auth/LoginView';
 
 export function App() {
@@ -44,6 +45,7 @@ export function App() {
 
   const [session, setSession] = useState<SessionUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -66,13 +68,42 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    // Persistent session: on the next visits the httpOnly cookie is sent
-    // automatically and resolves the user without any re-login.
-    getSession().then((user) => {
-      if (cancelled) return;
-      setSession(user);
-      setAuthLoading(false);
-    });
+    (async () => {
+      // 1) Complete a Firebase OAuth redirect (Google/GitHub). After the
+      // provider sends the browser back to the app, the SDK exposes the result
+      // here; we exchange the ID token for a persistent backend session.
+      try {
+        const idToken = await getFirebaseRedirectResult();
+        if (idToken) {
+          const user = await createSession(idToken);
+          if (!cancelled) {
+            setSession(user);
+            setAuthLoading(false);
+          }
+          return;
+        }
+      } catch (err) {
+        console.error('Error completing Firebase redirect sign-in:', err);
+        if (!cancelled) {
+          setLoginError(getAuthErrorMessage(err));
+        }
+      }
+
+      // 2) Persistent session: on subsequent visits the httpOnly cookie is sent
+      // automatically and resolves the user without any re-login.
+      try {
+        const user = await getSession();
+        if (!cancelled) {
+          setSession(user);
+          setAuthLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setSession(null);
+          setAuthLoading(false);
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -123,7 +154,15 @@ export function App() {
   }
 
   if (!session) {
-    return <LoginView onAuthenticated={(user) => setSession(user)} />;
+    return (
+      <LoginView
+        onAuthenticated={(user) => {
+          setLoginError(null);
+          setSession(user);
+        }}
+        initialError={loginError}
+      />
+    );
   }
 
   return (
