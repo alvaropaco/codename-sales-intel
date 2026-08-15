@@ -469,6 +469,42 @@ app.delete('/api/prospects/:id', async (req, res) => {
   }
 });
 
+// POST /api/prospects/bulk - Bulk move or delete selected prospects
+app.post('/api/prospects/bulk', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map((id) => String(id)).filter(Boolean)
+      : [];
+    const action = String(req.body?.action || '').toLowerCase();
+    const status = String(req.body?.status || '');
+
+    if (!ids.length) {
+      return res.status(400).json({ success: false, error: 'Selecione ao menos um prospecto.' });
+    }
+
+    if (action === 'delete') {
+      const result = await prisma.prospect.deleteMany({ where: { id: { in: ids } } });
+      return res.json({ success: true, data: { count: result.count }, timestamp: new Date().toISOString() });
+    }
+
+    if (action === 'move') {
+      const validStatuses = ['lead', 'prospect', 'qualified', 'closed'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ success: false, error: 'Estágio de destino inválido.' });
+      }
+      const result = await prisma.prospect.updateMany({
+        where: { id: { in: ids } },
+        data: { status },
+      });
+      return res.json({ success: true, data: { count: result.count }, timestamp: new Date().toISOString() });
+    }
+
+    return res.status(400).json({ success: false, error: 'Ação em lote inválida.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET /api/analytics/pipeline - Pipeline metrics
 app.get('/api/analytics/pipeline', async (req, res) => {
   try {

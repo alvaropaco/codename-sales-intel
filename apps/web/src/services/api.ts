@@ -68,6 +68,23 @@ export async function deleteProspect(id: string): Promise<boolean> {
   return json.success || false;
 }
 
+export async function bulkUpdateProspects(
+  ids: string[],
+  action: 'move' | 'delete',
+  status?: string
+): Promise<number> {
+  const res = await fetch(`${API_BASE}/prospects/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, action, status }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao atualizar prospectos em lote');
+  }
+  return json.data?.count ?? 0;
+}
+
 export async function fetchPipelineAnalytics(): Promise<PipelineAnalytics> {
   try {
     const res = await fetch(`${API_BASE}/analytics/pipeline`);
