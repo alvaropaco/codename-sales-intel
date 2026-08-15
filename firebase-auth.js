@@ -221,6 +221,14 @@ function getAllowlistedDomains() {
     .filter(Boolean);
 }
 
+/**
+ * Temporarily disabled by default. Set AUTH_REQUIRE_CORPORATE_EMAIL=true to
+ * re-enable the corporate-domain gate (blocking Gmail/Outlook/etc.).
+ */
+function isCorporateEmailRequired() {
+  return String(process.env.AUTH_REQUIRE_CORPORATE_EMAIL).toLowerCase() === 'true';
+}
+
 function isAllowedEmailDomain(email) {
   const normalized = String(email || '').toLowerCase().trim();
   const at = normalized.lastIndexOf('@');
@@ -421,7 +429,7 @@ async function loginWithIdToken(prisma, idToken) {
       throw err;
     }
 
-    if (!isAllowedEmailDomain(decoded.email)) {
+    if (isCorporateEmailRequired() && !isAllowedEmailDomain(decoded.email)) {
       const err = new Error(
         'Apenas e-mails corporativos são permitidos. E-mails de provedores gratuitos ' +
           '(Gmail, Outlook, Yahoo, etc.) não podem se cadastrar.'

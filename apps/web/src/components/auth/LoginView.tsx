@@ -183,7 +183,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 shadow-2xl backdrop-blur-xl">
           <div className="mb-5 flex items-center justify-center gap-2 text-xs font-semibold text-slate-400">
             <Lock className="h-3.5 w-3.5" />
-            E-mails gratuitos não são aceitos
+            Acesso restrito à sua conta
           </div>
 
           {error && (
@@ -296,7 +296,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
               </button>
 
               <p className="text-center text-[11px] leading-relaxed text-slate-500">
-                Apenas e-mails corporativos. Após criar a conta, verifique seu e-mail antes de entrar.
+                Após criar a conta, verifique seu e-mail antes de entrar.
               </p>
             </div>
           )}
@@ -359,7 +359,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
           )}
 
           <p className="mt-5 text-center text-[11px] leading-relaxed text-slate-500">
-            E-mails de provedores gratuitos (Gmail, Outlook, Yahoo, etc.) não são aceitos.
+            Sua sessão fica salva neste navegador por 14 dias.
           </p>
         </div>
       </div>

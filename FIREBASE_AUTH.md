@@ -41,9 +41,16 @@ revogada no servidor, não apenas apagada do navegador.
 
 ## Política de e-mail corporativo
 
-Por padrão **qualquer domínio que não seja um provedor gratuito** é aceito. A lista
-de provedores bloqueados inclui Gmail, Outlook/Hotmail, Yahoo, iCloud, Proton,
-Tutanota, Zoho, GMX, Mail.com, Yandex, UOL, Bol, Terra, IG, entre outros
+Atualmente **desabilitada** (temporariamente): qualquer e-mail pode se cadastrar.
+Para reativar a restrição a domínios corporativos, defina no backend:
+
+```env
+AUTH_REQUIRE_CORPORATE_EMAIL=true
+```
+
+Com a flag ativa, qualquer domínio que não seja um provedor gratuito é aceito. A
+lista de provedores bloqueados inclui Gmail, Outlook/Hotmail, Yahoo, iCloud,
+Proton, Tutanota, Zoho, GMX, Mail.com, Yandex, UOL, Bol, Terra, IG, entre outros
 (ver `FREE_EMAIL_DOMAINS` em `firebase-auth.js`).
 
 Para restringir ainda mais, defina uma allowlist explícita no backend:
