@@ -1,7 +1,16 @@
 # Firebase Authentication
 
-Autenticação completa com **Google** e **GitHub**, restrita a e-mails corporativos,
-com sessão persistente por cookie httpOnly.
+Autenticação com **Google**, **GitHub**, **e-mail/senha** e **telefone**. E-mail é
+restrito a domínios corporativos; telefone é confirmado via código SMS. Sessão
+persistente por cookie httpOnly.
+
+## Métodos de login
+
+| Método | Regra |
+|--------|-------|
+| Google / GitHub | E-mail corporativo obrigatório (e-mail verificado pelo provedor) |
+| E-mail e senha | E-mail corporativo obrigatório + e-mail verificado (enviamos link de verificação) |
+| Telefone | Código SMS; sem e-mail, armazenamos o telefone como identificador |
 
 ## O que foi implementado
 

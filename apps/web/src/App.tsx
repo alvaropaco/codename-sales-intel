@@ -137,8 +137,8 @@ export function App() {
       setSearchQuery={setSearchQuery}
       onOpenCreateModal={() => setActiveTab('prospects')}
       onOpenQualifyModal={() => setActiveTab('risk')}
-      userName={session.name || session.email}
-      userEmail={session.email}
+      userName={session.name || session.phone || session.email}
+      userEmail={session.phone || session.email}
       onLogout={handleLogout}
     >
       {activeTab === 'dashboard' && (

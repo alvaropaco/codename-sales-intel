@@ -4,7 +4,13 @@ import {
   GoogleAuthProvider,
   GithubAuthProvider,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
   type Auth,
+  type ConfirmationResult,
 } from 'firebase/auth';
 
 const env = import.meta.env;
@@ -83,6 +89,53 @@ export async function signInWithGithub(): Promise<string> {
   const provider = new GithubAuthProvider();
   const result = await signInWithPopup(auth, provider);
   return result.user.getIdToken();
+}
+
+/**
+ * Signs in with email/password and returns the Firebase ID token. Corporate
+ * domain + email verification are enforced on the backend.
+ */
+export async function signInWithEmail(email: string, password: string): Promise<string> {
+  const auth = requireAuth();
+  const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return credential.user.getIdToken();
+}
+
+/**
+ * Creates an email/password account, sends the verification email, and returns
+ * the (not yet verified) Firebase ID token. The backend rejects the session
+ * until the email is verified.
+ */
+export async function signUpWithEmail(email: string, password: string): Promise<string> {
+  const auth = requireAuth();
+  const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  await sendEmailVerification(credential.user);
+  return credential.user.getIdToken();
+}
+
+/**
+ * Starts phone sign-in: renders Firebase's auto-provisioned invisible reCAPTCHA
+ * into the given container and sends an SMS code. Returns the confirmation
+ * handle used by `confirmPhoneVerificationCode`.
+ */
+export async function sendPhoneVerificationCode(
+  phone: string,
+  containerId: string
+): Promise<ConfirmationResult> {
+  const auth = requireAuth();
+  const verifier = new RecaptchaVerifier(auth, containerId, { size: 'invisible' });
+  return signInWithPhoneNumber(auth, phone, verifier);
+}
+
+/**
+ * Confirms the SMS code and returns the Firebase ID token.
+ */
+export async function confirmPhoneVerificationCode(
+  confirmation: ConfirmationResult,
+  code: string
+): Promise<string> {
+  const credential = await confirmation.confirm(code);
+  return credential.user.getIdToken();
 }
 
 /**

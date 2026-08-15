@@ -242,6 +242,7 @@ function createSessionToken(user) {
       uid: user.id,
       email: user.email,
       name: user.name,
+      phone: user.phone ?? null,
       role: user.role,
       orgId: user.orgId,
       ver: Number(user.sessionVersion ?? 0),
@@ -342,9 +343,22 @@ function createRequireAuth(prisma) {
 }
 
 async function upsertUserFromDecodedToken(prisma, decodedToken) {
-  const email = String(decodedToken.email || '').toLowerCase().trim();
+  const emailFromToken = String(decodedToken.email || '').toLowerCase().trim();
+  const phone = decodedToken.phone_number ? String(decodedToken.phone_number) : null;
+
+  // Phone sign-in has no email. Store a synthetic, unique email so the existing
+  // `email @unique` column keeps working; the real identifier is `phone`.
+  const email = emailFromToken || (phone ? `phone-${decodedToken.uid}@shadowtrace.local` : '');
+
+  if (!email) {
+    throw new Error('Não foi possível identificar um e-mail ou telefone no token.');
+  }
+
   const name =
-    decodedToken.name || decodedToken.displayName || email.split('@')[0] || email;
+    decodedToken.name ||
+    decodedToken.displayName ||
+    (emailFromToken ? emailFromToken.split('@')[0] : phone) ||
+    email;
 
   let org = await prisma.organization.findFirst();
   if (!org) {
@@ -358,10 +372,11 @@ async function upsertUserFromDecodedToken(prisma, decodedToken) {
     create: {
       email,
       name,
+      phone,
       role: 'member',
       orgId: org.id,
     },
-    update: { name },
+    update: { name, phone },
   });
 }
 
@@ -370,6 +385,7 @@ function serializeUser(user) {
     uid: user.id,
     email: user.email,
     name: user.name,
+    phone: user.phone ?? null,
     role: user.role,
     orgId: user.orgId,
   };
@@ -385,20 +401,35 @@ async function loginWithIdToken(prisma, idToken) {
   const auth = getAuthInstance();
   const decoded = await auth.verifyIdToken(String(idToken));
 
-  if (!decoded.email || decoded.email_verified === false) {
-    const err = new Error('E-mail não verificado pelo provedor de autenticação.');
+  const hasEmail = Boolean(decoded.email);
+  const hasPhone = Boolean(decoded.phone_number);
+
+  if (!hasEmail && !hasPhone) {
+    const err = new Error('Não foi possível identificar um e-mail ou telefone no token.');
     err.status = 403;
     throw err;
   }
 
-  if (!isAllowedEmailDomain(decoded.email)) {
-    const err = new Error(
-      'Apenas e-mails corporativos são permitidos. E-mails de provedores gratuitos ' +
-        '(Gmail, Outlook, Yahoo, etc.) não podem se cadastrar.'
-    );
-    err.status = 403;
-    err.code = 'NON_CORPORATE_EMAIL';
-    throw err;
+  // E-mail providers (Google, GitHub, email/password) must be corporate-only.
+  if (hasEmail) {
+    if (decoded.email_verified === false) {
+      const err = new Error(
+        'E-mail ainda não verificado. Verifique sua caixa de entrada antes de continuar.'
+      );
+      err.status = 403;
+      err.code = 'EMAIL_NOT_VERIFIED';
+      throw err;
+    }
+
+    if (!isAllowedEmailDomain(decoded.email)) {
+      const err = new Error(
+        'Apenas e-mails corporativos são permitidos. E-mails de provedores gratuitos ' +
+          '(Gmail, Outlook, Yahoo, etc.) não podem se cadastrar.'
+      );
+      err.status = 403;
+      err.code = 'NON_CORPORATE_EMAIL';
+      throw err;
+    }
   }
 
   const user = await upsertUserFromDecodedToken(prisma, decoded);

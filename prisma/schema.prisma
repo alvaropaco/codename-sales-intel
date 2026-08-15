@@ -51,6 +51,7 @@ model User {
   id       String   @id @default(cuid())
   email    String   @unique
   name     String?
+  phone    String?
   role     String   @default("member")
   orgId    String
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)

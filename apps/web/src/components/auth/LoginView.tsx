@@ -1,11 +1,28 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Loader2, Lock, Sparkles } from 'lucide-react';
-import { signInWithGoogle, signInWithGithub, isFirebaseConfigured } from '@/services/firebase';
+import {
+  ArrowLeft,
+  Loader2,
+  Lock,
+  Mail,
+  Phone,
+  Sparkles,
+} from 'lucide-react';
+import {
+  signInWithGoogle,
+  signInWithGithub,
+  signInWithEmail,
+  signUpWithEmail,
+  sendPhoneVerificationCode,
+  confirmPhoneVerificationCode,
+} from '@/services/firebase';
+import type { ConfirmationResult } from 'firebase/auth';
 import { createSession, type SessionUser } from '@/services/auth';
 
 interface LoginViewProps {
   onAuthenticated: (user: SessionUser) => void;
 }
+
+type Mode = 'default' | 'email' | 'phone';
 
 const GOOGLE_ICON = (
   <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
@@ -25,32 +42,132 @@ const GITHUB_ICON = (
   </svg>
 );
 
-export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
-  const [loadingProvider, setLoadingProvider] = useState<'google' | 'github' | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const inputClass =
+  'h-11 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-medium text-white placeholder:text-slate-500 outline-none transition focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20';
 
-  const handleLogin = async (provider: 'google' | 'github') => {
-    setLoadingProvider(provider);
+export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
+  const [mode, setMode] = useState<Mode>('default');
+  const [loading, setLoading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  // email/password
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  // phone
+  const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
+
+  const resetMessages = () => {
     setError(null);
+    setInfo(null);
+  };
+
+  const handleProvider = async (provider: 'google' | 'github') => {
+    setLoading(provider);
+    resetMessages();
     try {
       const idToken =
         provider === 'google' ? await signInWithGoogle() : await signInWithGithub();
       const user = await createSession(idToken);
       onAuthenticated(user);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Falha inesperada durante o login.';
+      setError(err instanceof Error ? err.message : 'Falha inesperada durante o login.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleEmailSignIn = async () => {
+    if (!email || !password) {
+      setError('Informe e-mail e senha.');
+      return;
+    }
+    setLoading('email');
+    resetMessages();
+    try {
+      const idToken = await signInWithEmail(email, password);
+      const user = await createSession(idToken);
+      onAuthenticated(user);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Falha ao entrar com e-mail.';
       setError(message);
     } finally {
-      setLoadingProvider(null);
+      setLoading(null);
     }
+  };
+
+  const handleEmailSignUp = async () => {
+    if (!email || !password) {
+      setError('Informe e-mail e senha.');
+      return;
+    }
+    setLoading('signup');
+    resetMessages();
+    try {
+      await signUpWithEmail(email, password);
+      setInfo(
+        'Conta criada! Enviamos um link de verificação para seu e-mail. Verifique a caixa de entrada e depois entre.'
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao criar conta.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleSendCode = async () => {
+    if (!phone) {
+      setError('Informe o número de telefone (ex.: +5511999999999).');
+      return;
+    }
+    setLoading('send-code');
+    resetMessages();
+    try {
+      const result = await sendPhoneVerificationCode(phone, 'recaptcha-container');
+      setConfirmation(result);
+      setInfo('Código enviado por SMS. Digite o código para confirmar.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao enviar o código SMS.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleConfirmCode = async () => {
+    if (!confirmation || !code) {
+      setError('Digite o código recebido por SMS.');
+      return;
+    }
+    setLoading('confirm-code');
+    resetMessages();
+    try {
+      const idToken = await confirmPhoneVerificationCode(confirmation, code);
+      const user = await createSession(idToken);
+      onAuthenticated(user);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Código inválido. Tente novamente.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const backToDefault = () => {
+    setMode('default');
+    setConfirmation(null);
+    setCode('');
+    resetMessages();
   };
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 text-white">
-      {/* Ambient background accents */}
       <div className="pointer-events-none absolute -left-32 top-0 h-96 w-96 rounded-full bg-indigo-600/30 blur-3xl" />
       <div className="pointer-events-none absolute -right-32 bottom-0 h-96 w-96 rounded-full bg-violet-600/20 blur-3xl" />
+
+      {/* Invisible reCAPTCHA container used by Firebase phone auth */}
+      <div id="recaptcha-container" />
 
       <div className="relative w-full max-w-md">
         <div className="mb-8 text-center">
@@ -66,25 +183,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 shadow-2xl backdrop-blur-xl">
           <div className="mb-5 flex items-center justify-center gap-2 text-xs font-semibold text-slate-400">
             <Lock className="h-3.5 w-3.5" />
-            Acesso restrito a e-mails corporativos
+            E-mails gratuitos não são aceitos
           </div>
-
-          {!isFirebaseConfigured && (
-            <div className="mb-5 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-xs text-amber-200">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div>
-                  <p className="font-bold">Firebase não configurado</p>
-                  <p className="mt-1 text-amber-100/80">
-                    Defina <code className="font-mono">VITE_FIREBASE_API_KEY</code> e{' '}
-                    <code className="font-mono">VITE_FIREBASE_APP_ID</code> em{' '}
-                    <code className="font-mono">apps/web/.env.local</code> (Firebase Console →
-                    Configurações do projeto → Seus apps).
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
 
           {error && (
             <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
@@ -92,39 +192,174 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
             </div>
           )}
 
-          <div className="space-y-3">
-            <button
-              type="button"
-              disabled={!isFirebaseConfigured || loadingProvider !== null}
-              onClick={() => handleLogin('google')}
-              className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white px-4 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loadingProvider === 'google' ? (
-                <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
-              ) : (
-                GOOGLE_ICON
-              )}
-              Continuar com Google
-            </button>
+          {info && (
+            <div className="mb-5 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-200">
+              {info}
+            </div>
+          )}
 
-            <button
-              type="button"
-              disabled={!isFirebaseConfigured || loadingProvider !== null}
-              onClick={() => handleLogin('github')}
-              className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 text-sm font-bold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loadingProvider === 'github' ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
+          {mode === 'default' && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={() => handleProvider('google')}
+                className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white px-4 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading === 'google' ? <Loader2 className="h-5 w-5 animate-spin text-slate-500" /> : GOOGLE_ICON}
+                Continuar com Google
+              </button>
+
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={() => handleProvider('github')}
+                className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 text-sm font-bold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading === 'github' ? <Loader2 className="h-5 w-5 animate-spin" /> : GITHUB_ICON}
+                Continuar com GitHub
+              </button>
+
+              <div className="flex items-center gap-3 py-1">
+                <div className="h-px flex-1 bg-white/10" />
+                <span className="text-[11px] font-semibold text-slate-500">ou</span>
+                <div className="h-px flex-1 bg-white/10" />
+              </div>
+
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={() => { setMode('email'); resetMessages(); }}
+                className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 text-sm font-bold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Mail className="h-5 w-5 text-slate-300" />
+                Entrar com e-mail
+              </button>
+
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={() => { setMode('phone'); resetMessages(); }}
+                className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 text-sm font-bold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Phone className="h-5 w-5 text-slate-300" />
+                Entrar com telefone
+              </button>
+            </div>
+          )}
+
+          {mode === 'email' && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={backToDefault}
+                className="flex items-center gap-2 text-xs font-semibold text-slate-400 transition hover:text-white"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Voltar
+              </button>
+
+              <input
+                type="email"
+                autoComplete="email"
+                placeholder="E-mail corporativo"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={inputClass}
+              />
+              <input
+                type="password"
+                autoComplete="current-password"
+                placeholder="Senha"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={inputClass}
+              />
+
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={handleEmailSignIn}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading === 'email' && <Loader2 className="h-4 w-4 animate-spin" />}
+                Entrar
+              </button>
+
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={handleEmailSignUp}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 text-sm font-bold text-slate-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading === 'signup' && <Loader2 className="h-4 w-4 animate-spin" />}
+                Criar conta
+              </button>
+
+              <p className="text-center text-[11px] leading-relaxed text-slate-500">
+                Apenas e-mails corporativos. Após criar a conta, verifique seu e-mail antes de entrar.
+              </p>
+            </div>
+          )}
+
+          {mode === 'phone' && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={backToDefault}
+                className="flex items-center gap-2 text-xs font-semibold text-slate-400 transition hover:text-white"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Voltar
+              </button>
+
+              <input
+                type="tel"
+                placeholder="Telefone (ex.: +5511999999999)"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className={inputClass}
+                disabled={confirmation !== null}
+              />
+
+              {confirmation ? (
+                <>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Código SMS"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    className={inputClass}
+                  />
+                  <button
+                    type="button"
+                    disabled={loading !== null}
+                    onClick={handleConfirmCode}
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loading === 'confirm-code' && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Confirmar código
+                  </button>
+                </>
               ) : (
-                GITHUB_ICON
+                <button
+                  type="button"
+                  disabled={loading !== null}
+                  onClick={handleSendCode}
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading === 'send-code' && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Enviar código
+                </button>
               )}
-              Continuar com GitHub
-            </button>
-          </div>
+
+              <p className="text-center text-[11px] leading-relaxed text-slate-500">
+                Enviaremos um código SMS para confirmar seu número.
+              </p>
+            </div>
+          )}
 
           <p className="mt-5 text-center text-[11px] leading-relaxed text-slate-500">
             E-mails de provedores gratuitos (Gmail, Outlook, Yahoo, etc.) não são aceitos.
-            Use o e-mail do domínio da sua organização.
           </p>
         </div>
       </div>
