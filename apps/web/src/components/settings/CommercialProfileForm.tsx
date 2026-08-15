@@ -9,6 +9,7 @@ import { cn, formatCurrency } from '@/lib/utils';
 
 const EMPTY_PROFILE: CommercialProfile = {
   onboardingCompleted: false,
+  onboardingStep: 0,
   companyName: '',
   salesTeamSize: '',
   targetSegments: [],

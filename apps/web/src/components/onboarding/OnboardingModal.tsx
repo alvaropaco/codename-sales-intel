@@ -25,6 +25,7 @@ import { cn, formatCurrency } from '@/lib/utils';
 
 const EMPTY_PROFILE: CommercialProfile = {
   onboardingCompleted: false,
+  onboardingStep: 0,
   companyName: '',
   salesTeamSize: '',
   targetSegments: [],
@@ -98,6 +99,27 @@ const ageOptions = [
 const salesCycleOptions = ['Até 30 dias', '30 a 90 dias', '90 a 180 dias', 'Mais de 180 dias'];
 
 const stepTitles = ['Sua empresa', 'Mercado-alvo', 'Regiões', 'Perfil de lead', 'Decisão comercial'];
+const LAST_STEP = stepTitles.length - 1;
+
+function clampStep(step: number): number {
+  if (!Number.isFinite(step)) return 0;
+  return Math.min(LAST_STEP, Math.max(0, Math.floor(step)));
+}
+
+function deriveFirstIncompleteStep(profile?: CommercialProfile | null): number {
+  const companyName = (profile?.companyName || '').trim().toLowerCase();
+  const isPlaceholderCompany =
+    !companyName || companyName === 'organização principal' || companyName === 'organizacao principal';
+  if (isPlaceholderCompany) return 0;
+  if (!(profile?.targetSegments?.length || profile?.targetCnaes?.length)) return 1;
+  if (!profile?.targetLocations?.length) return 2;
+  return 3;
+}
+
+function resumeStep(profile?: CommercialProfile | null): number {
+  const stored = clampStep(profile?.onboardingStep ?? 0);
+  return stored > 0 ? stored : deriveFirstIncompleteStep(profile);
+}
 
 function normalizeProfile(profile?: CommercialProfile | null): CommercialProfile {
   return {
@@ -281,14 +303,16 @@ function SuggestionCard({
 export function OnboardingModal({
   profile,
   onSave,
+  onStepChange,
   isSaving,
 }: {
   profile: CommercialProfile | null;
   onSave: (profile: CommercialProfile) => Promise<void> | void;
+  onStepChange?: (profile: CommercialProfile) => Promise<void> | void;
   isSaving: boolean;
 }) {
   const [form, setForm] = useState<CommercialProfile>(() => normalizeProfile(profile));
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => resumeStep(profile));
   const [error, setError] = useState('');
   const [savingError, setSavingError] = useState('');
 
@@ -334,11 +358,21 @@ export function OnboardingModal({
     update('targetLocations', next);
   };
 
+  const persistStep = (nextStep: number) => {
+    setStep(nextStep);
+    if (onStepChange) {
+      const profileToSave = { ...form, onboardingCompleted: false, onboardingStep: clampStep(nextStep) };
+      Promise.resolve(onStepChange(profileToSave)).catch((err) => {
+        console.error('Error saving onboarding progress:', err);
+      });
+    }
+  };
+
   const goNext = () => {
     setError('');
     if (!stepValid) return;
-    if (step < stepTitles.length - 1) {
-      setStep(step + 1);
+    if (step < LAST_STEP) {
+      persistStep(step + 1);
     } else {
       handleFinish();
     }
@@ -346,7 +380,7 @@ export function OnboardingModal({
 
   const goBack = () => {
     setError('');
-    if (step > 0) setStep(step - 1);
+    if (step > 0) persistStep(step - 1);
   };
 
   const handleFinish = async () => {
@@ -367,7 +401,7 @@ export function OnboardingModal({
       return;
     }
     try {
-      await onSave({ ...form, onboardingCompleted: true });
+      await onSave({ ...form, onboardingCompleted: true, onboardingStep: LAST_STEP });
     } catch {
       setSavingError('Não foi possível concluir a configuração. Tente novamente.');
     }

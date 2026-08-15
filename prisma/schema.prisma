@@ -30,6 +30,7 @@ model CommercialSettings {
   orgId               String   @unique
   organization        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   onboardingCompleted Boolean  @default(false)
+  onboardingStep      Int      @default(0)
   companyName         String?
   salesTeamSize       String?
   targetSegments      Json     @default("[]")

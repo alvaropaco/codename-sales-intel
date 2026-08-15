@@ -145,6 +145,15 @@ export function App() {
     }
   };
 
+  const handleOnboardingStepChange = async (profile: CommercialProfile) => {
+    try {
+      const saved = await saveCommercialProfile(profile);
+      setCommercialProfile(saved);
+    } catch (err) {
+      console.error('Error saving onboarding progress:', err);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm font-semibold text-slate-400">
@@ -233,7 +242,12 @@ export function App() {
       />
 
       {!isLoadingProfile && !commercialProfile?.onboardingCompleted && (
-        <OnboardingModal profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />
+        <OnboardingModal
+          profile={commercialProfile}
+          onSave={handleSaveCommercialProfile}
+          onStepChange={handleOnboardingStepChange}
+          isSaving={isSavingProfile}
+        />
       )}
     </Layout>
   );

@@ -85,6 +85,7 @@ export interface CommercialProfile {
   id?: string | null;
   orgId?: string | null;
   onboardingCompleted: boolean;
+  onboardingStep?: number;
   companyName: string;
   salesTeamSize: string;
   targetSegments: string[];

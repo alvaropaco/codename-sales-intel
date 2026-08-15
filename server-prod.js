@@ -125,6 +125,7 @@ function emptyCommercialProfile() {
     id: null,
     orgId: null,
     onboardingCompleted: false,
+    onboardingStep: 0,
     companyName: '',
     salesTeamSize: '',
     targetSegments: [],
@@ -148,6 +149,7 @@ function formatCommercialProfile(settings, organization) {
     id: settings.id,
     orgId: settings.orgId,
     onboardingCompleted: settings.onboardingCompleted,
+    onboardingStep: typeof settings.onboardingStep === 'number' ? settings.onboardingStep : 0,
     companyName: settings.companyName || organization?.name || '',
     salesTeamSize: settings.salesTeamSize || '',
     targetSegments: Array.isArray(settings.targetSegments) ? settings.targetSegments : [],
@@ -165,8 +167,10 @@ function formatCommercialProfile(settings, organization) {
 }
 
 function normalizeCommercialProfilePayload(body = {}) {
+  const rawStep = Number(body.onboardingStep);
   return {
     onboardingCompleted: Boolean(body.onboardingCompleted),
+    onboardingStep: Number.isFinite(rawStep) ? Math.min(4, Math.max(0, Math.floor(rawStep))) : 0,
     companyName: String(body.companyName || '').trim() || null,
     salesTeamSize: String(body.salesTeamSize || '').trim() || null,
     targetSegments: asStringArray(body.targetSegments),
