@@ -38,6 +38,24 @@ RUN apk add --no-cache openssl \
 # The runtime stage sets NODE_ENV=production below.
 ENV NODE_ENV=development
 
+# Firebase Web SDK config (build-time). Vite inlines VITE_* into the JS bundle,
+# so these MUST be present during `pnpm --filter web build`. Unset/empty values
+# fall back to the defaults baked in apps/web/src/services/firebase.ts.
+# Coolify: set these in the Build section (not runtime). Plain docker:
+#   docker build --build-arg VITE_FIREBASE_AUTH_DOMAIN=salesintel.0xcloud.net .
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_APP_ID
+ARG VITE_FIREBASE_STORAGE_BUCKET
+ARG VITE_FIREBASE_MESSAGING_SENDER_ID
+ENV VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN} \
+    VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID} \
+    VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY} \
+    VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID} \
+    VITE_FIREBASE_STORAGE_BUCKET=${VITE_FIREBASE_STORAGE_BUCKET} \
+    VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
+
 # Install root workspace deps (apps/*)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
