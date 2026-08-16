@@ -52,6 +52,7 @@ const {
   formatEnrichedProspect
 } = require('./cnpj-enrichment');
 const natsEnrichment = require('./nats-enrichment');
+const enrichmentGraph = require('./enrichment-graph');
 const firebaseAuth = require('./firebase-auth');
 
 // Middleware
@@ -1029,6 +1030,17 @@ app.get('/api/enrichment/status/:id', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/enrichment/graph/:cnpj - Grafo completo de enriquecimento (view v_company_graph)
+app.get('/api/enrichment/graph/:cnpj', async (req, res) => {
+  try {
+    const graph = await enrichmentGraph.fetchCompanyGraph(req.params.cnpj);
+    res.json({ success: true, ...graph, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('[enrichment-graph] erro ao buscar grafo:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });

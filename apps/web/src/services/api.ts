@@ -10,7 +10,8 @@ import {
   CommercialProfile,
   DiscoveredCompany,
   DiscoveryCriteria,
-  DiscoveryPage
+  DiscoveryPage,
+  CompanyGraph
 } from '../types';
 
 const API_BASE = '/api';
@@ -340,4 +341,24 @@ export async function enrichProspectViaMcp(id: string): Promise<Prospect> {
     throw new Error(json.error || 'Erro ao enriquecer lead');
   }
   return json.data;
+}
+
+export interface CompanyGraphResponse {
+  available: boolean;
+  data: CompanyGraph | null;
+  error?: string;
+}
+
+export async function fetchCompanyGraph(cnpj: string): Promise<CompanyGraphResponse> {
+  try {
+    const res = await fetch(`${API_BASE}/enrichment/graph/${encodeURIComponent(cnpj)}`);
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Erro ao carregar grafo de enriquecimento');
+    }
+    return { available: Boolean(json.available), data: json.data || null, error: json.error };
+  } catch (error) {
+    console.error('API fetchCompanyGraph error:', error);
+    return { available: false, data: null };
+  }
 }

@@ -89,6 +89,7 @@ COPY firebase-auth.js ./
 COPY mcp-cnpj.js ./
 COPY cnpj-enrichment.js ./
 COPY nats-enrichment.js ./
+COPY enrichment-graph.js ./
 COPY package.json ./
 
 # Copy built SPA + fallback dashboard

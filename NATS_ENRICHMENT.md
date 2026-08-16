@@ -89,6 +89,25 @@ A migração cria a tabela `CnpjEnrichment` e adiciona `enrichmentVersion` em
 pnpm --filter api prisma migrate deploy
 ```
 
+## Grafo completo de enriquecimento (UI)
+
+Além do resumo (`enrichment.company.completed.v1`), o worker persiste o **grafo
+completo** (entidades, fatos, relacionamentos e perfil agregado) no PostgreSQL do
+pipeline. A view `company_enrichment.v_company_graph` denormaliza o perfil mais
+recente por empresa para leitura direta pela API.
+
+| Variável | Descrição |
+|----------|-----------|
+| `ENRICHMENT_DATABASE_URL` | Conexão read-only ao PostgreSQL do worker (schema `company_enrichment`). Ex.: `postgresql://<user>:<pass>@<host>:5432/legal_mcp` |
+
+Sem essa variável, o endpoint `GET /api/enrichment/graph/:cnpj` degrada
+graciosamente (`available: false`) e a UI exibe o estado vazio correspondente.
+
+No frontend, o botão **“Ver grafo de enriquecimento completo”** (drawer do
+prospect) abre o `EnrichmentGraphModal`, que consome esse endpoint e exibe
+firmografia, presença digital, contatos, tecnologias, quadro societário,
+indicadores, rede de relacionamentos e evidências com confiança/proveniência.
+
 ## Endpoints úteis
 
 - `GET /api/enrichment/status/:id` — status do enriquecimento de um prospect e histórico de resultados.

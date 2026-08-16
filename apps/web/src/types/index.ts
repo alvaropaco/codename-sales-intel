@@ -162,3 +162,63 @@ export interface EnrichedCnpjContact {
 }
 
 export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'settings';
+
+// --- Grafo de enriquecimento (v_company_graph) -------------------------------
+
+export interface GraphNode {
+  id: string;
+  type: string;
+  key: string;
+  label: string;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+  confidence?: number | null;
+  observed_at?: string | null;
+}
+
+export interface GraphFact {
+  entity_type: string;
+  entity_key: string;
+  entity_label?: string | null;
+  fact_key: string;
+  value: unknown;
+  confidence?: number | null;
+  confidence_label?: 'alta' | 'média' | 'baixa';
+  source?: Record<string, unknown> | null;
+  observed_at?: string | null;
+}
+
+export interface CompanyProfile {
+  firmographics: Record<string, unknown>;
+  domain: unknown;
+  social: Record<string, { url?: string; confidence?: number | null }>;
+  contact_points: Array<{ type: string; value: string; confidence?: number | null }>;
+  financial_indicators: Record<string, unknown>;
+  technologies: Array<{ name?: string; category?: string; confidence?: number | null }>;
+  people: Array<{ id: string; label: string; role: string; confidence?: number | null }>;
+  relationships: {
+    co_owners: string[];
+    edge_count: number;
+    edges: GraphEdge[];
+  };
+  evidence: unknown[];
+  raw_facts?: Array<{ key: string; value: unknown; confidence?: number | null }>;
+}
+
+export interface CompanyGraph {
+  companyId: string;
+  cnpj: string;
+  enrichmentVersion: number;
+  status: string;
+  enrichedAt: string | null;
+  profile: CompanyProfile;
+  summary: Record<string, unknown>;
+  companyLabel: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  facts: GraphFact[];
+}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   Building2,
@@ -15,11 +15,13 @@ import {
   Cpu,
   Landmark,
   MapPin,
+  Network,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Prospect } from '@/types';
 import { formatCNPJ, formatCurrency } from '@/lib/utils';
+import { EnrichmentGraphModal } from './EnrichmentGraphModal';
 
 interface ProspectDetailDrawerProps {
   prospect: Prospect | null;
@@ -42,6 +44,8 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
   onClose,
   onDelete,
 }) => {
+  const [showGraph, setShowGraph] = useState(false);
+
   if (!prospect) return null;
 
   const summary = prospect.enrichmentSummary;
@@ -242,6 +246,17 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
               </div>
             )}
 
+            {/* Full enrichment graph */}
+            <Button
+              onClick={() => setShowGraph(true)}
+              variant="outline"
+              size="sm"
+              className="mt-3 w-full gap-2 text-xs"
+            >
+              <Network className="h-3.5 w-3.5 text-indigo-400" />
+              Ver grafo de enriquecimento completo
+            </Button>
+
             {/* Activity Timeline (real status) */}
             <div className="pt-4 border-t border-border space-y-3 mt-5">
               <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground">Linha do tempo</h4>
@@ -287,6 +302,14 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
           </div>
         </div>
       </div>
+
+      {showGraph && (
+        <EnrichmentGraphModal
+          cnpj={prospect.cnpj}
+          companyName={prospect.companyName}
+          onClose={() => setShowGraph(false)}
+        />
+      )}
     </div>
   );
 };
