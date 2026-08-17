@@ -90,6 +90,11 @@ COPY mcp-cnpj.js ./
 COPY cnpj-enrichment.js ./
 COPY nats-enrichment.js ./
 COPY enrichment-graph.js ./
+COPY gmail-api.js ./
+COPY gmail-auth.js ./
+COPY outreach-queues.js ./
+COPY outreach-rate-limiter.js ./
+COPY outreach-workers.js ./
 COPY package.json ./
 
 # Copy built SPA + fallback dashboard
