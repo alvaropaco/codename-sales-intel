@@ -50,6 +50,10 @@ const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
     title: 'Inteligência comercial',
     subtitle: 'Informações do lead, contatos e sinais úteis para transformar leads em oportunidades.',
   },
+  outreach: {
+    title: 'Outreach',
+    subtitle: 'Campanhas de e-mail, contas do Gmail e acompanhamento de aberturas e respostas.',
+  },
   settings: {
     title: 'Preferências',
     subtitle: 'Ajustes da organização, segmentos de interesse e preferências comerciais.',

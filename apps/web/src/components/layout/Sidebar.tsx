@@ -9,6 +9,7 @@ import {
   LifeBuoy,
   Moon,
   Network,
+  Send,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -41,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'risk' as ActiveTab, label: 'Risco e potencial', icon: ShieldCheck, badge: null },
     { id: 'workflows' as ActiveTab, label: 'Ações automáticas', icon: Workflow, badge: null },
     { id: 'enrichment' as ActiveTab, label: 'Inteligência comercial', icon: Network, badge: null },
+    { id: 'outreach' as ActiveTab, label: 'Outreach', icon: Send, badge: null },
   ];
 
   const appItems = [

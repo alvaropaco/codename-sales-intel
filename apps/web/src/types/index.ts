@@ -161,7 +161,81 @@ export interface EnrichedCnpjContact {
   createdAt: string;
 }
 
-export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'settings';
+export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'outreach' | 'settings';
+
+// --- Outreach / Cold sales via Gmail ----------------------------------------
+
+export interface EmailAccount {
+  id: string;
+  email: string;
+  provider: string;
+  status: string; // connected, revoked, expired
+  scopes: string[];
+  lastHistoryId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutreachCampaign {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: string; // draft, active, paused, completed
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutreachMessageSummary {
+  id: string;
+  subject: string;
+  status?: string | null;
+  sentAt?: string | null;
+  scheduledFor?: string | null;
+  gmailMessageId?: string | null;
+  gmailThreadId?: string | null;
+  trackingToken?: string | null;
+  error?: string | null;
+}
+
+export interface OutreachEvent {
+  id: string;
+  contactId?: string | null;
+  messageId?: string | null;
+  type: string;
+  status: string;
+  details?: Record<string, unknown> | null;
+  createdAt: string;
+  message?: Pick<OutreachMessageSummary, 'id' | 'subject' | 'status' | 'sentAt' | 'gmailMessageId'> | null;
+}
+
+export interface OutreachContactSummary {
+  id: string;
+  status: string; // SELECTED → QUEUED → … → REPLIED
+  outreachSequence: number;
+  scheduledAt?: string | null;
+  sentAt?: string | null;
+  nextFollowupAt?: string | null;
+  lastReplyAt?: string | null;
+  replyCount: number;
+  unsubscribed: boolean;
+  cancelReason?: string | null;
+  campaign?: { name: string; status: string } | null;
+  messages: OutreachMessageSummary[];
+  events: OutreachEvent[];
+}
+
+export interface SuppressionEntry {
+  id: string;
+  email: string;
+  reason?: string | null;
+  addedAt: string;
+}
+
+export interface StartCampaignResult {
+  campaignId: string;
+  jobsQueued: number;
+  jobIds: string[];
+}
 
 // --- Grafo de enriquecimento (v_company_graph) -------------------------------
 

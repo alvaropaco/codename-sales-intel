@@ -11,7 +11,13 @@ import {
   DiscoveredCompany,
   DiscoveryCriteria,
   DiscoveryPage,
-  CompanyGraph
+  CompanyGraph,
+  EmailAccount,
+  OutreachCampaign,
+  OutreachContactSummary,
+  OutreachEvent,
+  SuppressionEntry,
+  StartCampaignResult
 } from '../types';
 
 const API_BASE = '/api';
@@ -360,5 +366,135 @@ export async function fetchCompanyGraph(cnpj: string): Promise<CompanyGraphRespo
   } catch (error) {
     console.error('API fetchCompanyGraph error:', error);
     return { available: false, data: null, error: 'Não foi possível falar com o backend' };
+  }
+}
+
+// ── Outreach / Gmail API ────────────────────────────────────────────────────
+
+export async function fetchGmailAuthUrl(): Promise<string> {
+  const res = await fetch(`${API_BASE}/gmail/auth-url`);
+  const json = await res.json();
+  if (!res.ok || !json.success || !json.authUrl) {
+    throw new Error(json.error || 'Não foi possível gerar o link de conexão com o Gmail');
+  }
+  return json.authUrl;
+}
+
+export async function fetchGmailAccounts(): Promise<EmailAccount[]> {
+  try {
+    const res = await fetch(`${API_BASE}/gmail/accounts`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao listar contas do Gmail');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchGmailAccounts error:', error);
+    return [];
+  }
+}
+
+export async function disconnectGmailAccount(id: string): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/gmail/accounts/${id}`, { method: 'DELETE' });
+  const json = await res.json();
+  return Boolean(json.success);
+}
+
+export async function fetchOutreachCampaigns(): Promise<OutreachCampaign[]> {
+  try {
+    const res = await fetch(`${API_BASE}/outreach/campaigns`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao listar campanhas');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchOutreachCampaigns error:', error);
+    return [];
+  }
+}
+
+export async function createOutreachCampaign(data: {
+  name: string;
+  description?: string;
+}): Promise<OutreachCampaign> {
+  const res = await fetch(`${API_BASE}/outreach/campaigns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao criar campanha');
+  }
+  return json.data;
+}
+
+export async function startOutreachCampaign(
+  campaignId: string,
+  prospectIds: string[],
+  emailAccountId?: string | null
+): Promise<StartCampaignResult> {
+  const res = await fetch(`${API_BASE}/outreach/campaigns/${campaignId}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prospectIds, emailAccountId: emailAccountId || null }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao iniciar campanha');
+  }
+  return json.data;
+}
+
+export async function fetchProspectOutreachTimeline(prospectId: string): Promise<OutreachEvent[]> {
+  try {
+    const res = await fetch(`${API_BASE}/prospects/${prospectId}/outreach-timeline`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar timeline');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchProspectOutreachTimeline error:', error);
+    return [];
+  }
+}
+
+export async function fetchProspectOutreachStatus(prospectId: string): Promise<OutreachContactSummary[]> {
+  try {
+    const res = await fetch(`${API_BASE}/prospects/${prospectId}/outreach-status`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar status de outreach');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchProspectOutreachStatus error:', error);
+    return [];
+  }
+}
+
+export async function fetchSuppressionList(): Promise<SuppressionEntry[]> {
+  try {
+    const res = await fetch(`${API_BASE}/outreach/suppression`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar lista de supressão');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchSuppressionList error:', error);
+    return [];
+  }
+}
+
+export async function addToSuppressionList(email: string, reason?: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/outreach/suppression`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, reason: reason || 'manual' }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao adicionar à lista de supressão');
+  }
+}
+
+export async function removeFromSuppressionList(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/outreach/suppression/${id}`, { method: 'DELETE' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao remover da lista de supressão');
   }
 }

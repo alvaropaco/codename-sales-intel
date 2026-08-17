@@ -42,6 +42,7 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'risk', label: 'Risco e potencial' },
     { id: 'workflows', label: 'Ações automáticas' },
     { id: 'enrichment', label: 'Inteligência comercial' },
+    { id: 'outreach', label: 'Outreach' },
   ];
 
   return (

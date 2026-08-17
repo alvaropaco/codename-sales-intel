@@ -6,6 +6,7 @@ import { PipelineKanbanView } from '@/components/views/PipelineKanbanView';
 import { CreditRiskView } from '@/components/views/CreditRiskView';
 import { WorkflowsView } from '@/components/views/WorkflowsView';
 import { CnpjEnrichmentView } from '@/components/views/CnpjEnrichmentView';
+import { OutreachView } from '@/components/views/OutreachView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
 import { ProspectModal } from '@/components/modals/ProspectModal';
@@ -225,6 +226,8 @@ export function App() {
       {activeTab === 'workflows' && <WorkflowsView />}
 
       {activeTab === 'enrichment' && <CnpjEnrichmentView />}
+
+      {activeTab === 'outreach' && <OutreachView prospects={prospects} />}
 
       {activeTab === 'settings' && <SettingsView profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />}
 

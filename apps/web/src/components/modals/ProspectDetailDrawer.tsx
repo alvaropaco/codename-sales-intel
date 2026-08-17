@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Building2,
@@ -10,18 +10,22 @@ import {
   Mail,
   Phone,
   Globe,
-  Rocket,
   Target,
   Cpu,
   Landmark,
   MapPin,
   Network,
+  Send,
+  ExternalLink,
+  Clock,
+  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Prospect } from '@/types';
+import { Prospect, OutreachContactSummary } from '@/types';
 import { formatCNPJ, formatCurrency } from '@/lib/utils';
 import { EnrichmentGraphModal } from './EnrichmentGraphModal';
+import { fetchProspectOutreachStatus, fetchProspectOutreachTimeline } from '@/services/api';
 
 interface ProspectDetailDrawerProps {
   prospect: Prospect | null;
@@ -45,6 +49,32 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
   onDelete,
 }) => {
   const [showGraph, setShowGraph] = useState(false);
+
+  const [outreachContacts, setOutreachContacts] = useState<OutreachContactSummary[]>([]);
+  const [outreachLoading, setOutreachLoading] = useState(false);
+  const [outreachEventCount, setOutreachEventCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (prospect) {
+      setOutreachLoading(true);
+      setOutreachContacts([]);
+      (async () => {
+        const [contacts, timeline] = [
+          await fetchProspectOutreachStatus(prospect.id),
+          await fetchProspectOutreachTimeline(prospect.id),
+        ];
+        if (!cancelled) {
+          setOutreachContacts(contacts);
+          setOutreachEventCount(timeline.length);
+          setOutreachLoading(false);
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [prospect]);
 
   if (!prospect) return null;
 
@@ -256,6 +286,70 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
               <Network className="h-3.5 w-3.5 text-indigo-400" />
               Ver grafo de enriquecimento completo
             </Button>
+
+            {/* Outreach status */}
+            <div className="pt-4 border-t border-border space-y-3 mt-5">
+              <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Send className="h-3.5 w-3.5 text-indigo-400" />
+                Outreach (e-mail automático)
+              </h4>
+              {outreachLoading ? (
+                <p className="text-xs text-muted-foreground">Carregando status de outreach…</p>
+              ) : outreachContacts.length === 0 ? (
+                <p className="rounded-lg bg-secondary/30 border border-border/40 p-2.5 text-xs text-muted-foreground">
+                  Nenhum contato de outreach para este lead ainda.
+                </p>
+              ) : (
+                <div className="space-y-2.5 text-[11px]">
+                  {outreachContacts.map((contact) => (
+                    <div key={contact.id} className="rounded-lg bg-secondary/30 border border-border/40 p-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-foreground">
+                          {contact.campaign?.name || 'Campanha'}
+                        </span>
+                        <Badge variant="outline" className="text-[10px]">
+                          {contact.status.replace(/_/g, ' ')}
+                        </Badge>
+                      </div>
+                      {contact.messages && contact.messages.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {contact.messages.map((msg) => (
+                            <div key={msg.id} className="flex items-start gap-1.5">
+                              {msg.sentAt ? (
+                                <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-400" />
+                              ) : (
+                                <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                              )}
+                              <div>
+                                <p className="font-medium text-foreground">{msg.subject}</p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {msg.status?.replace(/_/g, ' ')}
+                                  {msg.sentAt
+                                    ? ` · ${new Date(msg.sentAt).toLocaleString('pt-BR')}`
+                                    : msg.scheduledFor
+                                      ? ` · agendado ${new Date(msg.scheduledFor).toLocaleString('pt-BR')}`
+                                      : ''}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {contact.lastReplyAt && (
+                        <p className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                          <ExternalLink className="h-3 w-3" /> Respondido em {new Date(contact.lastReplyAt).toLocaleString('pt-BR')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!outreachLoading && outreachEventCount > 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  {outreachEventCount} evento(s) registrado(s) no funil de outreach.
+                </p>
+              )}
+            </div>
 
             {/* Activity Timeline (real status) */}
             <div className="pt-4 border-t border-border space-y-3 mt-5">
