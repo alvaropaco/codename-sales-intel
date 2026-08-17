@@ -55,12 +55,28 @@ const natsEnrichment = require('./nats-enrichment');
 const enrichmentGraph = require('./enrichment-graph');
 const firebaseAuth = require('./firebase-auth');
 
+// ─── Outreach modules ─────────────────────────────────────────────
+const gmailAuth = require('./gmail-auth');
+const gmailApi = require('./gmail-api');
+const outreachWorkers = require('./outreach-workers');
+const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
+
 // Middleware
 // Self-hosted Firebase Auth callback endpoints. Registered before the body
 // parsers so raw OAuth POSTs to /__/auth/* can be forwarded untouched.
 app.use('/__/auth', firebaseAuth.createFirebaseAuthHandlerProxy());
 app.use(express.json());
 app.use(firebaseAuth.cookieParserMiddleware);
+
+// Global error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Express error middleware caught:', err.message);
+  console.error(err.stack);
+  if (!res.headersSent) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'apps', 'web', 'dist')));
 app.use(express.static('public'));
 
@@ -1045,6 +1061,416 @@ app.get('/api/enrichment/graph/:cnpj', async (req, res) => {
   }
 });
 
+// ============================================================================
+// OUTREACH — Cold Sales Automático via Gmail
+// ============================================================================
+
+// GET /api/gmail/auth-url — generate Google OAuth2 URL
+app.get('/api/gmail/auth-url', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const url = gmailApi.getAuthUrl(userId);
+    res.json({ success: true, authUrl: url, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/gmail/callback — Google OAuth2 callback
+app.get('/api/gmail/callback', async (req, res) => {
+  try {
+    const { code, state, error: authError } = req.query;
+
+    if (authError) {
+      return res.status(400).json({ success: false, error: `Google OAuth error: ${authError}` });
+    }
+
+    if (!code || !state) {
+      return res.redirect('/'); // back to dashboard
+    }
+
+    // Validate state (CSRF) — lookup in-memory store
+    const stateData = require('./gmail-api')._oauthState?.get(state);
+    if (!stateData) {
+      return res.redirect('/'); // invalid state, drop
+    }
+
+    // Remove from store
+    require('./gmail-api')._oauthState?.delete(state);
+
+    const { email } = await gmailApi.exchangeCodeForTokens(prisma, code, stateData.userId);
+
+    // Redirect back with success
+    res.redirect(`/settings?gmail_connected=${encodeURIComponent(email)}`);
+  } catch (err) {
+    console.error('[gmail] OAuth callback error:', err.message);
+    res.redirect('/settings?gmail_error=connection_failed');
+  }
+});
+
+// GET /api/gmail/accounts — list connected Gmail accounts
+app.get('/api/gmail/accounts', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const accounts = await prisma.emailAccount.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        email: true,
+        provider: true,
+        status: true,
+        scopes: true,
+        lastHistoryId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: accounts,
+      count: accounts.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/gmail/accounts/:id — disconnect Gmail account
+app.delete('/api/gmail/accounts/:id', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const account = await prisma.emailAccount.findFirst({
+      where: { id: req.params.id, userId },
+    });
+
+    if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+
+    await prisma.emailAccount.update({
+      where: { id: account.id },
+      data: { status: 'revoked', encryptedRefreshToken: null },
+    });
+
+    res.json({ success: true, message: 'Account disconnected', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Campaigns ─────────────────────────────────────────────────────
+
+// GET /api/outreach/campaigns — list campaigns
+app.get('/api/outreach/campaigns', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    // Find user's orgId
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const campaigns = await prisma.outreachCampaign.findMany({
+      where: { tenantId: user.orgId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: campaigns,
+      count: campaigns.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/outreach/campaigns — create campaign
+app.post('/api/outreach/campaigns', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const { name, description } = req.body || {};
+    if (!name) return res.status(400).json({ success: false, error: 'Campaign name required' });
+
+    const campaign = await prisma.outreachCampaign.create({
+      data: { tenantId: user.orgId, name, description: description || null },
+    });
+
+    res.json({ success: true, data: campaign, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/outreach/campaigns/:id/start — start outreach on selected prospects
+app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const { prospectIds, emailAccountId } = req.body || {};
+    if (!prospectIds || !Array.isArray(prospectIds) || prospectIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'prospectIds array required' });
+    }
+
+    const result = await outreachWorkers.startOutreachCampaign(
+      prisma,
+      req.params.id,
+      prospectIds,
+      emailAccountId || null,
+      userId
+    );
+
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Timeline ──────────────────────────────────────────────────────
+
+// GET /api/prospects/:id/outreach-timeline — outreach events for a lead
+app.get('/api/prospects/:id/outreach-timeline', async (req, res) => {
+  try {
+    const prospectId = req.params.id;
+
+    // Verify the prospect belongs to the requesting user's org
+    const user = await prisma.user.findUnique({ where: { id: req.user?.id }, select: { orgId: true } });
+    if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: prospectId, orgId: user.orgId },
+      select: { id: true },
+    });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+
+    const events = await prisma.outreachEvent.findMany({
+      where: {
+        contact: { prospectId },
+      },
+      include: {
+        message: {
+          select: {
+            id: true,
+            subject: true,
+            status: true,
+            sentAt: true,
+            gmailMessageId: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: events,
+      count: events.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/prospects/:id/outreach-status — current outreach status for a lead
+app.get('/api/prospects/:id/outreach-status', async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user?.id }, select: { orgId: true } });
+    if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: req.params.id, orgId: user.orgId },
+      select: { id: true },
+    });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+
+    const contacts = await prisma.outreachContact.findMany({
+      where: { prospectId: prospect.id },
+      include: {
+        campaign: { select: { name: true, status: true } },
+        messages: {
+          select: {
+            id: true,
+            subject: true,
+            status: true,
+            sentAt: true,
+            gmailMessageId: true,
+            gmailThreadId: true,
+            trackingToken: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        events: {
+          select: {
+            type: true,
+            status: true,
+            details: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: contacts,
+      count: contacts.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Tracking Pixel ────────────────────────────────────────────────
+
+// GET /t/o/:token.gif — open tracking pixel
+app.get('/t/o/:token.gif', async (req, res) => {
+  try {
+    const token = req.params.token;
+
+    if (!token) {
+      return res.status(400).send(Buffer.from(''));
+    }
+
+    console.log('[tracking] processing request for token:', token);
+
+    // Find message by tracking token
+    const message = await prisma.outreachMessage.findFirst({
+      where: { trackingToken: token },
+      include: { contact: true },
+    });
+
+    console.log('[tracking] message found:', !!message);
+
+    if (!message) {
+      console.log('[tracking] no message found, returning 404');
+      return res.status(404).send(Buffer.from(''));
+    }
+
+    // Check if already tracked (prevent double counting)
+    const existingEvent = await prisma.outreachEvent.findFirst({
+      where: {
+        contactId: message.contactId,
+        type: 'email_opened_inferred',
+      },
+    });
+
+    console.log('[tracking] existing event:', !!existingEvent);
+
+    if (!existingEvent) {
+      await prisma.outreachEvent.create({
+        data: {
+          contactId: message.contactId,
+          messageId: message.id,
+          type: 'email_opened_inferred',
+          status: 'opened',
+          details: { trackingToken: token, ip: req.ip, userAgent: req.headers['user-agent'] },
+        },
+      });
+
+      console.log('[tracking] created new event');
+
+      // Update contact status if not already replied
+      if (['SENT', 'SCHEDULED', 'DELIVERED_INFERRED', 'OPENED_INFERRED'].includes(message.contact.status)) {
+        await prisma.outreachContact.update({
+          where: { id: message.contactId },
+          data: { status: 'OPENED_INFERRED' },
+        });
+        console.log('[tracking] updated contact status');
+      }
+    }
+
+    // Return transparent 1x1 GIF
+    const gifBuffer = Buffer.from(
+      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      'base64'
+    );
+
+    res.set({
+      'Content-Type': 'image/gif',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+    });
+
+    console.log('[tracking] sending response');
+    res.send(gifBuffer);
+    console.log('[tracking] response sent successfully');
+  } catch (err) {
+    console.error('[tracking] error:', err.message);
+    console.error(err.stack);
+    res.status(500).send(Buffer.from(''));
+  }
+});
+
+// ─── Suppression List ──────────────────────────────────────────────
+
+// GET /api/outreach/suppression — list suppressed emails
+app.get('/api/outreach/suppression', async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user?.id }, select: { orgId: true } });
+    if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const list = await prisma.suppressionList.findMany({
+      where: { tenantId: user.orgId },
+      orderBy: { addedAt: 'desc' },
+    });
+
+    res.json({ success: true, data: list, count: list.length, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/outreach/suppression — add to suppression list
+app.post('/api/outreach/suppression', async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user?.id }, select: { orgId: true } });
+    if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const { email, reason } = req.body || {};
+    if (!email) return res.status(400).json({ success: false, error: 'Email required' });
+
+    await prisma.suppressionList.upsert({
+      where: { tenantId_email: { tenantId: user.orgId, email } },
+      create: { tenantId: user.orgId, email, reason: reason || 'manual' },
+      update: { reason: reason || 'manual' },
+    });
+
+    res.json({ success: true, message: 'Email added to suppression list', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/outreach/suppression/:id — remove from suppression list
+app.delete('/api/outreach/suppression/:id', async (req, res) => {
+  try {
+    await prisma.suppressionList.delete({ where: { id: req.params.id } });
+    res.json({ success: true, message: 'Removed from suppression list', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // SPA fallback: serve index.html for extensionless GET requests that accept
 // HTML (e.g. the Firebase OAuth redirect landing page /auth/callback and any
 // future client-side routes). API and asset requests keep a 404 JSON response.
@@ -1070,6 +1496,9 @@ async function start() {
   try {
     DEFAULT_ORG_ID = await initDatabase();
 
+    // Initialize token encryption
+    gmailAuth.initEncryption();
+
     // Inicia o pipeline NATS (consumer de resultados + monitor de DLQ) quando
     // habilitado. Não bloqueia o boot caso o NATS esteja indisponível.
     if (natsEnrichment.isNatsEnabled()) {
@@ -1077,6 +1506,15 @@ async function start() {
       natsEnrichment.startDlqMonitor();
     } else {
       console.log('[nats] NATS desabilitado - usando enriquecimento síncrono BrasilAPI.');
+    }
+
+    // Inicia workers de outreach (BullMQ)
+    try {
+      const workers = outreachWorkers.registerAllWorkers(prisma);
+      console.log('[outreach] workers initialized');
+    } catch (err) {
+      console.error('[outreach] failed to initialize workers:', err.message);
+      console.log('[outreach] continuing without workers (BullMQ/Redis unavailable)');
     }
 
     app.listen(PORT, () => {
@@ -1090,6 +1528,7 @@ async function start() {
       console.log('║                                            ║');
       console.log(`║  📡 NATS enrichment: ${natsEnrichment.isNatsEnabled() ? 'ON' : 'OFF'}        ║`);
       console.log('║  🔐 Firebase auth: Google + GitHub (corporate only)     ║');
+      console.log('║  📧 Outreach (Gmail): configured           ║');
       console.log('║  ✅ Real data from database (no mock!)     ║');
       console.log('║  ✅ All CRUD operations supported          ║');
       console.log('║  ✅ Error handling & validation            ║');
@@ -1109,12 +1548,16 @@ async function start() {
 process.on('SIGINT', async () => {
   console.log('\nShutting down...');
   await natsEnrichment.shutdown();
+  await closeAllWorkers();
+  await closeAllQueues();
   await prisma.$disconnect();
   process.exit(0);
 });
 process.on('SIGTERM', async () => {
   console.log('\nShutting down (SIGTERM)...');
   await natsEnrichment.shutdown();
+  await closeAllWorkers();
+  await closeAllQueues();
   await prisma.$disconnect();
   process.exit(0);
 });

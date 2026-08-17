@@ -165,3 +165,152 @@ model CnpjEnrichment {
   @@index([cnpj])
   @@index([status])
 }
+
+// ============================================================================
+// COLD SALES AUTOMATICO — Outreach via Gmail
+// ============================================================================
+
+// Conta Gmail conectada ao cliente para envio de emails.
+model EmailAccount {
+  id                      String   @id @default(cuid())
+  tenantId                String                         // organization.id
+  userId                  String                         // user.id (dono da conta)
+  provider                String    @default("gmail")     // gmail
+  email                   String
+  encryptedRefreshToken   String?
+  scopes                  Json      @default("[]")        // ["gmail.send", "gmail.metadata"]
+  status                  String    @default("connected") // connected, revoked, expired
+  lastHistoryId           String?                         // token da última consulta do history
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  contacts                OutreachContact[]
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([email])
+}
+
+// Campanha de outreach (agrupa contactos).
+model OutreachCampaign {
+  id          String   @id @default(cuid())
+  tenantId    String                         // organization.id
+  name        String
+  description String?
+  status      String   @default("draft")     // draft, active, paused, completed
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  contacts    OutreachContact[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+// Relação entre um lead/prospect e uma campanha de outreach.
+model OutreachContact {
+  id                String   @id @default(cuid())
+  campaignId        String
+  campaign          OutreachCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  prospectId        String                         // prospect.id
+  emailAccount_id       String?
+  emailAccount          EmailAccount? @relation(fields: [emailAccount_id], references: [id])
+  status                String   @default("SELECTED") // SELECTED → QUEUED → GENERATING → SCHEDULED → SENDING → SENT → DELIVERED_INFERRED → OPENED_INFERRED → REPLIED
+  // States parallel: BOUNCED, FAILED, UNSUBSCRIBED, CANCELLED
+  outreachSequence  Int      @default(1)           // 1=primeiro email, 2=follow-up, ...
+  scheduledAt       DateTime?                      // quando deve ser enviado
+  sentAt            DateTime?
+  nextFollowupAt    DateTime?
+  lastReplyAt       DateTime?                      // ultima resposta do lead
+  replyCount        Int      @default(0)
+  unsubscribed      Boolean  @default(false)
+  cancelReason      String?                        // replied, unsubscribed, bounced, cancelled
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  messages          OutreachMessage[]
+  events            OutreachEvent[]
+
+  @@unique([prospectId, campaignId])
+  @@index([campaignId])
+  @@index([prospectId])
+  @@index([status])
+}
+
+// Modelo de mensagem reutilizavel dentro de campanhas.
+model OutreachTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  subject     String
+  body        String    // texto base (sem tracking pixel)
+  htmlBody    String?   // versão HTML com placeholder do pixel
+  status      String   @default("draft")  // draft, active
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    OutreachMessage[]
+
+  @@index([tenantId])
+}
+
+// Mensagem individual gerada/encaminhada para um contacto.
+model OutreachMessage {
+  id                String   @id @default(cuid())
+  contactId         String
+  contact           OutreachContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  templateId        String?
+  template          OutreachTemplate? @relation(fields: [templateId], references: [id])
+  subject           String
+  body              String    // texto plain
+  htmlBody          String?   // HTML com pixel de tracking
+  gmailMessageId    String?   // id retornado pela Gmail API
+  gmailThreadId     String?
+  messageHeaderId   String?   // Message-ID header
+  status            String   @default("GENERATING") // GENERATING → SCHEDULED → SENDING → SENT
+  error             String?
+  generatedAt       DateTime?
+  scheduledFor      DateTime?
+  sentAt            DateTime?
+  trackingToken     String?   // uuid para pixel
+  aiReasoningFacts  Json?    // fatos usados pela IA
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  events            OutreachEvent[]
+
+  @@index([contactId])
+  @@index([status])
+  @@index([trackingToken])
+  @@index([gmailMessageId])
+}
+
+// Eventos que constroem a timeline do lead.
+model OutreachEvent {
+  id           String   @id @default(cuid())
+  contactId    String?
+  contact      OutreachContact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messageId    String?
+  message      OutreachMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  type         String   // email_scheduled, email_sent, email_delivered_inferred, email_opened_inferred, email_replied, email_bounced, email_failed, email_unsubscribed, email_cancelled, followup_scheduled, followup_sent
+  status       String
+  details      Json?    // dados adicionais (gmail ids, timestamp, etc)
+  createdAt    DateTime @default(now())
+
+  @@index([contactId])
+  @@index([messageId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// Lista de emails/endereços para não enviar (unsubscribe + suppression).
+model SuppressionList {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String
+  reason    String?  // unsubscribed, bounce, manual
+  addedAt   DateTime @default(now())
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}

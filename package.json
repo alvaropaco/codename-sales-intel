@@ -24,9 +24,13 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/client": "^5.22.0",
+    "@types/bull": "^4.10.4",
+    "bull": "^4.16.5",
     "cookie": "^0.7.2",
     "express": "^5.2.1",
     "firebase-admin": "^14.2.0",
+    "googleapis": "^174.0.1",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "nats": "^2.29.3",
     "pg": "^8.23.0",

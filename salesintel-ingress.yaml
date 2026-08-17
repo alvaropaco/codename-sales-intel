@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: salesintel
+  namespace: kube-system
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 3001
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: salesintel
+  namespace: kube-system
+subsets:
+  - addresses:
+      - ip: 172.19.0.1
+    ports:
+      - name: http
+        port: 3001
+        protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: salesintel
+  namespace: kube-system
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: salesintel.0xcloud.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: salesintel
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - salesintel.0xcloud.net
+      secretName: salesintel-tls
