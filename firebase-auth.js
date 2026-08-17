@@ -436,6 +436,12 @@ function createRequireAuth(prisma) {
     }
 
     req.user = payload;
+    // The session JWT carries the user id as `uid` (see signSessionToken), but
+    // many route handlers read `req.user.id`. Alias it here so every authed
+    // endpoint resolves the user regardless of which field it uses.
+    if (payload && payload.uid != null && req.user.id == null) {
+      req.user.id = payload.uid;
+    }
     return next();
   };
 }
