@@ -222,3 +222,24 @@ export interface CompanyGraph {
   edges: GraphEdge[];
   facts: GraphFact[];
 }
+
+// --- Taxonomia CNAE ---------------------------------------------------------
+
+export interface CnaeAtividade {
+  cnae: string;
+  codigo: string;
+  atividade: string;
+}
+
+export interface CnaeCategoria {
+  divisao: string;
+  nome: string;
+  atividades: CnaeAtividade[];
+}
+
+export interface CnaeRamo {
+  secao: string;
+  nome: string;
+  oficial: string;
+  categorias: CnaeCategoria[];
+}

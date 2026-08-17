@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { CnaeTaxonomyPicker } from '@/components/cnae/CnaeTaxonomyPicker';
 import { CommercialProfile } from '@/types';
 import { cn, formatCurrency } from '@/lib/utils';
 
@@ -262,14 +263,25 @@ export function CommercialProfileForm({
             icon={Target}
           />
 
-          <TagEditor
-            label="CNAEs de interesse"
-            helper="Informe códigos ou descrições quando já souber quais atividades quer priorizar."
-            placeholder="Código ou descrição do CNAE"
-            values={form.targetCnaes}
-            onChange={(items) => update('targetCnaes', items)}
-            icon={CheckCircle2}
-          />
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-indigo-50 p-2 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
+                <CheckCircle2 className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-slate-950 dark:text-white">Mercados e CNAEs (taxonomia completa)</p>
+                <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  Navegue por Ramo → Categoria → CNAE usando a classificação oficial da Receita Federal.
+                </p>
+              </div>
+            </div>
+            <CnaeTaxonomyPicker
+              segments={form.targetSegments}
+              cnaes={form.targetCnaes}
+              onSegmentsChange={(items) => update('targetSegments', items)}
+              onCnaesChange={(items) => update('targetCnaes', items)}
+            />
+          </div>
 
           <TagEditor
             label="Regiões prioritárias"

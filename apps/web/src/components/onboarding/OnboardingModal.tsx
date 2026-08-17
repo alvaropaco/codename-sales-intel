@@ -20,6 +20,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { CnaeTaxonomyPicker } from '@/components/cnae/CnaeTaxonomyPicker';
 import { CommercialProfile } from '@/types';
 import { cn, formatCurrency } from '@/lib/utils';
 
@@ -65,17 +66,6 @@ const locationSuggestions = [
   { city: 'Salvador', state: 'BA' },
   { city: 'Brasília', state: 'DF' },
   { city: 'Campinas', state: 'SP' },
-];
-
-const cnaeSuggestions = [
-  'Comércio varejista de mercadorias em geral',
-  'Transporte rodoviário de carga',
-  'Serviços médicos e odontológicos',
-  'Administração de imóveis',
-  'Restaurantes e serviços de alimentação',
-  'Construção de edifícios',
-  'Atividades de consultoria',
-  'Ensino e educação',
 ];
 
 const statusOptions = [
@@ -533,32 +523,22 @@ export function OnboardingModal({
                   />
                 </div>
                 <div className="border-t border-slate-100 pt-5 dark:border-white/10">
-                  <p className="mb-2.5 text-sm font-black text-slate-900 dark:text-white">Atividades de interesse (CNAE)</p>
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <p className="text-sm font-black text-slate-900 dark:text-white">Ramo → Categoria → CNAE</p>
+                    <Badge variant="outline" className="rounded-full text-[11px]">
+                      {form.targetCnaes.length} {form.targetCnaes.length === 1 ? 'CNAE' : 'CNAEs'}
+                    </Badge>
+                  </div>
                   <p className="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                    Informe atividades quando já souber quais deseja priorizar.
+                    Explore a taxonomia completa da Receita Federal e escolha mercados (ramo/categoria) ou
+                    atividades específicas (CNAE).
                   </p>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {cnaeSuggestions.map((cnae) => (
-                      <SuggestionCard
-                        key={cnae}
-                        label={cnae}
-                        active={form.targetCnaes.includes(cnae)}
-                        onClick={() => {
-                          const next = form.targetCnaes.includes(cnae)
-                            ? form.targetCnaes.filter((item) => item !== cnae)
-                            : [...form.targetCnaes, cnae];
-                          update('targetCnaes', next);
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="mt-3">
-                    <TagEditor
-                      placeholder="Digite uma atividade ou código"
-                      values={form.targetCnaes}
-                      onChange={(items) => update('targetCnaes', items)}
-                    />
-                  </div>
+                  <CnaeTaxonomyPicker
+                    segments={form.targetSegments}
+                    cnaes={form.targetCnaes}
+                    onSegmentsChange={(items) => update('targetSegments', items)}
+                    onCnaesChange={(items) => update('targetCnaes', items)}
+                  />
                 </div>
               </div>
             )}
