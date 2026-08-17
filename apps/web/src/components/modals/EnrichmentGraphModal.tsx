@@ -47,9 +47,46 @@ function extractValue(value: unknown): string {
     const obj = value as Record<string, unknown>;
     if ('value' in obj && obj.value != null) return String(obj.value);
     if ('url' in obj && obj.url != null) return String(obj.url);
+    if ('domain' in obj && obj.domain != null) return String(obj.domain);
+    if ('name' in obj && obj.name != null) return String(obj.name);
+    if ('label' in obj && obj.label != null) return String(obj.label);
     return JSON.stringify(obj);
   }
   return String(value);
+}
+
+interface DomainInfoView {
+  domain?: string;
+  www?: string;
+  http?: boolean;
+  https?: boolean;
+  dns_a?: boolean;
+  tls_valid?: boolean;
+  valid?: boolean;
+  title?: string | null;
+  rdap_registered?: boolean;
+}
+
+function domainInfo(value: unknown): DomainInfoView {
+  if (!value || typeof value !== 'object') return {};
+  return value as DomainInfoView;
+}
+
+function YesNoChip({ label, value }: { label: string; value: boolean | null | undefined }) {
+  if (value == null) return null;
+  const ok = value === true;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
+        ok
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+          : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+      {label}
+    </span>
+  );
 }
 
 function confidencePct(confidence: number | null | undefined): number | null {
@@ -233,6 +270,7 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
 
   const profile = graph?.profile;
   const fg = profile?.firmographics || {};
+  const domain = domainInfo(profile?.domain);
   const socialEntries = Object.entries(profile?.social || {});
   const people = profile?.people || [];
   const technologies = profile?.technologies || [];
@@ -320,11 +358,35 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
                 {/* Digital presence */}
                 <Section icon={<Globe className="h-4 w-4" />} title="Presença digital">
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between rounded-xl border border-border/70 bg-secondary/30 px-4 py-3">
-                      <span className="text-xs font-semibold text-muted-foreground">Domínio</span>
-                      <span className="font-mono text-sm text-foreground">
-                        {profile.domain ? extractValue(profile.domain) : '—'}
-                      </span>
+                    <div className="rounded-xl border border-border/70 bg-secondary/30 px-4 py-3">
+                      <span className="block text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">Domínio</span>
+                      <div className="mt-1 flex items-center justify-between gap-3">
+                        <span className="font-mono text-sm text-foreground">
+                          {domain.domain || '—'}
+                        </span>
+                        <a
+                          href={domain.domain ? `https://${domain.domain}` : undefined}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-semibold text-indigo-400 hover:underline"
+                        >
+                          Visitar ↗
+                        </a>
+                      </div>
+                      {domain.www && domain.www !== domain.domain && (
+                        <p className="mt-1 text-xs text-muted-foreground">WWW: {domain.www}</p>
+                      )}
+                      {domain.title && (
+                        <p className="mt-1 text-xs text-muted-foreground truncate">Título: {domain.title}</p>
+                      )}
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <YesNoChip label="HTTP" value={domain.http} />
+                        <YesNoChip label="HTTPS" value={domain.https} />
+                        <YesNoChip label="DNS A" value={domain.dns_a} />
+                        <YesNoChip label="TLS válido" value={domain.tls_valid} />
+                        <YesNoChip label="RDAP" value={domain.rdap_registered} />
+                        <YesNoChip label="Site válido" value={domain.valid} />
+                      </div>
                     </div>
                     {socialEntries.length > 0 ? (
                       <div className="flex flex-wrap gap-2">
