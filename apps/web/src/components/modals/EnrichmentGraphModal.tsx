@@ -213,6 +213,7 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
   const [loading, setLoading] = useState(true);
   const [graph, setGraph] = useState<CompanyGraph | null>(null);
   const [available, setAvailable] = useState(true);
+  const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
     let mounted = true;
@@ -221,6 +222,7 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
       const res = await fetchCompanyGraph(cnpj);
       if (!mounted) return;
       setAvailable(res.available);
+      setError(res.error);
       setGraph(res.data);
       setLoading(false);
     })();
@@ -281,7 +283,17 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
               <EmptyState
                 icon={<Search className="h-8 w-8" />}
                 title="Grafo de enriquecimento indisponível"
-                description="Configure a variável ENRICHMENT_DATABASE_URL no backend para ativar a leitura do grafo completo."
+                description={
+                  error
+                    ? `Não foi possível carregar o grafo. ${error}`
+                    : 'Configure a variável ENRICHMENT_DATABASE_URL no backend para ativar a leitura do grafo completo.'
+                }
+              />
+            ) : error ? (
+              <EmptyState
+                icon={<ShieldCheck className="h-8 w-8" />}
+                title="Erro ao carregar o grafo"
+                description={error}
               />
             ) : !graph || !profile ? (
               <EmptyState

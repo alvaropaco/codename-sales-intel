@@ -352,13 +352,13 @@ export interface CompanyGraphResponse {
 export async function fetchCompanyGraph(cnpj: string): Promise<CompanyGraphResponse> {
   try {
     const res = await fetch(`${API_BASE}/enrichment/graph/${encodeURIComponent(cnpj)}`);
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.success) {
-      throw new Error(json.error || 'Erro ao carregar grafo de enriquecimento');
+      return { available: true, data: null, error: json.error || `Erro ${res.status} ao carregar o grafo` };
     }
     return { available: Boolean(json.available), data: json.data || null, error: json.error };
   } catch (error) {
     console.error('API fetchCompanyGraph error:', error);
-    return { available: false, data: null };
+    return { available: false, data: null, error: 'Não foi possível falar com o backend' };
   }
 }

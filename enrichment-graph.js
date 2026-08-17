@@ -67,7 +67,13 @@ async function fetchCompanyGraph(cnpj) {
   if (digits.length !== 14) {
     return { available: true, data: null, error: 'CNPJ inválido' };
   }
-  const client = await pool().connect();
+  let client;
+  try {
+    client = await pool().connect();
+  } catch (error) {
+    console.error('[enrichment-graph] falha ao conectar no PostgreSQL:', error.message);
+    return { available: true, data: null, error: `Falha ao conectar: ${error.message}` };
+  }
   try {
     const result = await client.query(
       `SELECT
@@ -113,6 +119,9 @@ async function fetchCompanyGraph(cnpj) {
         })),
       },
     };
+  } catch (error) {
+    console.error('[enrichment-graph] erro ao consultar o grafo:', error.message);
+    return { available: true, data: null, error: `Erro na consulta: ${error.message}` };
   } finally {
     client.release();
   }
