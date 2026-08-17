@@ -103,6 +103,399 @@ app.get('/', async (req, res) => {
   res.json({ success: true, message: 'SalesIntel Dashboard' });
 });
 
+// ============================================================================
+// LEGAL DOCUMENTS (public, no auth) — Privacy Policy & Terms of Use
+// ============================================================================
+// These pages are reachable without authentication and rendered server-side so
+// they remain accessible for compliance (LGPD / SOC 2), consent flows and
+// crawlers regardless of the SPA auth gate. They are intentionally NOT served
+// through the React login-guarded shell.
+function renderLegalPage({ path, title, updated, summary, sections, toc }) {
+  const nav = [
+    { href: '/privacy-policy', label: 'Política de Privacidade' },
+    { href: '/terms-of-usage', label: 'Termos de Uso' },
+  ];
+  const menuItems = (toc || sections.map((s) => s.id))
+    .map((id) => {
+      const s = sections.find((x) => x.id === id);
+      return s ? `<a class="toc" href="#${id}">${s.heading}</a>` : '';
+    })
+    .join('');
+
+  const body = sections
+    .map(
+      (s) => `
+      <section id="${s.id}">
+        <h2>${s.heading}</h2>
+        ${s.body}
+      </section>`
+    )
+    .join('\n');
+
+  return (
+    `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title} — SalesIntel Platform</title>
+<meta name="description" content="${summary}" />
+<meta name="robots" content="index,follow" />
+<link rel="canonical" href="https://salesintel.0xcloud.net${path}" />
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    color: #0f172a;
+    background: #f8fafc;
+  }
+  .topbar {
+    background: #0f172a; color: #fff; padding: 0.75rem 1.5rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  }
+  .topbar .brand { font-weight: 700; letter-spacing: .02em; }
+  .topbar nav { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+  .topbar nav a { color: #e2e8f0; text-decoration: none; font-size: .9rem; }
+  .topbar nav a:hover { color: #fff; text-decoration: underline; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  header.hero { border-bottom: 1px solid #e2e8f0; padding-bottom: 1.5rem; margin-bottom: 2rem; }
+  header.hero h1 { margin: 0 0 .35rem; font-size: 2rem; line-height: 1.2; }
+  .meta { color: #475569; font-size: .9rem; }
+  .updated { display:inline-block; background:#eef2ff; color:#4338ca; border:1px solid #c7d2fe;
+    border-radius:999px; padding:.15rem .7rem; font-size:.8rem; font-weight:600; }
+  .summary { color:#475569; font-size:1.02rem; }
+  .toc-box { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:12px; padding:1.25rem 1.5rem; margin-bottom:2rem; }
+  .toc-box p { margin:0 0 .5rem; font-weight:600; font-size:.95rem; }
+  .toc-box .toc { display:block; color:#1d4ed8; text-decoration:none; font-size:.92rem; padding:.15rem 0; }
+  .toc-box .toc:hover { text-decoration:underline; }
+  section h2 { font-size:1.3rem; margin-top:2.2rem; color:#0f172a; }
+  section p, section li { color:#334155; font-size:.98rem; }
+  section ul { padding-left:1.3rem; }
+  section li { margin:.3rem 0; }
+  strong { color:#0f172a; }
+  .legal-note { font-size:.82rem; color:#64748b; margin-top:3rem; border-top:1px solid #e2e8f0; padding-top:1rem; }
+  footer { text-align:center; color:#64748b; font-size:.85rem; padding:2rem 1.5rem 3rem; }
+  footer a { color:#1d4ed8; text-decoration:none; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#0f172a; color:#e2e8f0; }
+    header.hero { border-color:#1e293b; }
+    .meta, .summary, .legal-note, footer { color:#94a3b8; }
+    .toc-box { background:#1e293b; border-color:#334155; }
+    .toc-box .toc, footer a { color:#93c5fd; }
+    section h2, strong, section p, section li { color:#e2e8f0; }
+    .updated { background:#312e81; color:#c7d2fe; border-color:#4338ca; }
+    section p, section li { color:#cbd5e1; }
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">SalesIntel Platform</span>
+    <nav>${nav
+      .map((n) => `<a href="${n.href}">${n.label}</a>`)
+      .join('')}</nav>
+  </div>
+  <main class="wrap">
+    <header class="hero">
+      <h1>${title}</h1>
+      <p class="meta">SalesIntel Platform · Vigência em <span class="updated">${updated}</span></p>
+      <p class="summary">${summary}</p>
+    </header>
+    <nav class="toc-box" aria-label="Sumário">
+      <p>Neste documento</p>
+      ${menuItems}
+    </nav>
+    ${body}
+    <p class="legal-note">
+      Este documento foi elaborado com base em boas práticas de mercado para plataformas B2B SaaS e em
+      conformidade com a LGPD (Lei nº 13.709/2018) e com controles alinhados ao framework SOC&nbsp;2.
+      Não substitui aconselhamento jurídico. Última atualização: <strong>${updated}</strong>.
+    </p>
+  </main>
+  <footer>
+    <p>SalesIntel Platform · <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a></p>
+    <p><a href="/privacy-policy">Política de Privacidade</a> · <a href="/terms-of-usage">Termos de Uso</a></p>
+  </footer>
+</body>
+</html>`
+  );
+}
+
+app.get('/privacy-policy', (req, res) => {
+  const updated = '17 de agosto de 2026';
+  const html = renderLegalPage({
+    path: '/privacy-policy',
+    title: 'Política de Privacidade',
+    updated,
+    summary:
+      'Como a SalesIntel Platform coleta, usa, compartilha e protege os dados pessoais dos usuários e das empresas consultadas, em conformidade com a LGPD e com controles de segurança alinhados ao SOC 2.',
+    sections: [
+      {
+        id: 'quem-somos',
+        heading: '1. Quem somos e a abrangência desta política',
+        body: `
+          <p>A <strong>SalesIntel Platform</strong> é uma plataforma B2B SaaS de inteligência comercial que
+          consolida dados empresariais (insights de CNPJ), prospecção, CRM e automação de outreach por e-mail.</p>
+          <p>Esta Política de Privacidade descreve como tratamos dados pessoais no uso da plataforma, tanto os
+          dados dos <strong>clientes e usuários</strong> (titulares) quanto os <strong>dados de contato das empresas
+          prospectadas</strong> (dados públicos de fontes oficiais). Ela se aplica ao acesso ao produto
+          (aplicação web) e aos serviços associados.</p>`,
+      },
+      {
+        id: 'base-legal',
+        heading: '2. Base legal e princípios (LGPD)',
+        body: `
+          <p>Tratamos dados pessoais apenas com fundamento legal previsto na LGPD (art. 7º), e nos princípios de
+          finalidade, adequação, necessidade, livre acesso, qualidade, transparência, segurança, prevenção,
+          não discriminação e responsabilização (art. 6º). As bases legais que normalmente aplicamos incluem:</p>
+          <ul>
+            <li><strong>Execução de contrato</strong> (art. 7º, V) — para prestar os serviços contratados;</li>
+            <li><strong>Legítimo interesse</strong> (art. 7º, IX) — para segurança, prevenção a fraude e melhoria do produto; e</li>
+            <li><strong>Consentimento</strong> (art. 7º, I) — quando aplicável e sempre revogável.</li>
+          </ul>
+          <p>Dados de empresas (CNPJ) são tratados com base em fontes de dados abertos, públicas e oficiais
+          (ex.: Receita Federal e órgãos públicos), observando a boa-fé e a finalidade legítima de prospecção comercial.</p>`,
+      },
+      {
+        id: 'o-que-coletamos',
+        heading: '3. Que dados coletamos',
+        body: `
+          <p>Coletamos apenas o necessário para operar a plataforma:</p>
+          <ul>
+            <li><strong>Dados de conta</strong>: nome, e-mail corporativo, telefone, domínio e credenciais de autenticação;</li>
+            <li><strong>Dados organizacionais</strong>: CNPJ, perfil comercial, segmentos e configurações da conta;</li>
+            <li><strong>Dados de prospecção</strong>: informações empresariais públicas (razão social, endereço, sócios, situação cadastral) obtidas de fontes oficiais;</li>
+            <li><strong>Dados de uso</strong>: logs de acesso, endereço IP, navegador, páginas acessadas e métricas de desempenho;</li>
+            <li><strong>Dados de comunicação</strong>: metadados de e-mails de outreach (destinatário, status, eventos de abertura/clique) e, quando o cliente conecta sua caixa, escopos mínimos de acesso ao Gmail.</li>
+          </ul>`,
+      },
+      {
+        id: 'como-usamos',
+        heading: '4. Como usamos os dados',
+        body: `
+          <p>Utilizamos os dados para:</p>
+          <ul>
+            <li>Fornecer e operar a plataforma (consultas de CNPJ, CRM, pipeline, relatórios e automação de outreach);</li>
+            <li>Autenticar usuários e proteger a conta contra acesso não autorizado;</li>
+            <li>Enviar comunicações operacionais e, com consentimento, comunicações de marketing;</li>
+            <li>Garantir a segurança da informação, detectar e prevenir fraude e abuso;</li>
+            <li>Cumprir obrigações legais e regulatórias.</li>
+          </ul>
+          <p>Não vendemos dados pessoais. Não usamos dados de clientes para treinar modelos de terceiros.</p>`,
+      },
+      {
+        id: 'compartilhamento',
+        heading: '5. Com quem compartilhamos',
+        body: `
+          <p>Podemos compartilhar dados com categorias de operadores, sempre sob contrato e com finalidade determinada:</p>
+          <ul>
+            <li><strong>Infraestrutura em nuvem</strong> (hospedagem, banco de dados e filas de mensageria);</li>
+            <li><strong>Provedores de autenticação</strong> (ex.: Google/Firebase para login);</li>
+            <li><strong>Provedores de correio</strong> (Gmail), apenas quando o cliente conecta sua conta para envio de outreach;</li>
+            <li><strong>Fontes de dados oficiais</strong> (Receita Federal, órgãos públicos) usadas para enriquecimento;</li>
+            <li><strong>Autoridades</strong>, quando exigido por lei ou ordem judicial.</li>
+          </ul>
+          <p>Exigimos desses operadores os mesmos padrões de confidencialidade e segurança, em linha com o modelo de
+          responsabilidade compartilhada do SOC 2.</p>`,
+      },
+      {
+        id: 'retencao',
+        heading: '6. Retenção e eliminação',
+        body: `
+          <p>Mantemos os dados apenas pelo tempo necessário às finalidades, respeitando prazos legais e a data de
+          vigência da relação contratual. Ao final do contrato, ou mediante solicitação do titular, os dados são
+          excluídos ou anonimizados, salvo retenção legalmente exigida. Mecanismos de retenção por apagamento
+          (deletion) e backup são controlados e testados periodicamente.</p>`,
+      },
+      {
+        id: 'seguranca',
+        heading: '7. Segurança da informação (SOC 2)',
+        body: `
+          <p>Adotamos controles organizacionais e técnicos alinhados aos princípios de segurança, disponibilidade e
+          confidencialidade do SOC 2 (Trust Services Criteria):</p>
+          <ul>
+            <li><strong>Criptografia</strong> de dados em trânsito (TLS) e sensíveis em repouso;</li>
+            <li><strong>Controle de acesso</strong> baseado em papéis (RBAC), autenticação segura e sessões com expiração;</li>
+            <li><strong>Gestão de vulnerabilidades</strong>, atualizações de segurança e monitoramento de logs;</li>
+            <li><strong>Backups</strong> com teste de restauração e planos de resposta a incidentes;</li>
+            <li><strong>Rate limiting</strong> e proteção contra abuso em endpoints críticos;</li>
+            <li><strong>Minimização de escopos</strong>: o acesso ao Gmail usa apenas os escopos necessários para envio e metadados.</li>
+          </ul>
+          <p>Em caso de incidente de segurança com risco a titulares, notificaremos a ANPD e os titulares conforme
+          previsto no art. 48 da LGPD.</p>`,
+      },
+      {
+        id: 'direitos',
+        heading: '8. Seus direitos como titular (LGPD)',
+        body: `
+          <p>Você pode, a qualquer momento, exercer seus direitos previstos no art. 18 da LGPD:</p>
+          <ul>
+            <li>Confirmação da existência de tratamento e acesso aos dados;</li>
+            <li>Correção de dados incompletos, inexatos ou desatualizados;</li>
+            <li>Anonimização, bloqueio ou eliminação de dados desnecessários ou excessivos;</li>
+            <li>Portabilidade dos dados, nos termos da regulamentação;</li>
+            <li>Informação sobre compartilhamento e a possibilidade de não fornecer consentimento;</li>
+            <li>Revogação do consentimento e revisão de decisões automatizadas.</li>
+          </ul>
+          <p>Para exercer seus direitos, fale conosco pelo e-mail
+          <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a>. Responderemos
+          dentro dos prazos legais, com medidas para confirmar sua identidade.</p>`,
+      },
+      {
+        id: 'cookies',
+        heading: '9. Cookies e tecnologias similares',
+        body: `
+          <p>Utilizamos cookies estritamente necessários (ex.: autenticação, sessão e segredos httpOnly) e, quando
+          aplicável, tecnologias de análise com dados agregados. Você pode gerenciar cookies pelo navegador; a
+          recusa de cookies essenciais pode impedir o funcionamento da plataforma.</p>`,
+      },
+      {
+        id: 'lgpd-completa',
+        heading: '10. Encarregado (DPO) e contato LGPD',
+        body: `
+          <p>Para questões relacionadas à LGPD e à privacidade, você pode contactar nosso Encarregado de Proteção de
+          Dados (DPO) pelo e-mail <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a>
+          ou pela <a href="https://www.gov.br/anpd" target="_blank" rel="noopener">Autoridade Nacional de Proteção de Dados (ANPD)</a>.</p>`,
+      },
+      {
+        id: 'alteracoes',
+        heading: '11. Alterações desta política',
+        body: `
+          <p>Podemos atualizar esta política periodicamente. Alterações relevantes serão comunicadas por meio da
+          plataforma ou por e-mail antes de entrarem em vigor. A data de "última atualização" no topo desta página
+          reflete a versão vigente.</p>`,
+      },
+    ],
+  });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+app.get('/terms-of-usage', (req, res) => {
+  const updated = '17 de agosto de 2026';
+  const html = renderLegalPage({
+    path: '/terms-of-usage',
+    title: 'Termos de Uso',
+    updated,
+    summary:
+      'Os termos e condições que regem o uso da plataforma SalesIntel Platform, incluindo responsabilidades, uso aceitável, propriedade intelectual e disposições de compliance (LGPD e SOC 2).',
+    sections: [
+      {
+        id: 'aceite',
+        heading: '1. Aceitação dos termos',
+        body: `
+          <p>Ao acessar ou usar a <strong>SalesIntel Platform</strong>, você concorda com estes Termos de Uso e com a
+          nossa <a href="/privacy-policy">Política de Privacidade</a>. Se você usa a plataforma em nome de uma
+          organização, declara ter autoridade para vinculá-la a estes termos. Se não concordar com qualquer
+          disposição, cessará imediatamente o uso.</p>`,
+      },
+      {
+        id: 'servico',
+        heading: '2. O serviço',
+        body: `
+          <p>A plataforma oferece, entre outras funcionalidades: consulta e enriquecimento de dados de CNPJ a partir de
+          fontes públicas e oficiais, gestão de prospecção (CRM), pipeline comercial, automação de outreach por e-mail
+          e relatórios de desempenho. O escopo exato de funcionalidades disponíveis depende do plano contratado.</p>`,
+      },
+      {
+        id: 'conta',
+        heading: '3. Conta, credenciais e conduta',
+        body: `
+          <ul>
+            <li>Você é responsável por manter a confidencialidade das suas credenciais de acesso e pelas atividades realizadas sob a sua conta;</li>
+            <li>Deve fornecer informações verdadeiras e mantê-las atualizadas;</li>
+            <li>Deve notificar-nos imediatamente sobre qualquer uso não autorizado da sua conta;</li>
+            <li>O usuário deve ser maior de idade e ter capacidade legal para contratar.</li>
+          </ul>`,
+      },
+      {
+        id: 'uso-aceitavel',
+        heading: '4. Uso aceitável e boas práticas de outreach',
+        body: `
+          <p>Você concorda em usar a plataforma em conformidade com a legislação aplicável, incluindo a LGPD, o Código
+          de Defesa do Consumidor e as políticas dos provedores de e-mail. Em especial, em atividades de <strong>outreach</strong>:</p>
+          <ul>
+            <li>Utilizar apenas dados de contato obtidos licitamente e dentro das finalidades informadas;</li>
+            <li>Respeitar listas de supressão, a opção de descadastro (opt-out) e os limites de envio (rate limits);</li>
+            <li>Não enviar mensagens não solicitadas em massa, spam ou conteúdo fraudulento, enganoso ou ofensivo;</li>
+            <li>Cumprir as políticas de uso aceitável dos provedores de e-mail (ex.: diretrizes do Gmail).</li>
+          </ul>
+          <p>É vedado usar a plataforma para: burlar sistemas, acessar dados de terceiros sem autorização, violar leis,
+          propriedade intelectual ou direitos de terceiros, ou interferir na operação do serviço.</p>`,
+      },
+      {
+        id: 'propriedade',
+        heading: '5. Propriedade intelectual e licença',
+        body: `
+          <p>A plataforma, seu código, design, marcas e conteúdo são de titularidade da SalesIntel ou de seus
+          licenciantes. Concedemos a você uma licença limitada, não exclusiva e intransferível para uso do serviço
+          durante a vigência do contrato. Os dados que você insere e gerencia na plataforma permanecem seus; você nos
+          concede uma licença para processá-los apenas para prestar o serviço.</p>`,
+      },
+      {
+        id: 'responsabilidade',
+        heading: '6. Responsabilidades e isenções',
+        body: `
+          <p>A plataforma é fornecida "como está", dentro de padrões razoáveis de disponibilidade e segurança. Não
+          garantimos que dados de terceiros (ex.: dados públicos de CNPJ) estejam livres de erros ou atualizados em
+          tempo real, sendo estes fornecidos por fontes oficiais e sujeitos à disponibilidade de tais fontes. Na
+          medida permitida por lei, não nos responsabilizamos por danos indiretos, lucros cessantes ou perda de dados,
+          salvo dolo ou culpa grave ou quando houver disposição legal imperativa (ex.: responsabilidade por dados
+          pessoais na LGPD).</p>
+          <p>Você é responsável pelo uso que faz das informações da plataforma e por decisões comerciais tomadas a
+          partir delas.</p>`,
+      },
+      {
+        id: 'dados-e-lgpd',
+        heading: '7. Dados pessoais e LGPD',
+        body: `
+          <p>O tratamento de dados pessoais é regido pela nossa <a href="/privacy-policy">Política de Privacidade</a>.
+          Você se compromete a tratar os dados de terceiros (ex.: contatos prospectados) em conformidade com a LGPD e
+          demais normas aplicáveis, atuando como controlador em relação a tais dados e isentando a plataforma de
+          usos indevidos por sua parte.</p>`,
+      },
+      {
+        id: 'suspensao',
+        heading: '8. Suspensão, rescisão e prazos',
+        body: `
+          <p>Podemos suspender o acesso em caso de descumprimento destes termos, violação à segurança ou uso ilegal.
+          Você pode encerrar sua conta a qualquer momento. No encerramento, permanecem válidas as cláusulas que, por
+          natureza, devam sobreviver (confidencialidade, propriedade intelectual, responsabilidade, e disposições
+          gerais). Dados serão tratados conforme a política de retenção da Política de Privacidade.</p>`,
+      },
+      {
+        id: 'seguraca-soc2',
+        heading: '9. Segurança e controles (SOC 2)',
+        body: `
+          <p>Mantemos controles organizacionais e técnicos alinhados aos critérios de segurança, disponibilidade e
+          confidencialidade do SOC 2, incluindo criptografia, controle de acesso, monitoramento, gestão de
+          vulnerabilidades, backup e resposta a incidentes. Não obstante, nenhum sistema é inviolável, e você deve
+          adotar práticas de segurança em sua própria infraestrutura e contas.</p>`,
+      },
+      {
+        id: 'legislacao',
+        heading: '10. Legislação aplicável e foro',
+        body: `
+          <p>Estes Termos são regidos pelas leis da República Federativa do Brasil. As partes elegem o foro da comarca
+          da sede da SalesIntel para dirimir controvérsias, sem prejuízo de normas de ordem pública e das disposições
+          do CDC e da LGPD.</p>`,
+      },
+      {
+        id: 'contato-termos',
+        heading: '11. Contato',
+        body: `
+          <p>Para perguntas, solicitações ou notificações relacionadas a estes Termos, fale conosco por
+          <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a>.</p>`,
+      },
+    ],
+  });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
 // Validate database connection without creating demo data
 async function initDatabase() {
   try {
