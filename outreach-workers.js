@@ -120,7 +120,7 @@ function _templateFallback(lead, valueProp) {
   const vp = valueProp || 'encontrar e qualificar leads com mais eficiência';
   const body = `Olá,\n\nEspero que esteja bem!\n\nConheço a ${lead.companyName} e sei que empresas do segmento ${lead.industry || 'de negócios'} costumam enfrentar desafios na identificação de oportunidades.\n\nNossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.\n\nGostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?\n\nAbs.,\nEquipe SalesIntel`;
 
-  const html = `<p>Olá,</p><p>Espero que esteja bem!</p><p>Conheço a <strong>${lead.companyName}</strong> e sei que empresas do segmento <em>${lead.industry || 'de negócios'}</em> costumam enfrentar desafios na identificação de oportunidades.</p><p>Nossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.</p><p>Gostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?</p><p>Abraços,<br/>Equipe SalesIntel</p>`;
+  const html = `<p>Olá,</p><p>Espero que esteja bem!</p><p>Conheço a <strong>${lead.companyName}</strong> e sei que empresas do segmento <em>${lead.industry || 'de negócios'}</em> costumam enfrentar desafios na identificação de oportunidades.</p><p>Nossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.</p><p>Gostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?</p><p>Abraços,<br/>Equipe SalesIntel</p><img src="https://salesintel.com/t/o/{tracking-token}.gif" width="1" height="1" alt="" />`;
 
   return {
     subject: `Uma oportunidade para ${lead.companyName}`,
@@ -142,6 +142,20 @@ async function processPrepare(job) {
   const lead = await prisma.prospect.findUnique({ where: { id: prospectId } });
   if (!lead) throw new Error(`Prospect ${prospectId} not found`);
 
+  // Load existing contact (if any) so we can compute the next outreach
+  // sequence without referencing the not-yet-assigned `contact` variable
+  // (previously this upsert referenced `contact.outreachSequence` inside its
+  // own `update` object, which is evaluated before the assignment completes
+  // and threw "Cannot access 'contact' before initialization").
+  const existing = await prisma.outreachContact.findUnique({
+    where: {
+      prospectId_campaignId: { prospectId, campaignId },
+    },
+    select: { outreachSequence: true },
+  });
+
+  const nextSequence = Math.max(existing?.outreachSequence || 0, followupSequence || 1);
+
   // Upsert outreach_contact
   let contact = await prisma.outreachContact.upsert({
     where: {
@@ -152,12 +166,12 @@ async function processPrepare(job) {
       prospectId,
       emailAccount_id: emailAccountId || null,
       status: 'SCHEDULED',
-      outreachSequence: followupSequence || 1,
+      outreachSequence: nextSequence,
       scheduledAt: new Date(Date.now() + 60 * 1000), // 1 min min
     },
     update: {
       status: 'SCHEDULED',
-      outreachSequence: Math.max(contact.outreachSequence, followupSequence || 1),
+      outreachSequence: nextSequence,
       scheduledAt: new Date(Date.now() + 60 * 1000),
     },
   });
