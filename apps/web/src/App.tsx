@@ -18,8 +18,29 @@ import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase'
 import { getAuthErrorMessage } from '@/services/authErrors';
 import { LoginView } from '@/components/auth/LoginView';
 
+// Map a URL path to a tab id so direct navigation (e.g. the Gmail OAuth
+// redirect back to /settings?gmail_connected=...) lands on the right view
+// instead of always reopening on the dashboard.
+const TAB_FROM_PATH: Record<string, ActiveTab> = {
+  '/': 'dashboard',
+  '/dashboard': 'dashboard',
+  '/prospects': 'prospects',
+  '/pipeline': 'pipeline',
+  '/risk': 'risk',
+  '/workflows': 'workflows',
+  '/enrichment': 'enrichment',
+  '/outreach': 'outreach',
+  '/settings': 'settings',
+};
+
+function tabFromPath(path: string): ActiveTab {
+  const first = path.split('/')[1] || '';
+  const key = first ? `/${first}` : '/';
+  return TAB_FROM_PATH[key] || 'dashboard';
+}
+
 export function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => tabFromPath(window.location.pathname));
   const [isDark, setIsDark] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
