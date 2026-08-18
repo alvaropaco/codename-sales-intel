@@ -1128,22 +1128,37 @@ app.post('/api/enrichment/extract', async (req, res) => {
 
 function getStateFromLocation(location) {
   const match = String(location || '').match(/\(([A-Za-z]{2})\)/);
-  return match ? match[1].toUpperCase() : undefined;
+  if (match) return match[1].toUpperCase();
+  // Formato "Cidade, UF" (autocomplete IBGE): "São Paulo, SP"
+  const comma = String(location || '').match(/,\s*([A-Za-z]{2})\s*$/);
+  return comma ? comma[1].toUpperCase() : undefined;
 }
 
 // Extrai, de uma string de localização, o estado (UF) e a cidade. Aceita:
 //   "São Paulo (SP)"  -> { state: "SP", city: "São Paulo" }
+//   "São Paulo, SP"   -> { state: "SP", city: "São Paulo" }
 //   "SP"              -> { state: "SP", city: null }
 //   "São Paulo"       -> { state: null, city: "São Paulo" }
 function parseLocation(location) {
   const raw = String(location || '').trim();
   if (!raw) return { state: undefined, city: undefined };
 
+  let state;
+  let withoutUf = raw;
+
   const ufMatch = raw.match(/\(([A-Za-z]{2})\)/);
-  const state = ufMatch ? ufMatch[1].toUpperCase() : undefined;
+  if (ufMatch) {
+    state = ufMatch[1].toUpperCase();
+    withoutUf = raw.replace(/\([A-Za-z]{2}\)/i, '').trim();
+  } else {
+    const comma = raw.match(/,\s*([A-Za-z]{2})\s*$/);
+    if (comma) {
+      state = comma[1].toUpperCase();
+      withoutUf = raw.replace(/,\s*[A-Za-z]{2}\s*$/i, '').trim();
+    }
+  }
 
   // Quando a string inteira é uma UF (ex.: "SP"), não há cidade.
-  const withoutUf = raw.replace(/\([A-Za-z]{2}\)/i, '').trim();
   let city;
   if (!withoutUf && /^[A-Za-z]{2}$/.test(raw)) {
     city = undefined;

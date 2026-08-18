@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, MapPin, Plus, Sparkles, Target, Trash2 } from 'lucide-react';
+import { CheckCircle2, Plus, Sparkles, Target, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { CnaeTaxonomyPicker } from '@/components/cnae/CnaeTaxonomyPicker';
+import { LocationTagEditor } from '@/components/settings/LocationTagEditor';
 import { CommercialProfile } from '@/types';
 import { cn, formatCurrency } from '@/lib/utils';
 
@@ -283,13 +284,12 @@ export function CommercialProfileForm({
             />
           </div>
 
-          <TagEditor
+          <LocationTagEditor
             label="Regiões prioritárias"
             helper="Inclua estados, cidades, regiões ou bairros onde o time quer prospectar."
-            placeholder="Estado, cidade, região ou bairro"
+            placeholder="Busque uma cidade (ex.: São Paulo) ou digite uma região"
             values={form.targetLocations}
             onChange={(items) => update('targetLocations', items)}
-            icon={MapPin}
           />
         </CardContent>
       </Card>
