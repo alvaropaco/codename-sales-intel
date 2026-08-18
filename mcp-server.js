@@ -35,6 +35,39 @@ const {
 // Initialize Prisma client
 const prisma = new PrismaClient();
 
+// ============================================================================
+// ISOLAMENTO DE DADOS POR ORGANIZAÇÃO (multi-tenant)
+// ----------------------------------------------------------------------------
+// O MCP não possui um usuário autenticado (roda via stdio). Para nunca vazar
+// dados entre organizações, toda operação que lê ou escreve dados de tenant
+// DEVE receber um `orgId` explícito. NUNCA usar organization.findFirst() ou
+// consultas sem WHERE de orgId.
+// ============================================================================
+
+function orgIdFromArgs(args) {
+  const orgId = args && (args.orgId || args.org_id || args.org);
+  if (typeof orgId === "string" && orgId.trim()) return orgId.trim();
+  return null;
+}
+
+function requireOrgId(args) {
+  const orgId = orgIdFromArgs(args);
+  if (!orgId) {
+    throw new Error(
+      "orgId é obrigatório: informe orgId no argumento da ferramenta para escopar a operação a uma organização."
+    );
+  }
+  return orgId;
+}
+
+// Return the org query param from a resource URI (e.g. prospects://list?org=<id>).
+function orgIdFromUri(uri) {
+  if (typeof uri !== "string" || !uri.includes("?")) return null;
+  const params = new URLSearchParams(uri.split("?")[1]);
+  const orgId = params.get("org") || params.get("orgId") || params.get("org_id");
+  return typeof orgId === "string" && orgId.trim() ? orgId.trim() : null;
+}
+
 // Initialize MCP server
 const server = new Server({
   name: "salesintel-mcp",
@@ -56,38 +89,38 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
       {
         uri: "prospects://list",
         name: "List Prospects",
-        description: "Get all prospects from the database",
+        description: "Get all prospects for an organization. REQUIRED: use prospects://list?org=<orgId>",
         mimeType: "application/json",
       },
       {
         uri: "prospects://count",
         name: "Count Prospects",
-        description: "Get total count of prospects by status",
+        description: "Get total count of prospects by status for an organization. REQUIRED: use prospects://count?org=<orgId>",
         mimeType: "application/json",
       },
       {
         uri: "analytics://pipeline",
         name: "Pipeline Analytics",
-        description: "Get pipeline metrics: total, qualified, prospects, leads, rates",
+        description: "Get pipeline metrics (total, qualified, prospects, leads, rates) for an organization. REQUIRED: use analytics://pipeline?org=<orgId>",
         mimeType: "application/json",
       },
       {
         uri: "analytics://forecast",
         name: "Revenue Forecast",
-        description: "Get revenue forecast for current and next month",
+        description: "Get revenue forecast for an organization. REQUIRED: use analytics://forecast?org=<orgId>",
         mimeType: "application/json",
       },
       {
         uri: "analytics://breakdown",
         name: "Status Breakdown",
-        description: "Get prospect count breakdown by status",
+        description: "Get prospect count breakdown by status for an organization. REQUIRED: use analytics://breakdown?org=<orgId>",
         mimeType: "application/json",
       },
       {
         uri: "cnpj_enrichment://contacts",
         name: "CNPJ Enriched Contacts",
         description:
-          "List enriched socios, emails and phones for CNPJs with optional ?from=&to=&status= filters",
+          "List enriched socios, emails and phones for CNPJs. REQUIRED: org param, e.g. cnpj_enrichment://contacts?org=<orgId>&from=&to=&status=",
         mimeType: "application/json",
       },
     ],
@@ -98,8 +131,15 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const uri = request.params.uri;
 
   try {
-    if (uri === "prospects://list") {
+    if (uri.startsWith("prospects://list")) {
+      const orgId = orgIdFromUri(uri) || "";
+      if (!orgId) {
+        throw new Error(
+          "orgId é obrigatório: use prospects://list?org=<orgId>"
+        );
+      }
       const prospects = await prisma.prospect.findMany({
+        where: { orgId },
         select: {
           id: true,
           cnpj: true,
@@ -133,9 +173,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       };
     }
 
-    if (uri === "prospects://count") {
+    if (uri.startsWith("prospects://count")) {
+      const orgId = orgIdFromUri(uri) || "";
+      if (!orgId) {
+        throw new Error(
+          "orgId é obrigatório: use prospects://count?org=<orgId>"
+        );
+      }
       const counts = await prisma.prospect.groupBy({
         by: ["status"],
+        where: { orgId },
         _count: true,
       });
 
@@ -162,8 +209,15 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       };
     }
 
-    if (uri === "analytics://pipeline") {
+    if (uri.startsWith("analytics://pipeline")) {
+      const orgId = orgIdFromUri(uri) || "";
+      if (!orgId) {
+        throw new Error(
+          "orgId é obrigatório: use analytics://pipeline?org=<orgId>"
+        );
+      }
       const prospects = await prisma.prospect.findMany({
+        where: { orgId },
         select: { status: true, opportunityScore: true },
       });
 
@@ -193,10 +247,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       };
     }
 
-    if (uri === "analytics://forecast") {
+    if (uri.startsWith("analytics://forecast")) {
+      const orgId = orgIdFromUri(uri) || "";
+      if (!orgId) {
+        throw new Error(
+          "orgId é obrigatório: use analytics://forecast?org=<orgId>"
+        );
+      }
       // Simplified forecast based on current qualified prospects
       const qualified = await prisma.prospect.count({
-        where: { status: "qualified" },
+        where: { status: "qualified", orgId },
       });
 
       const avgDeal = 15000; // R$ 15k average deal size
@@ -226,9 +286,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       };
     }
 
-    if (uri === "analytics://breakdown") {
+    if (uri.startsWith("analytics://breakdown")) {
+      const orgId = orgIdFromUri(uri) || "";
+      if (!orgId) {
+        throw new Error(
+          "orgId é obrigatório: use analytics://breakdown?org=<orgId>"
+        );
+      }
       const breakdown = await prisma.prospect.groupBy({
         by: ["status"],
+        where: { orgId },
         _count: true,
         _avg: { opportunityScore: true },
       });
@@ -260,10 +327,19 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     if (uri.startsWith("cnpj_enrichment://contacts")) {
       const queryString = uri.includes("?") ? uri.split("?")[1] : "";
       const params = new URLSearchParams(queryString);
+      const orgId = params.get("org") || params.get("orgId") || params.get("org_id");
+
+      if (!orgId) {
+        throw new Error(
+          "orgId é obrigatório: use cnpj_enrichment://contacts?org=<orgId>&from=&to=&status="
+        );
+      }
+
       const contacts = await listEnrichedProspects(prisma, {
         from: params.get("from"),
         to: params.get("to"),
         status: params.get("status"),
+        orgId,
       });
 
       return {
@@ -419,6 +495,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         revenue_estimate,
       } = args;
 
+      // Obrigatório para isolar o dado na organização correta.
+      const orgId = requireOrgId(args);
+
       // Validate CNPJ format
       if (!/^\d{2}\.\d{3}\.\d{3}\/0001-\d{2}$/.test(cnpj)) {
         throw new Error(
@@ -426,24 +505,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
-      // Check if prospect already exists
-      const existing = await prisma.prospect.findUnique({
-        where: { cnpj },
+      // Check if prospect already exists DENTRO da organização informada.
+      const existing = await prisma.prospect.findFirst({
+        where: { cnpj, orgId },
       });
 
       if (existing) {
         throw new Error(`Prospect with CNPJ ${cnpj} already exists`);
       }
 
-      // Get or create an organization only when saving real data
-      let org = await prisma.organization.findFirst();
-      if (!org) {
-        org = await prisma.organization.create({
-          data: { name: "Organização principal" },
-        });
-      }
-
-      // Create new prospect
+      // Create new prospect vinculado à organização informada.
       const prospect = await prisma.prospect.create({
         data: {
           cnpj,
@@ -453,7 +524,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           employees: employees || 0,
           revenueEstimate: revenue_estimate || 0,
           opportunityScore: 65, // Default score
-          orgId: org.id,
+          orgId,
         },
       });
 
@@ -476,6 +547,64 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   created_at: prospect.createdAt,
                 },
                 message: `Prospect ${company_name} created successfully`,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    if (name === "enrich_cnpj") {
+      const { prospect_id } = args;
+      const orgId = requireOrgId(args);
+
+      // Garante que o prospect pertence à organização informada.
+      const owned = await prisma.prospect.findFirst({
+        where: { id: prospect_id, orgId },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new Error("Prospect not found para a organização informada");
+      }
+
+      const enriched = await enrichProspectWithCnpj(prisma, prospect_id);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                prospect: formatEnrichedProspect(enriched),
+                timestamp: new Date().toISOString(),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    if (name === "extract_cnpj_contacts") {
+      const { from, to, status } = args || {};
+      const orgId = requireOrgId(args);
+      const contacts = await listEnrichedProspects(prisma, { from, to, status, orgId });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                count: contacts.length,
+                contacts,
+                filters: { from: from || null, to: to || null, status: status || "all" },
+                timestamp: new Date().toISOString(),
               },
               null,
               2
@@ -558,14 +687,18 @@ const toolsHandler = async () => {
       },
       {
         name: "create_prospect",
-        description: "Create a new prospect record in the database and automatically enrich its CNPJ from BrasilAPI when available",
+        description: "Create a new prospect record in the database, scoped to a specific organization",
         inputSchema: {
           type: "object",
           properties: {
+            orgId: {
+              type: "string",
+              description: "REQUIRED. ID da organização (tenant) à qual o prospect pertence. Evita vazamento de dados entre organizações.",
+            },
             cnpj: {
               type: "string",
               description:
-                "Company CNPJ (format: XX.XXX.XXX/0001-XX, must be unique)",
+                "Company CNPJ (format: XX.XXX.XXX/0001-XX, must be unique within the organization)",
             },
             company_name: {
               type: "string",
@@ -589,31 +722,39 @@ const toolsHandler = async () => {
               description: "Estimated annual revenue in BRL",
             },
           },
-          required: ["cnpj", "company_name"],
+          required: ["orgId", "cnpj", "company_name"],
         },
       },
       {
         name: "enrich_cnpj",
         description:
-          "Enrich one existing prospect CNPJ with socios, email and phones from BrasilAPI and persist the result in PostgreSQL",
+          "Enrich one existing prospect CNPJ with socios, email and phones from BrasilAPI and persist the result in PostgreSQL (scoped to a specific organization)",
         inputSchema: {
           type: "object",
           properties: {
+            orgId: {
+              type: "string",
+              description: "REQUIRED. ID da organização à qual o prospect pertence.",
+            },
             prospect_id: {
               type: "string",
               description: "Existing SalesIntel prospect ID to enrich",
             },
           },
-          required: ["prospect_id"],
+          required: ["orgId", "prospect_id"],
         },
       },
       {
         name: "extract_cnpj_contacts",
         description:
-          "Extract/list enriched socios, emails and phones for CNPJs with optional enrichment time-range filters",
+          "Extract/list enriched socios, emails and phones for CNPJs with optional enrichment time-range filters (scoped to a specific organization)",
         inputSchema: {
           type: "object",
           properties: {
+            orgId: {
+              type: "string",
+              description: "REQUIRED. ID da organização cujos contatos enriquecidos serão listados.",
+            },
             from: {
               type: "string",
               description: "Optional ISO start date for enrichedAt filter",
@@ -628,6 +769,7 @@ const toolsHandler = async () => {
               description: "Optional enrichment status filter",
             },
           },
+          required: ["orgId"],
         },
       },
     ],
@@ -636,263 +778,6 @@ const toolsHandler = async () => {
 
 server.setRequestHandler(ListToolsRequestSchema, toolsHandler);
 
-server.setRequestHandler(
-  CallToolRequestSchema,
-  async (request) => {
-    const { name, arguments: args } = request.params;
-
-    try {
-      if (name === "qualify_prospect") {
-        const { company_name, industry, employees, revenue_estimate } = args;
-
-        // Simple qualification logic
-        let score = 50; // Base score
-
-        // Industry bonus
-        if (
-          ["Software", "Technology", "SaaS", "Fintech"].includes(industry)
-        ) {
-          score += 20;
-        }
-
-        // Size bonus
-        if (employees >= 100) score += 15;
-        if (employees >= 500) score += 10;
-
-        // Revenue bonus
-        if (revenue_estimate >= 1000000) score += 15;
-        if (revenue_estimate >= 5000000) score += 10;
-
-        const level =
-          score >= 75
-            ? "qualified"
-            : score >= 50
-            ? "prospect"
-            : "lead";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  company: company_name,
-                  qualification: {
-                    score: Math.min(100, score),
-                    level,
-                    confidence: (0.7 + Math.random() * 0.3).toFixed(2),
-                    factors: [
-                      "industry_fit",
-                      "company_size",
-                      "revenue_scale",
-                    ],
-                  },
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      if (name === "assess_credit_risk") {
-        const { cnpj } = args;
-
-        // Simulate credit risk assessment
-        const riskScore = Math.floor(Math.random() * 100);
-        const level =
-          riskScore >= 70
-            ? "high"
-            : riskScore >= 40
-            ? "medium"
-            : "low";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  cnpj,
-                  risk_assessment: {
-                    score: riskScore,
-                    level,
-                    factors: [
-                      "payment_history",
-                      "revenue_stability",
-                      "market_position",
-                    ],
-                    recommendation:
-                      level === "high"
-                        ? "Request additional documentation"
-                        : "Proceed with standard process",
-                  },
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      if (name === "create_prospect") {
-        const {
-          cnpj,
-          company_name,
-          status,
-          industry,
-          employees,
-          revenue_estimate,
-        } = args;
-
-        // Validate CNPJ format
-        if (!/^\d{2}\.\d{3}\.\d{3}\/0001-\d{2}$/.test(cnpj)) {
-          throw new Error(
-            "Invalid CNPJ format. Expected: XX.XXX.XXX/0001-XX"
-          );
-        }
-
-        // Check if prospect already exists
-        const existing = await prisma.prospect.findUnique({
-          where: { cnpj },
-        });
-
-        if (existing) {
-          throw new Error(`Prospect with CNPJ ${cnpj} already exists`);
-        }
-
-        // Get or create an organization only when saving real data
-        let org = await prisma.organization.findFirst();
-        if (!org) {
-          org = await prisma.organization.create({
-            data: { name: "Organização principal" },
-          });
-        }
-
-        // Create new prospect
-        const prospect = await prisma.prospect.create({
-          data: {
-            cnpj,
-            companyName: company_name,
-            status: status || "prospect",
-            industry,
-            employees: employees || 0,
-            revenueEstimate: revenue_estimate || 0,
-            opportunityScore: 65, // Default score
-            orgId: org.id,
-          },
-        });
-
-        const enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  prospect: {
-                    id: enrichedProspect.id,
-                    cnpj: enrichedProspect.cnpj,
-                    company_name: enrichedProspect.companyName,
-                    trade_name: enrichedProspect.tradeName,
-                    status: enrichedProspect.status,
-                    industry: enrichedProspect.industry,
-                    employees: enrichedProspect.employees,
-                    revenue_estimate: enrichedProspect.revenueEstimate,
-                    opportunity_score: enrichedProspect.opportunityScore,
-                    email: enrichedProspect.cnpjEmail,
-                    phones: enrichedProspect.cnpjPhones || [],
-                    partners: enrichedProspect.cnpjPartners || [],
-                    enrichment_status: enrichedProspect.enrichmentStatus,
-                    enrichment_source: enrichedProspect.enrichmentSource,
-                    enrichment_error: enrichedProspect.enrichmentError,
-                    enriched_at: enrichedProspect.enrichedAt,
-                    created_at: enrichedProspect.createdAt,
-                  },
-                  message: `Prospect ${enrichedProspect.companyName} created and enrichment attempted`,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      if (name === "enrich_cnpj") {
-        const { prospect_id } = args;
-        const enriched = await enrichProspectWithCnpj(prisma, prospect_id);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  prospect: formatEnrichedProspect(enriched),
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      if (name === "extract_cnpj_contacts") {
-        const { from, to, status } = args || {};
-        const contacts = await listEnrichedProspects(prisma, { from, to, status });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  count: contacts.length,
-                  contacts,
-                  filters: { from: from || null, to: to || null, status: status || "all" },
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Unknown tool: ${name}`);
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                error: error.message,
-                tool: name,
-                timestamp: new Date().toISOString(),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-);
 
 // ============================================================================
 // SERVER LIFECYCLE
