@@ -17,6 +17,7 @@ import { createSession, getSession, logoutSession, type SessionUser } from '@/se
 import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase';
 import { getAuthErrorMessage } from '@/services/authErrors';
 import { LoginView } from '@/components/auth/LoginView';
+import { LandingView } from '@/components/auth/LandingView';
 
 // Map a URL path to a tab id so direct navigation (e.g. the Gmail OAuth
 // redirect back to /settings?gmail_connected=...) lands on the right view
@@ -68,6 +69,7 @@ export function App() {
   const [session, setSession] = useState<SessionUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [showLogin, setShowLogin] = useState(false);
 
   const loadData = async () => {
     try {
@@ -185,7 +187,7 @@ export function App() {
   }
 
   if (!session) {
-    return (
+    return showLogin ? (
       <LoginView
         onAuthenticated={(user) => {
           setLoginError(null);
@@ -193,6 +195,8 @@ export function App() {
         }}
         initialError={loginError}
       />
+    ) : (
+      <LandingView onLogin={() => setShowLogin(true)} />
     );
   }
 
