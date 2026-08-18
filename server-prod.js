@@ -44,6 +44,7 @@ const {
   filterCompanies,
   getCompanyByCnpj,
   getDatasetStats,
+  isMcpConfigured,
 } = require('./mcp-cnpj');
 const {
   enrichProspectWithCnpj,
@@ -1278,6 +1279,27 @@ app.get('/api/discovery/candidates', async (req, res) => {
       if (explicitCnae) segments.push(explicitCnae);
       if (explicitSegment) segments.push(explicitSegment);
       if (explicitLocation) locations.push(explicitLocation);
+    }
+
+    // Se o servidor MCP-CNPJ não estiver configurado (token ausente), não há
+    // como descobrir empresas. Respondemos de forma limpa (200) com uma mensagem
+    // clara para a UI, em vez de lançar um 500 em cada busca.
+    if (!isMcpConfigured()) {
+      return res.json({
+        success: true,
+        data: [],
+        page,
+        pageSize,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+        source: [],
+        criteria: { segments, locations, activeOnly, usedProfile },
+        mcpError: 'MCP-CNPJ não configurado',
+        message:
+          'A descoberta de leads está indisponível: o servidor MCP-CNPJ não está configurado (defina CNPJ_MCP_TOKEN no ambiente).',
+        timestamp: new Date().toISOString(),
+      });
     }
 
     const state = locations.length ? getStateFromLocation(locations[0]) : undefined;

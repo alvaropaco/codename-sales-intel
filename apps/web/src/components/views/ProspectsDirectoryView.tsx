@@ -105,6 +105,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [discoverySeed, setDiscoverySeed] = useState(() => newDiscoverySeed());
   const [isLoadingDiscovery, setIsLoadingDiscovery] = useState(false);
   const [discoveryMessage, setDiscoveryMessage] = useState('');
+  const [discoveryError, setDiscoveryError] = useState('');
   const [isImporting, setIsImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState('');
 
@@ -118,6 +119,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
     setDiscovered(result.companies);
     setDiscoveryCriteria(result.criteria);
     setDiscoveryMessage(result.message || '');
+    setDiscoveryError(result.mcpError || '');
     setDiscoveryPageInfo(result.page);
     setDiscoveryPage(result.page.page);
     // The pool shrank (e.g. after imports): clamp to the last valid page.
@@ -362,6 +364,12 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
           </p>
 
           {importError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs font-bold text-red-700">{importError}</p>}
+          {discoveryError && (
+            <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs font-semibold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+              <span className="mt-0.5">⚠️</span>
+              <span>{discoveryError}</span>
+            </p>
+          )}
           {discoveryMessage && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{discoveryMessage}</p>}
 
           {isLoadingDiscovery ? (
@@ -462,7 +470,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
               )}
             </div>
           ) : (
-            !discoveryMessage && (
+            !discoveryMessage && !discoveryError && (
               <div className="mt-4 rounded-xl border border-dashed border-slate-200 p-6 text-center dark:border-white/10">
                 <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Nenhum lead encontrado</p>
                 <p className="mt-1 text-xs text-slate-400">Ajuste o nicho ou finalize o onboarding para ver sugestões reais.</p>

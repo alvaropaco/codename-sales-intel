@@ -274,6 +274,7 @@ export interface DiscoveryCandidatesResult {
   criteria: DiscoveryCriteria;
   page: DiscoveryPage;
   message?: string;
+  mcpError?: string;
 }
 
 export async function fetchDiscoveryCandidates(
@@ -306,11 +307,25 @@ export async function fetchDiscoveryCandidates(
           hasMore: Boolean(json.hasMore),
         },
         message: json.message,
+        mcpError: json.mcpError || undefined,
       };
     }
-    return { companies: [], criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false }, page: emptyPage };
-  } catch {
-    return { companies: [], criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false }, page: emptyPage };
+    return {
+      companies: [],
+      criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false },
+      page: emptyPage,
+      message: json.error || undefined,
+      mcpError: typeof json.error === 'string' && /MCP-CNPJ|configurad/i.test(json.error) ? json.error : undefined,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : undefined;
+    return {
+      companies: [],
+      criteria: { segments: [], locations: [], activeOnly: false, usedProfile: false },
+      page: emptyPage,
+      message: msg || 'Não foi possível buscar leads descobertos.',
+      mcpError: msg && /MCP-CNPJ|configurad/i.test(msg) ? msg : undefined,
+    };
   }
 }
 

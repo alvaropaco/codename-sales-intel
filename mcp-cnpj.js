@@ -279,6 +279,15 @@ function clampLimit(value, min, max) {
   return Math.min(Math.max(Math.round(n), min), max);
 }
 
+/**
+ * Whether the external MCP-CNPJ server is configured (i.e. a token is present).
+ * Exposed so endpoints can fail gracefully with a clear message instead of
+ * throwing on every call when the token is missing.
+ */
+function isMcpConfigured() {
+  return Boolean(MCP_URL && MCP_TOKEN);
+}
+
 module.exports = {
   searchCompanies,
   filterCompanies,
@@ -286,4 +295,5 @@ module.exports = {
   getDatasetStats,
   mapMcpCompany,
   formatCnpj,
+  isMcpConfigured,
 };
