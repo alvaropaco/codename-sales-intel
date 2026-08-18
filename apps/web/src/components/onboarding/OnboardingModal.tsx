@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CnaeTaxonomyPicker } from '@/components/cnae/CnaeTaxonomyPicker';
+import { LocationTagEditor } from '@/components/settings/LocationTagEditor';
 import { CommercialProfile } from '@/types';
 import { cn, formatCurrency } from '@/lib/utils';
 
@@ -341,7 +342,7 @@ export function OnboardingModal({
   };
 
   const toggleLocation = (city: string, state: string) => {
-    const key = `${city} (${state})`;
+    const key = `${city}, ${state}`;
     const next = form.targetLocations.includes(key)
       ? form.targetLocations.filter((item) => item !== key)
       : [...form.targetLocations, key];
@@ -554,7 +555,7 @@ export function OnboardingModal({
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {locationSuggestions.map((loc) => {
-                      const key = `${loc.city} (${loc.state})`;
+                      const key = `${loc.city}, ${loc.state}`;
                       return (
                         <SuggestionCard
                           key={key}
@@ -571,8 +572,10 @@ export function OnboardingModal({
                   <p className="mb-2.5 flex items-center gap-1.5 text-sm font-black text-slate-900 dark:text-white">
                     <MapPin className="h-4 w-4 text-indigo-500" /> Adicione outras regiões
                   </p>
-                  <TagEditor
-                    placeholder="Estado, cidade, região ou bairro"
+                  <LocationTagEditor
+                    label="Regiões prioritárias"
+                    helper="Busque por município (IBGE) ou digite um estado, região ou bairro."
+                    placeholder="Busque uma cidade (ex.: São Paulo) ou digite uma região"
                     values={form.targetLocations}
                     onChange={(items) => update('targetLocations', items)}
                   />
