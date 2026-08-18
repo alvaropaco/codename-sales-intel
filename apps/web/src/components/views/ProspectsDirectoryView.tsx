@@ -370,7 +370,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
               <span>{discoveryError}</span>
             </p>
           )}
-          {discoveryMessage && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{discoveryMessage}</p>}
+          {discoveryMessage && !discoveryError && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{discoveryMessage}</p>}
 
           {isLoadingDiscovery ? (
             <div className="mt-4 space-y-2">

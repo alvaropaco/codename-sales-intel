@@ -1419,7 +1419,26 @@ app.get('/api/discovery/candidates', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    // Fracasso no MCP-CNPJ (servidor inalcançável, token inválido, timeout...).
+    // Em vez de 500 (que a UI engolia), respondemos 200 com um mcpError claro
+    // para o frontend exibir a causa real para o usuário.
+    console.error('[discovery/candidates] erro ao buscar leads do MCP-CNPJ:', error.message);
+    return res.status(200).json({
+      success: true,
+      data: [],
+      page,
+      pageSize,
+      total: 0,
+      totalPages: 0,
+      hasMore: false,
+      source: [],
+      criteria: { segments, locations, activeOnly, usedProfile },
+      mcpError: 'MCP-CNPJ indisponível',
+      message:
+        'Não foi possível buscar leads agora: o servidor de dados empresariais (MCP-CNPJ) não respondeu. ' +
+        `Detalhe interno: ${error.message}`,
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
