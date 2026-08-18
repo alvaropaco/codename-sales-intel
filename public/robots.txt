@@ -1,0 +1,11 @@
+# robots.txt — SalesIntel Platform
+# Allow all crawlers; point search engines to the sitemap and public pages.
+# Authenticated app routes (/outreach, /settings, /prospects, ...) are not
+# listed here and are not accessible to crawlers.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /__/
+
+Sitemap: https://salesintel.0xcloud.net/sitemap.xml

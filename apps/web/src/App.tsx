@@ -18,6 +18,7 @@ import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase'
 import { getAuthErrorMessage } from '@/services/authErrors';
 import { LoginView } from '@/components/auth/LoginView';
 import { LandingView } from '@/components/auth/LandingView';
+import { useSeo } from '@/hooks/useSeo';
 
 // Map a URL path to a tab id so direct navigation (e.g. the Gmail OAuth
 // redirect back to /settings?gmail_connected=...) lands on the right view
@@ -70,6 +71,52 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+
+  const VIEW_SEO: Record<ActiveTab, { title: string; description: string }> = {
+    dashboard: {
+      title: 'Dashboard',
+      description: 'Visão geral comercial: prospects, leads, qualificados, taxa de qualificação e projeção de fechamento.',
+    },
+    prospects: {
+      title: 'Prospecção e CRM',
+      description: 'Diretório de prospectos B2B com dados de CNPJ, enriquecimento e qualificação de leads.',
+    },
+    pipeline: {
+      title: 'Pipeline de vendas',
+      description: 'Gestão visual do funil comercial com estágios, qualificação e priorização de oportunidades.',
+    },
+    risk: {
+      title: 'Análise de risco',
+      description: 'Regras comerciais e análise de risco de crédito para priorizar contatos e oportunidades.',
+    },
+    workflows: {
+      title: 'Workflows automáticos',
+      description: 'Automação de ações comerciais baseadas em regras, sinais de lead e mudanças de estágio.',
+    },
+    enrichment: {
+      title: 'Enriquecimento de CNPJ',
+      description: 'Consulte e enriqueça dados empresariais a partir de fontes oficiais e públicas.',
+    },
+    outreach: {
+      title: 'Outreach automatizado',
+      description: 'Crie e lance campanhas de e-mail por Gmail com controle de cadência, rate limits e supressão.',
+    },
+    settings: {
+      title: 'Configurações',
+      description: 'Configure seu perfil comercial, conecte contas do Gmail e gerencie integrações.',
+    },
+  };
+
+  // Keep the public landing page's strong marketing SEO when unauthenticated;
+  // only switch to per-route titles once the user enters the authenticated app.
+  const LANDING_SEO = {
+    title: 'SalesIntel | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B',
+    description:
+      'Plataforma B2B para descobrir e qualificar empresas via dados de CNPJ, organizar prospecção e CRM, gerir pipeline de vendas, avaliar risco e automatizar outreach por e-mail.',
+    canonical: '/',
+  };
+
+  useSeo(session ? VIEW_SEO[activeTab] : LANDING_SEO);
 
   const loadData = async () => {
     try {
