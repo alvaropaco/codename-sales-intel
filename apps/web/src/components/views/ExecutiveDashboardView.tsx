@@ -315,6 +315,30 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         </Card>
       </section>
 
+      {prospects.length === 0 && (
+        <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-sky-50/60 to-emerald-50/60 p-5 dark:border-indigo-500/20 dark:from-indigo-500/10 dark:via-sky-500/5 dark:to-emerald-500/10">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-white p-2.5 text-indigo-600 shadow-sm dark:bg-white/10 dark:text-indigo-300">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-slate-950 dark:text-white">Nenhum lead gerado ainda</p>
+                <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600 dark:text-slate-300">
+                  A Inteligência Comercial gera os leads a partir da <strong>descoberta</strong> de empresas reais
+                  (segmentos/CNAEs e localizações do onboarding). Vá em <strong>Descobrir leads</strong>, revise
+                  os critérios do seu perfil e adicione as empresas que tiverem potencial de compra — elas
+                  aparecerão aqui no dashboard.
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => onNavigateToTab('prospects')} className="h-10 shrink-0 gap-2 rounded-xl bg-indigo-600 px-4 text-xs font-bold text-white hover:bg-indigo-700">
+              <Plus className="h-4 w-4" /> Descobrir e gerar leads
+            </Button>
+          </div>
+        </section>
+      )}
+
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="Leads alvo" value={analytics.total_prospects || prospects.length} subtitle="Leads sugeridos" trend="Atual" icon={Building2} tone="indigo" />
         <MetricCard title="Oportunidades qualificadas" value={analytics.qualified} subtitle="Prontas para venda" trend={`${derived.qRate}%`} icon={Trophy} tone="emerald" />
