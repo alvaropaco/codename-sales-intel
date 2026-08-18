@@ -1131,6 +1131,29 @@ function getStateFromLocation(location) {
   return match ? match[1].toUpperCase() : undefined;
 }
 
+// Extrai, de uma string de localização, o estado (UF) e a cidade. Aceita:
+//   "São Paulo (SP)"  -> { state: "SP", city: "São Paulo" }
+//   "SP"              -> { state: "SP", city: null }
+//   "São Paulo"       -> { state: null, city: "São Paulo" }
+function parseLocation(location) {
+  const raw = String(location || '').trim();
+  if (!raw) return { state: undefined, city: undefined };
+
+  const ufMatch = raw.match(/\(([A-Za-z]{2})\)/);
+  const state = ufMatch ? ufMatch[1].toUpperCase() : undefined;
+
+  // Quando a string inteira é uma UF (ex.: "SP"), não há cidade.
+  const withoutUf = raw.replace(/\([A-Za-z]{2}\)/i, '').trim();
+  let city;
+  if (!withoutUf && /^[A-Za-z]{2}$/.test(raw)) {
+    city = undefined;
+  } else {
+    city = withoutUf || undefined;
+  }
+
+  return { state, city };
+}
+
 // Deterministic helpers so the discovery listing can rotate results per "seed"
 // (a new seed on "Buscar novamente" reveals a different order) while keeping a
 // page stable within the same seed. The MCP-CNPJ source has no offset support,
@@ -1216,6 +1239,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
     const explicitCnae = req.query.cnae ? String(req.query.cnae) : null;
     const explicitSegment = req.query.segment ? String(req.query.segment) : null;
     const explicitLocation = req.query.location ? String(req.query.location) : null;
+    const explicitCnpj = req.query.cnpj ? String(req.query.cnpj).replace(/\D/g, '') : null;
 
     let segments = [];
     let locations = [];
@@ -1242,8 +1266,10 @@ app.get('/api/discovery/candidates', async (req, res) => {
     }
 
     const state = locations.length ? getStateFromLocation(locations[0]) : undefined;
+    const { state: parsedState, city } = parseLocation(locations[0] || '');
+    const effectiveState = state || parsedState;
 
-    if (!segments.length && !state) {
+    if (!segments.length && !effectiveState && !city && !explicitCnpj) {
       return res.json({
         success: true,
         data: [],
@@ -1254,14 +1280,14 @@ app.get('/api/discovery/candidates', async (req, res) => {
         hasMore: false,
         source: [],
         criteria: { segments, locations, activeOnly, usedProfile },
-        message: 'Configure segmentos ou CNAEs no onboarding para descobrir leads.',
+        message: 'Configure segmentos, CNAEs ou localização no onboarding para descobrir leads.',
         timestamp: new Date().toISOString(),
       });
     }
 
     // Cache key: same criteria + seed reuses the fetched MCP window (10 min TTL),
     // so paging between pages does not call the external server again.
-    const cacheKey = [orgId, segments.join('|'), locations.join('|'), activeOnly ? '1' : '0', seed].join('::');
+    const cacheKey = [orgId, segments.join('|'), locations.join('|'), activeOnly ? '1' : '0', explicitCnpj || '', seed].join('::');
     let unique = null;
     const cached = discoveryPoolCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -1275,7 +1301,8 @@ app.get('/api/discovery/candidates', async (req, res) => {
         if (!/^\d+$/.test(code)) continue;
         const filtered = await filterCompanies({
           cnae: code,
-          state,
+          state: effectiveState,
+          city,
           isActive: activeOnly || undefined,
           limit: 100,
         });
@@ -1287,10 +1314,17 @@ app.get('/api/discovery/candidates', async (req, res) => {
       if (query && !/^\d+$/.test(query)) {
         const found = await searchCompanies({
           query,
-          state,
+          state: effectiveState,
+          city,
           limit: 50,
         });
         found.forEach((company) => candidates.push(company));
+      }
+
+      // 3) Exact CNPJ lookup when the user filters by CNPJ.
+      if (explicitCnpj) {
+        const exact = await getCompanyByCnpj(explicitCnpj);
+        if (exact) candidates.push(exact);
       }
 
       const seen = new Set();
@@ -1308,12 +1342,20 @@ app.get('/api/discovery/candidates', async (req, res) => {
       }
     }
 
+    // Optional CNPJ filter: refine the pool by exact/partial CNPJ match. The
+    // exact lookup above covers a precise CNPJ; this also handles partial
+    // matches against the fetched pool (e.g. typing the first digits).
+    let source = unique;
+    if (explicitCnpj) {
+      source = unique.filter((c) => String(c.cnpj || '').replace(/\D/g, '').includes(explicitCnpj));
+    }
+
     // Always exclude CNPJs already registered as leads (fresh check per request,
     // so an import disappears from the listing immediately). Scoped ao org do
     // usuário para que o lead de um usuário não afete a descoberta de outro.
     const existing = await prisma.prospect.findMany({ where: { orgId }, select: { cnpj: true } });
     const existingCnpjs = new Set(existing.map((p) => String(p.cnpj).replace(/\D/g, '')));
-    const available = unique.filter((c) => !existingCnpjs.has(String(c.cnpj).replace(/\D/g, '')));
+    const available = source.filter((c) => !existingCnpjs.has(String(c.cnpj).replace(/\D/g, '')));
 
     // Rotate deterministically by seed: stable within a seed, different order
     // when the user asks for a fresh batch ("Buscar novamente").

@@ -277,12 +277,13 @@ export interface DiscoveryCandidatesResult {
 }
 
 export async function fetchDiscoveryCandidates(
-  options: { cnae?: string; segment?: string; location?: string; limit?: number; page?: number; pageSize?: number; seed?: string } = {}
+  options: { cnae?: string; segment?: string; location?: string; cnpj?: string; limit?: number; page?: number; pageSize?: number; seed?: string } = {}
 ): Promise<DiscoveryCandidatesResult> {
   const params = new URLSearchParams();
   if (options.cnae) params.set('cnae', options.cnae);
   if (options.segment) params.set('segment', options.segment);
   if (options.location) params.set('location', options.location);
+  if (options.cnpj) params.set('cnpj', options.cnpj);
   if (options.limit) params.set('limit', String(options.limit));
   if (options.page) params.set('page', String(options.page));
   if (options.pageSize) params.set('pageSize', String(options.pageSize));

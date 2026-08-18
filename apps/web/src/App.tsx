@@ -225,6 +225,17 @@ export function App() {
     }
   };
 
+  // Onboarding must be shown whenever settings are missing, not only when the
+  // backend `onboardingCompleted` flag is false. This covers brand-new accounts
+  // (no CommercialSettings row) and any profile that was partially filled.
+  const profileIncomplete = !!session && !isLoadingProfile && (
+    !commercialProfile ||
+    !commercialProfile.onboardingCompleted ||
+    !(commercialProfile.companyName || '').trim() ||
+    (!commercialProfile.targetSegments.length && !commercialProfile.targetCnaes.length) ||
+    !commercialProfile.targetLocations.length
+  );
+
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm font-semibold text-slate-400">
@@ -316,7 +327,7 @@ export function App() {
         onDelete={handleDeleteProspect}
       />
 
-      {!isLoadingProfile && !commercialProfile?.onboardingCompleted && (
+      {profileIncomplete && (
         <OnboardingModal
           profile={commercialProfile}
           onSave={handleSaveCommercialProfile}

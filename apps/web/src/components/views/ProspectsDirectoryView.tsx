@@ -65,6 +65,15 @@ const ageRanges = [
 
 const DISCOVERY_PAGE_SIZE = 12;
 
+// Localizações para o autocomplete de busca por região (cidades + UF).
+const LOCATION_SUGGESTIONS = [
+  'São Paulo (SP)', 'Rio de Janeiro (RJ)', 'Belo Horizonte (MG)', 'Curitiba (PR)',
+  'Porto Alegre (RS)', 'Fortaleza (CE)', 'Recife (PE)', 'Salvador (BA)',
+  'Brasília (DF)', 'Campinas (SP)', 'Guarulhos (SP)', 'São Bernardo do Campo (SP)',
+  'Osasco (SP)', 'Niterói (RJ)', 'Florianópolis (SC)', 'Goiânia (GO)',
+  'Manaus (AM)', 'Belém (PA)', 'Vitória (ES)', 'Santos (SP)',
+];
+
 function newDiscoverySeed() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
@@ -82,9 +91,12 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
   const [selectedLocation, setSelectedLocation] = useState('');
+  const [locationInput, setLocationInput] = useState('');
+  const [isLocationFocused, setIsLocationFocused] = useState(false);
   const [selectedSituation, setSelectedSituation] = useState('active');
   const [selectedSize, setSelectedSize] = useState('all');
   const [selectedAge, setSelectedAge] = useState('all');
+  const [cnpjFilter, setCnpjFilter] = useState('');
 
   const [discovered, setDiscovered] = useState<DiscoveredCompany[]>([]);
   const [discoveryCriteria, setDiscoveryCriteria] = useState<{ segments: string[]; locations: string[]; activeOnly: boolean; usedProfile: boolean }>({ segments: [], locations: [], activeOnly: false, usedProfile: false });
@@ -101,7 +113,8 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
     setImportError('');
     const segment = searchQuery.trim() || undefined;
     const location = selectedLocation.trim() || undefined;
-    const result = await fetchDiscoveryCandidates({ segment, location, page, pageSize: DISCOVERY_PAGE_SIZE, seed });
+    const cnpj = cnpjFilter.replace(/\D/g, '').trim() || undefined;
+    const result = await fetchDiscoveryCandidates({ segment, location, cnpj, page, pageSize: DISCOVERY_PAGE_SIZE, seed });
     setDiscovered(result.companies);
     setDiscoveryCriteria(result.criteria);
     setDiscoveryMessage(result.message || '');
@@ -117,7 +130,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
 
   useEffect(() => {
     // Load discovered leads on mount, and when the seller changes the searched
-    // niche or location. A fresh seed rotates the pool so each search reveals a
+    // niche, location or CNPJ. A fresh seed rotates the pool so each search reveals a
     // different order; pagination is stable within the same seed.
     const freshSeed = newDiscoverySeed();
     setDiscoverySeed(freshSeed);
@@ -125,7 +138,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
     const timer = setTimeout(() => loadDiscovery(1, freshSeed), 400);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, selectedLocation]);
+  }, [searchQuery, selectedLocation, cnpjFilter]);
 
   const handlePageChange = (page: number) => {
     if (page === discoveryPage || page < 1 || page > discoveryPageInfo.totalPages) return;
@@ -193,6 +206,12 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
     ...(commercialProfile?.targetCnaes || []),
   ];
   const profileLocations = commercialProfile?.targetLocations || [];
+
+  const locationMatches = useMemo(() => {
+    const q = locationInput.trim().toLowerCase();
+    if (!q) return LOCATION_SUGGESTIONS.slice(0, 8);
+    return LOCATION_SUGGESTIONS.filter((l) => l.toLowerCase().includes(q)).slice(0, 8);
+  }, [locationInput]);
 
   const filteredProspects = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -455,7 +474,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
 
       <Card className="glass-card">
         <CardContent className="p-4 space-y-4">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-muted-foreground" />
               <Input
@@ -472,9 +491,48 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
               <Input
                 type="text"
                 placeholder="Estado, cidade, região ou bairro"
-                value={selectedLocation}
-                onChange={(e) => setSelectedLocation(e.target.value)}
+                value={locationInput}
+                onChange={(e) => {
+                  setLocationInput(e.target.value);
+                  setSelectedLocation(e.target.value);
+                }}
+                onFocus={() => setIsLocationFocused(true)}
+                onBlur={() => {
+                  // Delay to allow click on the dropdown option to register.
+                  setTimeout(() => setIsLocationFocused(false), 150);
+                }}
                 className="pl-9 h-10 bg-slate-50 dark:bg-secondary/50 border-slate-200 dark:border-border text-xs text-slate-900 dark:text-foreground"
+              />
+              {isLocationFocused && locationMatches.length > 0 && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-white/10 dark:bg-slate-900">
+                  {locationMatches.map((loc) => (
+                    <button
+                      key={loc}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setLocationInput(loc);
+                        setSelectedLocation(loc);
+                        setIsLocationFocused(false);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-indigo-50 dark:text-slate-200 dark:hover:bg-indigo-500/10"
+                    >
+                      <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                      {loc}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="relative">
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="Filtrar por CNPJ"
+                value={cnpjFilter}
+                onChange={(e) => setCnpjFilter(e.target.value.replace(/[^\d./-]/g, ''))}
+                className="h-10 bg-slate-50 dark:bg-secondary/50 border-slate-200 dark:border-border text-xs text-slate-900 dark:text-foreground"
               />
             </div>
 

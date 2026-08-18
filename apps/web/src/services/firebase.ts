@@ -150,12 +150,24 @@ export async function signInWithProvider(
  * Resolves the OAuth redirect result after Firebase sends the user back to the
  * app. Returns the Firebase ID token, or null when the current page load was
  * not the result of a redirect sign-in.
+ *
+ * The result is memoized at module scope: `getRedirectResult` can only be read
+ * once, and React StrictMode mounts the app twice in development (mount →
+ * cleanup → mount). Without the memo, the first (discarded) mount would consume
+ * the redirect result, leaving the second mount to see `null` and fall back to
+ * the un-authenticated landing page — which is exactly the "first sign-in lands
+ * on the landing page" bug.
  */
+let redirectResultPromise: Promise<string | null> | null = null;
+
 export async function getFirebaseRedirectResult(): Promise<string | null> {
   if (!firebaseAuth) return null;
-  const result = await getRedirectResult(firebaseAuth);
-  if (!result || !result.user) return null;
-  return result.user.getIdToken();
+  if (!redirectResultPromise) {
+    redirectResultPromise = getRedirectResult(firebaseAuth).then((result) =>
+      result && result.user ? result.user.getIdToken() : null
+    );
+  }
+  return redirectResultPromise;
 }
 
 /**
