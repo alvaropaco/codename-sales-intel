@@ -150,8 +150,12 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
   }
 }
 
-function buildEnrichmentWhere({ from, to, status } = {}) {
+function buildEnrichmentWhere({ from, to, status, orgId } = {}) {
   const where = {};
+
+  if (orgId) {
+    where.orgId = orgId;
+  }
 
   if (from || to) {
     where.enrichedAt = {};

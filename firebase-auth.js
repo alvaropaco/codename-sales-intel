@@ -464,23 +464,34 @@ async function upsertUserFromDecodedToken(prisma, decodedToken) {
     (emailFromToken ? emailFromToken.split('@')[0] : phone) ||
     email;
 
-  let org = await prisma.organization.findFirst();
-  if (!org) {
-    org = await prisma.organization.create({
-      data: { name: 'Organização principal' },
+  // IMPORTANTE (isolamento de dados): cada usuário possui uma Organization
+  // própria. Antes, todos os usuários eram apontados para a primeira
+  // organização do banco (findFirst), o que fazia todo mundo enxergar os
+  // mesmos dados (dashboard, leads, pipeline, configuração e outreach).
+  //
+  // Agora tentamos reutilizar a organização já vinculada ao usuário e, quando
+  // o usuário ainda não existe, criamos uma organização nova e exclusiva para
+  // ele. Assim os dados ficam logicamente separados por usuário.
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    return prisma.user.update({
+      where: { email },
+      data: { name, phone },
     });
   }
 
-  return prisma.user.upsert({
-    where: { email },
-    create: {
+  const org = await prisma.organization.create({
+    data: { name: name || email.split('@')[0] || 'Organização principal' },
+  });
+
+  return prisma.user.create({
+    data: {
       email,
       name,
       phone,
       role: 'member',
       orgId: org.id,
     },
-    update: { name, phone },
   });
 }
 

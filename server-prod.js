@@ -508,16 +508,42 @@ async function initDatabase() {
   }
 }
 
-async function getOrCreateOrganization(orgId) {
-  if (orgId) return orgId;
+// ============================================================================
+// ISOLAMENTO DE DADOS POR USUÁRIO (multi-tenant)
+// ============================================================================
+// Cada usuário possui uma Organization exclusiva (orgId). Toda a leitura e
+// escrita de dados (prospects, pipeline, configurações, outreach) deve ser
+// escopada pelo orgId do usuário autenticado. NUNCA usar organization.findFirst()
+// ou consultas sem WHERE de orgId em endpoints autenticados.
+//
+// O JWT de sessão já carrega `orgId`; resolvemos pelo token e caímos no banco
+// apenas como fallback (e para validar que o usuário existe).
 
-  let org = await prisma.organization.findFirst();
-  if (!org) {
-    org = await prisma.organization.create({
-      data: { name: 'Organização principal' }
-    });
+async function resolveRequestOrgId(req) {
+  // 1) orgId presente no token de sessão (caminho normal).
+  const orgIdFromToken = req.user && req.user.orgId;
+
+  // 2) Fallback: carregar o usuário do banco para obter orgId.
+  const userId = req.user && (req.user.id || req.user.uid);
+  if (!orgIdFromToken && userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (user) return { userId, orgId: user.orgId };
   }
-  return org.id;
+
+  if (orgIdFromToken) return { userId, orgId: orgIdFromToken };
+
+  return { userId: null, orgId: null };
+}
+
+// Resolve o orgId do usuário autenticado (lança erro 401 se não autenticado).
+async function requireRequestOrgId(req) {
+  const { orgId } = await resolveRequestOrgId(req);
+  if (!orgId) {
+    const err = new Error('Não autenticado');
+    err.status = 401;
+    throw err;
+  }
+  return orgId;
 }
 
 function asStringArray(value) {
@@ -604,19 +630,21 @@ let DEFAULT_ORG_ID;
 // GET /api/settings/commercial-profile - Commercial preferences and onboarding state
 app.get('/api/settings/commercial-profile', async (req, res) => {
   try {
-    const org = await prisma.organization.findFirst();
+    const orgId = await requireRequestOrgId(req);
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
     if (!org) {
       return res.json({ success: true, data: emptyCommercialProfile(), timestamp: new Date().toISOString() });
     }
 
-    const settings = await prisma.commercialSettings.findUnique({ where: { orgId: org.id } });
+    const settings = await prisma.commercialSettings.findUnique({ where: { orgId } });
     res.json({
       success: true,
       data: formatCommercialProfile(settings, org),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
@@ -624,7 +652,8 @@ app.get('/api/settings/commercial-profile', async (req, res) => {
 app.put('/api/settings/commercial-profile', async (req, res) => {
   try {
     const data = normalizeCommercialProfilePayload(req.body || {});
-    const orgId = await getOrCreateOrganization(req.body?.orgId);
+    // Sempre derivado do usuário autenticado; nunca do body/orgId global.
+    const orgId = await requireRequestOrgId(req);
 
     if (data.companyName) {
       await prisma.organization.update({
@@ -646,14 +675,17 @@ app.put('/api/settings/commercial-profile', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
-// GET /api/prospects - Get all prospects
+// GET /api/prospects - Get all prospects (escopado pelo usuário autenticado)
 app.get('/api/prospects', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const prospects = await prisma.prospect.findMany({
+      where: { orgId },
       select: {
         id: true,
         cnpj: true,
@@ -695,11 +727,12 @@ app.get('/api/prospects', async (req, res) => {
   }
 });
 
-// GET /api/prospects/:id - Get specific prospect
+// GET /api/prospects/:id - Get specific prospect (escopado pelo usuário)
 app.get('/api/prospects/:id', async (req, res) => {
   try {
-    const prospect = await prisma.prospect.findUnique({
-      where: { id: req.params.id }
+    const orgId = await requireRequestOrgId(req);
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: req.params.id, orgId }
     });
 
     if (!prospect) {
@@ -708,21 +741,22 @@ app.get('/api/prospects/:id', async (req, res) => {
 
     res.json({ success: true, data: prospect });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // POST /api/prospects - Create prospect
 app.post('/api/prospects', async (req, res) => {
   try {
-    const { cnpj, companyName, status, industry, employees, revenueEstimate, orgId } = req.body;
+    const { cnpj, companyName, status, industry, employees, revenueEstimate } = req.body;
 
     if (!cnpj || !companyName) {
       return res.status(400).json({ success: false, error: 'CNPJ and company name required' });
     }
 
-    // Use provided orgId or create an organization only when the user saves real data
-    const targetOrgId = await getOrCreateOrganization(orgId);
+    // Sempre associa o prospect ao orgId do usuário autenticado.
+    const targetOrgId = await requireRequestOrgId(req);
 
     const prospect = await prisma.prospect.create({
       data: {
@@ -789,9 +823,10 @@ app.post('/api/prospects', async (req, res) => {
 // POST /api/prospects/:id/enrich - Enrich a specific prospect CNPJ
 app.post('/api/prospects/:id/enrich', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     // Com NATS habilitado, encaminhamos para o pipeline de enriquecimento.
     if (natsEnrichment.isNatsEnabled()) {
-      const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+      const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
       if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
       const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
       const updated = await prisma.prospect.update({
@@ -807,6 +842,10 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
       });
     }
 
+    // Garante que o prospect pertence ao usuário antes de enriquecer.
+    const owned = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId }, select: { id: true } });
+    if (!owned) return res.status(404).json({ success: false, error: 'Prospect not found' });
+
     const enriched = await enrichProspectWithCnpj(prisma, req.params.id);
     res.json({
       success: true,
@@ -819,14 +858,17 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // PUT /api/prospects/:id - Update prospect
 app.put('/api/prospects/:id', async (req, res) => {
   try {
-    const previous = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+    const orgId = await requireRequestOrgId(req);
+    const previous = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
+    if (!previous) return res.status(404).json({ success: false, error: 'Prospect not found' });
 
     const prospect = await prisma.prospect.update({
       where: { id: req.params.id },
@@ -866,22 +908,26 @@ app.put('/api/prospects/:id', async (req, res) => {
 // DELETE /api/prospects/:id - Delete prospect
 app.delete('/api/prospects/:id', async (req, res) => {
   try {
-    await prisma.prospect.delete({
-      where: { id: req.params.id }
+    const orgId = await requireRequestOrgId(req);
+    // deleteMany com orgId garante que outro usuário não apague dados alheios.
+    const result = await prisma.prospect.deleteMany({
+      where: { id: req.params.id, orgId }
     });
+    if (result.count === 0) {
+      return res.status(404).json({ success: false, error: 'Prospect not found' });
+    }
 
     res.json({ success: true, message: 'Prospect deleted' });
   } catch (error) {
-    if (error.code === 'P2025') {
-      return res.status(404).json({ success: false, error: 'Prospect not found' });
-    }
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // POST /api/prospects/bulk - Bulk move or delete selected prospects
 app.post('/api/prospects/bulk', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const ids = Array.isArray(req.body?.ids)
       ? req.body.ids.map((id) => String(id)).filter(Boolean)
       : [];
@@ -893,7 +939,7 @@ app.post('/api/prospects/bulk', async (req, res) => {
     }
 
     if (action === 'delete') {
-      const result = await prisma.prospect.deleteMany({ where: { id: { in: ids } } });
+      const result = await prisma.prospect.deleteMany({ where: { id: { in: ids }, orgId } });
       return res.json({ success: true, data: { count: result.count }, timestamp: new Date().toISOString() });
     }
 
@@ -903,7 +949,7 @@ app.post('/api/prospects/bulk', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Estágio de destino inválido.' });
       }
       const result = await prisma.prospect.updateMany({
-        where: { id: { in: ids } },
+        where: { id: { in: ids }, orgId },
         data: { status },
       });
       return res.json({ success: true, data: { count: result.count }, timestamp: new Date().toISOString() });
@@ -911,14 +957,17 @@ app.post('/api/prospects/bulk', async (req, res) => {
 
     return res.status(400).json({ success: false, error: 'Ação em lote inválida.' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // GET /api/analytics/pipeline - Pipeline metrics
 app.get('/api/analytics/pipeline', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const prospects = await prisma.prospect.findMany({
+      where: { orgId },
       select: { status: true }
     });
 
@@ -947,8 +996,9 @@ app.get('/api/analytics/pipeline', async (req, res) => {
 // GET /api/analytics/forecast - Revenue forecast
 app.get('/api/analytics/forecast', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const qualified = await prisma.prospect.count({
-      where: { status: 'qualified' }
+      where: { status: 'qualified', orgId }
     });
 
     const avgDeal = 15000;
@@ -965,15 +1015,18 @@ app.get('/api/analytics/forecast', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // GET /api/analytics/breakdown - Status breakdown
 app.get('/api/analytics/breakdown', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const breakdown = await prisma.prospect.groupBy({
       by: ['status'],
+      where: { orgId },
       _count: true,
       _avg: { opportunityScore: true }
     });
@@ -990,17 +1043,20 @@ app.get('/api/analytics/breakdown', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // GET /api/enrichment/contacts - List enriched contacts, partners and phones by date range
 app.get('/api/enrichment/contacts', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const contacts = await listEnrichedProspects(prisma, {
       from: req.query.from,
       to: req.query.to,
       status: req.query.status,
+      orgId,
     });
 
     res.json({
@@ -1015,15 +1071,17 @@ app.get('/api/enrichment/contacts', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
 // POST /api/enrichment/extract - Enrich CNPJs already present in PostgreSQL/MCP by createdAt time range
 app.post('/api/enrichment/extract', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const { from, to, refresh = false, limit = 25 } = req.body || {};
-    const where = {};
+    const where = { orgId };
 
     if (from || to) {
       where.createdAt = {};
@@ -1118,7 +1176,8 @@ const DISCOVERY_POOL_TTL_MS = 10 * 60 * 1000;
 // GET /api/discovery/profile - onboarding criteria that drive discovery
 app.get('/api/discovery/profile', async (req, res) => {
   try {
-    const org = await prisma.organization.findFirst();
+    const orgId = await requireRequestOrgId(req);
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
     if (!org) {
       return res.json({
         success: true,
@@ -1150,6 +1209,7 @@ app.get('/api/discovery/profile', async (req, res) => {
 // were already added to the lead list are always excluded from the results.
 app.get('/api/discovery/candidates', async (req, res) => {
   try {
+    const orgId = await requireRequestOrgId(req);
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.max(1, Math.min(parseInt(req.query.pageSize, 10) || Number(req.query.limit) || 12, 25));
     const seed = req.query.seed ? String(req.query.seed).slice(0, 64) : 'default';
@@ -1164,7 +1224,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
 
     if (!explicitCnae && !explicitSegment && !explicitLocation) {
       // Fall back to the onboarding profile as the discovery criteria.
-      const org = await prisma.organization.findFirst();
+      const org = await prisma.organization.findUnique({ where: { id: orgId } });
       if (org) {
         const settings = await prisma.commercialSettings.findUnique({ where: { orgId: org.id } });
         if (settings) {
@@ -1182,7 +1242,6 @@ app.get('/api/discovery/candidates', async (req, res) => {
     }
 
     const state = locations.length ? getStateFromLocation(locations[0]) : undefined;
-    const orgId = await getOrCreateOrganization();
 
     if (!segments.length && !state) {
       return res.json({
@@ -1250,8 +1309,9 @@ app.get('/api/discovery/candidates', async (req, res) => {
     }
 
     // Always exclude CNPJs already registered as leads (fresh check per request,
-    // so an import disappears from the listing immediately).
-    const existing = await prisma.prospect.findMany({ select: { cnpj: true } });
+    // so an import disappears from the listing immediately). Scoped ao org do
+    // usuário para que o lead de um usuário não afete a descoberta de outro.
+    const existing = await prisma.prospect.findMany({ where: { orgId }, select: { cnpj: true } });
     const existingCnpjs = new Set(existing.map((p) => String(p.cnpj).replace(/\D/g, '')));
     const available = unique.filter((c) => !existingCnpjs.has(String(c.cnpj).replace(/\D/g, '')));
 
@@ -1292,10 +1352,11 @@ app.post('/api/discovery/import', async (req, res) => {
       return res.status(400).json({ success: false, error: 'CNPJ and company name required' });
     }
 
-    const orgId = await getOrCreateOrganization(req.body?.orgId);
+    const orgId = await requireRequestOrgId(req);
     const normalizedCnpj = String(cnpj).replace(/\D/g, '');
 
-    let prospect = await prisma.prospect.findUnique({ where: { cnpj: normalizedCnpj } });
+    // Verifica duplicidade DENTRO do org do usuário (não globalmente).
+    let prospect = await prisma.prospect.findFirst({ where: { cnpj: normalizedCnpj, orgId } });
     if (prospect) {
       return res.json({
         success: true,
@@ -1361,7 +1422,8 @@ app.post('/api/discovery/import', async (req, res) => {
 // POST /api/prospects/:id/enrich-mcp - enrich an existing prospect via MCP-CNPJ
 app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
   try {
-    const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+    const orgId = await requireRequestOrgId(req);
+    const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
     if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
 
     const company = await getCompanyByCnpj(prospect.cnpj);
@@ -1414,7 +1476,8 @@ app.get('/api/discovery/stats', async (req, res) => {
 // GET /api/enrichment/status/:id - Status do enriquecimento (resultados NATS)
 app.get('/api/enrichment/status/:id', async (req, res) => {
   try {
-    const prospect = await prisma.prospect.findUnique({ where: { id: req.params.id } });
+    const orgId = await requireRequestOrgId(req);
+    const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
     if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
 
     const results = await prisma.cnpjEnrichment.findMany({
@@ -1618,6 +1681,28 @@ app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
     const { prospectIds, emailAccountId } = req.body || {};
     if (!prospectIds || !Array.isArray(prospectIds) || prospectIds.length === 0) {
       return res.status(400).json({ success: false, error: 'prospectIds array required' });
+    }
+
+    // Isolamento: a campanha deve pertencer ao org do usuário.
+    const campaign = await prisma.outreachCampaign.findFirst({
+      where: { id: req.params.id, tenantId: user.orgId },
+    });
+    if (!campaign) return res.status(404).json({ success: false, error: 'Campaign not found' });
+
+    // Isolamento: cada prospect deve pertencer ao org do usuário (evita
+    // disparar outreach contra leads de outro tenant).
+    const ownedProspects = await prisma.prospect.findMany({
+      where: { id: { in: prospectIds }, orgId: user.orgId },
+      select: { id: true },
+    });
+    const ownedIds = new Set(ownedProspects.map((p) => p.id));
+    const filteredIds = prospectIds.filter((id) => ownedIds.has(id));
+
+    if (filteredIds.length !== prospectIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Um ou mais prospects informados não pertencem à sua conta.',
+      });
     }
 
     const result = await outreachWorkers.startOutreachCampaign(
@@ -1857,7 +1942,15 @@ app.post('/api/outreach/suppression', async (req, res) => {
 // DELETE /api/outreach/suppression/:id — remove from suppression list
 app.delete('/api/outreach/suppression/:id', async (req, res) => {
   try {
-    await prisma.suppressionList.delete({ where: { id: req.params.id } });
+    const user = await prisma.user.findUnique({ where: { id: req.user?.id }, select: { orgId: true } });
+    if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const result = await prisma.suppressionList.deleteMany({
+      where: { id: req.params.id, tenantId: user.orgId },
+    });
+    if (result.count === 0) {
+      return res.status(404).json({ success: false, error: 'Suppression entry not found' });
+    }
     res.json({ success: true, message: 'Removed from suppression list', timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
