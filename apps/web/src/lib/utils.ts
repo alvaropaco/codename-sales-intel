@@ -34,3 +34,44 @@ export function formatNumber(value: number | null | undefined): string {
   if (value === undefined || value === null) return "0";
   return new Intl.NumberFormat("pt-BR").format(value);
 }
+
+/**
+ * Normalize a Brazilian phone number to the international format used by
+ * WhatsApp's wa.me links. Assumes Brazilian numbers (country code +55).
+ *
+ * Examples:
+ *   "(12) 3456-7890"  -> "551234567890"
+ *   "551234567890"     -> "551234567890"
+ *   "1234567890"       -> "551234567890"
+ *   "12 34567890"      -> "551234567890"
+ *
+ * Returns null when the number doesn't contain enough digits to be usable.
+ */
+export function toWhatsAppNumber(
+  phone: string | null | undefined
+): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+
+  // Already includes Brazil country code (+55)
+  if (digits.length === 12 && digits.startsWith("55")) return digits;
+  // Includes country code + DDD (13 digits, e.g. 55 + 11 digits)
+  if (digits.length === 13 && digits.startsWith("55")) return digits;
+
+  // Local 10 or 11 digits (with DDD) — prepend +55
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+
+  // Anything else is not a usable Brazilian number
+  return null;
+}
+
+/**
+ * Build a wa.me link that opens a WhatsApp conversation with the given number.
+ * Returns null when the number is not valid/usable.
+ */
+export function whatsappLink(
+  phone: string | null | undefined
+): string | null {
+  const number = toWhatsAppNumber(phone);
+  return number ? `https://wa.me/${number}` : null;
+}

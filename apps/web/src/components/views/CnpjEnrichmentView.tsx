@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EnrichedCnpjContact } from '@/types';
 import { extractCnpjContacts, fetchEnrichedCnpjContacts } from '@/services/api';
-import { cn, formatCNPJ } from '@/lib/utils';
+import { cn, formatCNPJ, whatsappLink } from '@/lib/utils';
 
 const statusVariant: Record<string, 'qualified' | 'prospect' | 'lead' | 'destructive' | 'outline'> = {
   enriched: 'qualified',
@@ -213,7 +213,23 @@ export const CnpjEnrichmentView: React.FC = () => {
                       {item.email ? <span className="font-semibold text-slate-800 dark:text-slate-200">{item.email}</span> : <span className="text-slate-400">Não disponível</span>}
                     </td>
                     <td className="px-6 py-4">
-                      {item.phones.length ? item.phones.map((phone) => <Badge key={phone} variant="outline" className="mb-1 mr-1">{phone}</Badge>) : <span className="text-slate-400">Não disponível</span>}
+                      {item.phones.length ? item.phones.map((phone) => {
+                        const wa = whatsappLink(phone);
+                        return wa ? (
+                          <a
+                            key={phone}
+                            href={wa}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Conversar no WhatsApp: ${phone}`}
+                            className="mb-1 mr-1 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-indigo-600 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-indigo-300 dark:hover:border-emerald-500/40 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-300"
+                          >
+                            <Phone className="h-3 w-3" />{phone}
+                          </a>
+                        ) : (
+                          <Badge key={phone} variant="outline" className="mb-1 mr-1">{phone}</Badge>
+                        );
+                      }) : <span className="text-slate-400">Não disponível</span>}
                     </td>
                     <td className="px-6 py-4 min-w-[260px]">
                       {item.partners.length ? item.partners.slice(0, 3).map((partner, index) => (

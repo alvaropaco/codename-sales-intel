@@ -23,7 +23,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Prospect, OutreachContactSummary } from '@/types';
-import { formatCNPJ, formatCurrency } from '@/lib/utils';
+import { formatCNPJ, formatCurrency, whatsappLink } from '@/lib/utils';
 import { EnrichmentGraphModal } from './EnrichmentGraphModal';
 import { fetchProspectOutreachStatus, fetchProspectOutreachTimeline } from '@/services/api';
 
@@ -192,9 +192,27 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                     </p>
                   )}
                   {phones.length > 0 && (
-                    <p className="font-medium text-foreground flex items-center gap-1.5">
-                      <Phone className="h-3.5 w-3.5 text-muted-foreground" /> {phones.join(' · ')}
-                    </p>
+                    <div className="space-y-1.5">
+                      {phones.map((phone) => {
+                        const wa = whatsappLink(phone);
+                        return wa ? (
+                          <a
+                            key={phone}
+                            href={wa}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Conversar no WhatsApp: ${phone}`}
+                            className="font-medium text-foreground flex items-center gap-1.5 text-indigo-500 hover:text-emerald-600 dark:text-indigo-300 dark:hover:text-emerald-300 transition"
+                          >
+                            <Phone className="h-3.5 w-3.5 text-muted-foreground" /> {phone}
+                          </a>
+                        ) : (
+                          <p key={phone} className="font-medium text-foreground flex items-center gap-1.5">
+                            <Phone className="h-3.5 w-3.5 text-muted-foreground" /> {phone}
+                          </p>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               )}

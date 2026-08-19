@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CompanyGraph, GraphNode } from '@/types';
 import { fetchCompanyGraph } from '@/services/api';
-import { formatCNPJ } from '@/lib/utils';
+import { formatCNPJ, whatsappLink } from '@/lib/utils';
 
 interface EnrichmentGraphModalProps {
   cnpj: string;
@@ -412,15 +412,31 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
                 <Section icon={<Mail className="h-4 w-4" />} title="Contatos">
                   {contacts.length > 0 ? (
                     <div className="space-y-2">
-                      {contacts.map((c, i) => (
-                        <div key={i} className="flex items-center justify-between rounded-xl border border-border/70 bg-secondary/30 px-4 py-2.5">
-                          <span className="flex items-center gap-2 text-sm text-foreground">
-                            {c.type === 'phone' ? <Phone className="h-4 w-4 text-muted-foreground" /> : <Mail className="h-4 w-4 text-muted-foreground" />}
-                            {c.value}
-                          </span>
-                          <ConfidenceBadge confidence={c.confidence} />
-                        </div>
-                      ))}
+                      {contacts.map((c, i) => {
+                        const wa = c.type === 'phone' ? whatsappLink(c.value) : null;
+                        return (
+                          <div key={i} className="flex items-center justify-between rounded-xl border border-border/70 bg-secondary/30 px-4 py-2.5">
+                            {wa ? (
+                              <a
+                                href={wa}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`Conversar no WhatsApp: ${c.value}`}
+                                className="flex items-center gap-2 text-sm text-indigo-500 hover:text-emerald-600 dark:text-indigo-300 dark:hover:text-emerald-300 transition"
+                              >
+                                {c.type === 'phone' ? <Phone className="h-4 w-4 text-muted-foreground" /> : <Mail className="h-4 w-4 text-muted-foreground" />}
+                                {c.value}
+                              </a>
+                            ) : (
+                              <span className="flex items-center gap-2 text-sm text-foreground">
+                                {c.type === 'phone' ? <Phone className="h-4 w-4 text-muted-foreground" /> : <Mail className="h-4 w-4 text-muted-foreground" />}
+                                {c.value}
+                              </span>
+                            )}
+                            <ConfidenceBadge confidence={c.confidence} />
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">Nenhum contato identificado.</p>
