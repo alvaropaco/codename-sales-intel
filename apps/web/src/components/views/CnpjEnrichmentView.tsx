@@ -33,13 +33,15 @@ const contactStatusLabel: Record<string, string> = {
   error: 'Revisar manualmente',
 };
 
-const today = new Date().toISOString().slice(0, 10);
-const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
 export const CnpjEnrichmentView: React.FC = () => {
   const [contacts, setContacts] = useState<EnrichedCnpjContact[]>([]);
-  const [from, setFrom] = useState(thirtyDaysAgo);
-  const [to, setTo] = useState(today);
+  // Empty defaults mean "all leads" — the backend only applies the enrichedAt
+  // range when these are explicitly set. Previously they defaulted to the last
+  // 30 days, which silently excluded every lead that had never been enriched
+  // (enrichedAt = null) or was enriched outside that window, leaving the
+  // "Inteligência comercial" view empty despite the dashboard being populated.
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -173,7 +175,7 @@ export const CnpjEnrichmentView: React.FC = () => {
             <Button onClick={loadContacts} variant="outline" className="h-10 gap-2 rounded-xl text-xs" disabled={isLoading}>
               <CalendarDays className="h-4 w-4" /> Filtrar
             </Button>
-            <Badge variant="outline" className="justify-center rounded-xl px-3 py-2 text-xs">{from} → {to}</Badge>
+            <Badge variant="outline" className="justify-center rounded-xl px-3 py-2 text-xs">{from || to ? `${from || '…'} → ${to || '…'}` : 'Todos os leads'}</Badge>
           </div>
           {error && <p className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</p>}
         </CardContent>
