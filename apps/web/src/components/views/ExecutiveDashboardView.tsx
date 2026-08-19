@@ -140,6 +140,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
 }) => {
   const [quickQualifyName, setQuickQualifyName] = useState('');
   const [quickResult, setQuickResult] = useState<QualificationResult | null>(null);
+  const [quickError, setQuickError] = useState<string | null>(null);
   const [isQualifying, setIsQualifying] = useState(false);
 
   const derived = useMemo(() => {
@@ -216,11 +217,13 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
     e.preventDefault();
     if (!quickQualifyName.trim()) return;
     setIsQualifying(true);
+    setQuickError(null);
+    setQuickResult(null);
     try {
       const res = await qualifyCompany(quickQualifyName);
       setQuickResult(res);
     } catch (err) {
-      console.error(err);
+      setQuickError(err instanceof Error ? err.message : 'Não foi possível analisar o potencial.');
     } finally {
       setIsQualifying(false);
     }
@@ -562,6 +565,11 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                 <Sparkles className="h-4 w-4" /> {isQualifying ? 'Analisando...' : 'Analisar potencial'}
               </Button>
             </form>
+            {quickError && (
+              <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+                {quickError}
+              </p>
+            )}
             {quickResult ? (
               <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/10">
                 <div className="flex items-center justify-between">

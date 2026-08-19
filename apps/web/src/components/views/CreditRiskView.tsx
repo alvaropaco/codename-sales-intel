@@ -18,20 +18,36 @@ import { CreditRiskResult } from '@/types';
 import { assessCreditRisk } from '@/services/api';
 import { formatCNPJ } from '@/lib/utils';
 
+const FACTOR_LABELS: Record<string, string> = {
+  company_longevity: 'Tempo de atividade sólido',
+  company_age: 'Tempo de atividade',
+  company_recent: 'Empresa recente',
+  company_age_unknown: 'Idade da empresa não informada',
+  corporate_email_present: 'E-mail corporativo',
+  phone_present: 'Telefones cadastrados',
+  officially_enriched: 'Dados verificados em fonte oficial',
+  company_size: 'Porte relevante',
+  revenue_potential: 'Potencial de receita',
+  insufficient_data: 'Dados insuficientes',
+};
+
 export const CreditRiskView: React.FC = () => {
   const [cnpjInput, setCnpjInput] = useState('');
   const [riskData, setRiskData] = useState<CreditRiskResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cnpjInput.trim()) return;
     setLoading(true);
+    setError(null);
+    setRiskData(null);
     try {
       const res = await assessCreditRisk(cnpjInput);
       setRiskData(res);
     } catch (err) {
-      console.error(err);
+      setError(err instanceof Error ? err.message : 'Não foi possível analisar o lead.');
     } finally {
       setLoading(false);
     }
@@ -89,6 +105,12 @@ export const CreditRiskView: React.FC = () => {
                   </>
                 )}
               </Button>
+
+              {error && (
+                <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+                  {error}
+                </p>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -115,11 +137,11 @@ export const CreditRiskView: React.FC = () => {
                   <div className="p-4 rounded-xl bg-secondary/40 border border-border/80 text-center">
                     <span className="text-xs text-muted-foreground font-semibold uppercase">Nível de Risco</span>
                     <div className="mt-2">
-                      <Badge variant={riskData.level === 'low' ? 'qualified' : 'prospect'}>
-                        {riskData.level === 'low' ? 'RISCO BAIXO' : 'RISCO MÉDIO'}
+                      <Badge variant={riskData.level === 'low' ? 'qualified' : riskData.level === 'high' ? 'destructive' : 'prospect'}>
+                        {riskData.level === 'low' ? 'RISCO BAIXO' : riskData.level === 'high' ? 'RISCO ELEVADO' : 'RISCO MÉDIO'}
                       </Badge>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-2">Aprovado para limite padrão</p>
+                    <p className="text-[10px] text-muted-foreground mt-2">Análise baseada nos dados do lead</p>
                   </div>
 
                   <div className="p-4 rounded-xl bg-secondary/40 border border-border/80 text-center">
@@ -134,9 +156,9 @@ export const CreditRiskView: React.FC = () => {
                   <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Fatores Analisados</h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {riskData.factors.map((factor, idx) => (
-                      <div key={idx} className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2 text-xs text-emerald-300">
-                        <CheckCircle className="h-4 w-4 text-emerald-400" />
-                        <span className="capitalize font-semibold">{factor.replace('_', ' ')}</span>
+                      <div key={idx} className="p-3 rounded-lg bg-secondary/40 border border-border/80 flex items-center gap-2 text-xs text-foreground">
+                        <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />
+                        <span className="capitalize font-semibold">{FACTOR_LABELS[factor] || factor.replace(/_/g, ' ')}</span>
                       </div>
                     ))}
                   </div>

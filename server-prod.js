@@ -685,6 +685,9 @@ app.put('/api/settings/commercial-profile', async (req, res) => {
 app.get('/api/prospects', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
+    if (process.env.DEBUG_DASHBOARD === 'true') {
+      console.log('[dashboard-debug] GET /api/prospects -> orgId=', orgId, 'userId=', req.user && (req.user.id || req.user.uid), 'email=', req.user && req.user.email);
+    }
     const prospects = await prisma.prospect.findMany({
       where: { orgId },
       select: {
@@ -717,6 +720,9 @@ app.get('/api/prospects', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
+    if (process.env.DEBUG_DASHBOARD === 'true') {
+      console.log('[dashboard-debug] GET /api/prospects -> count=', prospects.length, 'orgId=', orgId);
+    }
     res.json({
       success: true,
       data: prospects,
@@ -1042,6 +1048,225 @@ app.get('/api/analytics/breakdown', async (req, res) => {
       success: true,
       data: { breakdown: formatted },
       timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// INTELLIGENCE — Credit risk & qualification
+// ============================================================================
+// Estes endpoints avaliam um lead a partir de dados reais já persistidos no
+// banco (score de oportunidade, porte, receita, idade/tempo de atividade e
+// estado do enriquecimento). Quando o lead ainda não foi enriquecido, tentamos
+// completar a firmografia via BrasilAPI/MCP para não punir leads com dados
+// incompletos. O resultado também é persistido (creditRiskScore/Level) para
+// histórico e reuso na lista de leads.
+
+function normalizeCnpjInput(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function scoreCompanyAge(openedAt, now = new Date()) {
+  if (!openedAt) return { years: null, points: 0 };
+  const opened = new Date(openedAt);
+  if (Number.isNaN(opened.getTime())) return { years: null, points: 0 };
+  const years = (now.getTime() - opened.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+  if (years < 0) return { years: 0, points: 0 };
+  // Mais tempo de atividade = menor risco de calote/descontinuidade.
+  if (years >= 10) return { years, points: 30 };
+  if (years >= 5) return { years, points: 24 };
+  if (years >= 2) return { years, points: 16 };
+  if (years >= 1) return { years, points: 8 };
+  return { years, points: 2 };
+}
+
+function scoreCompanySize(employees) {
+  const count = Number(employees) || 0;
+  if (count >= 500) return 15;
+  if (count >= 100) return 12;
+  if (count >= 20) return 8;
+  if (count >= 5) return 4;
+  return 0;
+}
+
+function scoreRevenue(revenueEstimate) {
+  const revenue = Number(revenueEstimate) || 0;
+  if (revenue >= 5_000_000) return 20;
+  if (revenue >= 1_000_000) return 15;
+  if (revenue >= 250_000) return 10;
+  if (revenue >= 50_000) return 5;
+  return 0;
+}
+
+// opportunityScore já varia de 0 a 100 e reflete o potencial comercial do lead.
+function scoreOpportunity(opportunityScore) {
+  const score = Number(opportunityScore) || 0;
+  return Math.round(score * 0.35); // até 35 pontos
+}
+
+function deriveCreditRiskScore(prospect) {
+  let score = 50; // linha de base neutra
+
+  score += scoreOpportunity(prospect.opportunityScore);
+  score += scoreCompanySize(prospect.employees);
+  score += scoreRevenue(prospect.revenueEstimate);
+  score += scoreCompanyAge(prospect.cnpjOpenedAt).points;
+
+  // Enriquecido = dados verificados em fonte oficial, menor incerteza.
+  if (prospect.enrichmentStatus === 'enriched') score += 10;
+  if (prospect.cnpjEmail) score += 5;
+  if (Array.isArray(prospect.cnpjPhones) && prospect.cnpjPhones.length) score += 5;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function creditRiskLevelFromScore(score) {
+  if (score >= 70) return 'low';
+  if (score >= 40) return 'medium';
+  return 'high';
+}
+
+function creditRiskFactors(prospect, ageInfo) {
+  const factors = [];
+  if (ageInfo.years != null) {
+    if (ageInfo.years >= 10) factors.push('company_longevity');
+    else if (ageInfo.years >= 2) factors.push('company_age');
+    else factors.push('company_recent');
+  } else {
+    factors.push('company_age_unknown');
+  }
+  if (prospect.cnpjEmail) factors.push('corporate_email_present');
+  if (Array.isArray(prospect.cnpjPhones) && prospect.cnpjPhones.length) factors.push('phone_present');
+  if (prospect.enrichmentStatus === 'enriched') factors.push('officially_enriched');
+  if ((Number(prospect.employees) || 0) >= 100) factors.push('company_size');
+  if ((Number(prospect.revenueEstimate) || 0) >= 1_000_000) factors.push('revenue_potential');
+  if (!factors.length) factors.push('insufficient_data');
+  return factors;
+}
+
+async function findOrgProspectByCnpj(prisma, orgId, cnpj) {
+  const normalized = normalizeCnpjInput(cnpj);
+  if (!normalized) return null;
+  return prisma.prospect.findFirst({ where: { cnpj: normalized, orgId } });
+}
+
+// POST /api/intelligence/credit-risk - avalia a saúde financeira/comercial de um lead.
+app.post('/api/intelligence/credit-risk', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const { cnpj } = req.body || {};
+    const normalized = normalizeCnpjInput(cnpj);
+    if (!normalized) {
+      return res.status(400).json({ success: false, error: 'CNPJ é obrigatório' });
+    }
+
+    let prospect = await findOrgProspectByCnpj(prisma, orgId, normalized);
+
+    // Se existe mas ainda não foi enriquecido, enriquece no lugar para não punir
+    // leads com dados incompletos (mesmo caminho usado no import de descoberta).
+    if (prospect && prospect.enrichmentStatus !== 'enriched') {
+      try {
+        prospect = await enrichProspectWithCnpj(prisma, prospect);
+      } catch (_err) {
+        // mantém prospect como está; a pontuação usa os dados disponíveis
+      }
+    }
+
+    if (!prospect) {
+      return res.status(404).json({
+        success: false,
+        error: 'Lead não encontrado. Importe-o em "Descobrir leads" ou informe um CNPJ válido.',
+      });
+    }
+
+    const score = deriveCreditRiskScore(prospect);
+    const level = creditRiskLevelFromScore(score);
+    const ageInfo = scoreCompanyAge(prospect.cnpjOpenedAt);
+    const risk_assessment = {
+      score,
+      level,
+      factors: creditRiskFactors(prospect, ageInfo),
+      ageYears: ageInfo.years ? Math.round(ageInfo.years * 10) / 10 : null,
+      enrichmentStatus: prospect.enrichmentStatus,
+    };
+
+    // Persiste o resultado para histórico/reuso.
+    await prisma.prospect.update({
+      where: { id: prospect.id },
+      data: { creditRiskScore: score, creditRiskLevel: level },
+    }).catch(() => {});
+
+    res.json({
+      success: true,
+      cnpj: normalized,
+      risk_assessment,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/intelligence/qualify - qualifica um lead pelo nome/razão social.
+app.post('/api/intelligence/qualify', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const companyName = String((req.body || {}).company_name || '').trim();
+    if (!companyName) {
+      return res.status(400).json({ success: false, error: 'Nome do lead é obrigatório' });
+    }
+
+    // Busca exata e, em seguida, por correspondência parcial, dentro da organização.
+    let prospect = await prisma.prospect.findFirst({
+      where: { orgId, companyName: { equals: companyName, mode: 'insensitive' } },
+    });
+    if (!prospect) {
+      prospect = await prisma.prospect.findFirst({
+        where: {
+          orgId,
+          OR: [
+            { companyName: { contains: companyName, mode: 'insensitive' } },
+            { tradeName: { contains: companyName, mode: 'insensitive' } },
+          ],
+        },
+      });
+    }
+
+    if (!prospect) {
+      return res.status(404).json({
+        success: false,
+        error: 'Lead não encontrado na sua organização.',
+      });
+    }
+
+    const score = Math.max(0, Math.min(100, Number(prospect.opportunityScore) || 0));
+    const level =
+      score >= 70 ? 'qualified' :
+      score >= 40 ? 'prospect' : 'lead';
+    // Confiança reflete o quão completo é o dado: enriquecido oficialmente dá mais
+    // confiança do que um lead com dados parciais/mockados.
+    const confidence =
+      prospect.enrichmentStatus === 'enriched' ? 0.9 :
+      prospect.cnpjEmail || prospect.cnpjLegalNature ? 0.65 : 0.5;
+
+    const qualification = {
+      score,
+      level,
+      confidence: confidence.toFixed(2),
+      companyName: prospect.companyName,
+      cnpj: prospect.cnpj,
+      enrichmentStatus: prospect.enrichmentStatus,
+    };
+
+    res.json({
+      success: true,
+      company: companyName,
+      qualification,
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     const status = error && error.status ? error.status : 500;
