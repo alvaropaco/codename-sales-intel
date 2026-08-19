@@ -2,7 +2,7 @@
  * Firebase Authentication + session management for the B2Base platform.
  *
  * Responsibilities:
- *   - Verify Firebase ID tokens (Google / GitHub) via the Admin SDK.
+ *   - Verify Firebase ID tokens (Google / email-password / phone) via the Admin SDK.
  *   - Enforce corporate-only email sign-up (free webmail providers are blocked).
  *   - Issue a signed, httpOnly session cookie so authentication is persistent
  *     across requests and browser restarts (no re-login on next visits).
@@ -539,7 +539,7 @@ async function loginWithIdToken(prisma, idToken) {
     throw err;
   }
 
-  // E-mail providers (Google, GitHub, email/password) must be corporate-only.
+  // E-mail providers (Google, email/password) must be corporate-only.
   if (hasEmail) {
     if (decoded.email_verified === false) {
       const err = new Error(

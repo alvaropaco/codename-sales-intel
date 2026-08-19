@@ -140,7 +140,7 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 1) Complete a Firebase OAuth redirect (Google/GitHub). After the
+      // 1) Complete a Firebase OAuth redirect (Google). After the
       // provider sends the browser back to the app, the SDK exposes the result
       // here; we exchange the ID token for a persistent backend session.
       try {

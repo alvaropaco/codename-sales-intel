@@ -2,7 +2,6 @@ import { initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
-  GithubAuthProvider,
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
@@ -85,16 +84,6 @@ export async function signInWithGoogle(): Promise<string> {
 }
 
 /**
- * Signs the user in via a GitHub popup and returns the Firebase ID token.
- */
-export async function signInWithGithub(): Promise<string> {
-  const auth = requireAuth();
-  const provider = new GithubAuthProvider();
-  const result = await signInWithPopup(auth, provider);
-  return result.user.getIdToken();
-}
-
-/**
  * Starts a full-page redirect sign-in for Google. The OAuth callback is handled
  * by `getFirebaseRedirectResult()` when the app reloads.
  */
@@ -106,16 +95,7 @@ export async function signInWithGoogleRedirect(): Promise<void> {
 }
 
 /**
- * Starts a full-page redirect sign-in for GitHub.
- */
-export async function signInWithGithubRedirect(): Promise<void> {
-  const auth = requireAuth();
-  const provider = new GithubAuthProvider();
-  await signInWithRedirect(auth, provider);
-}
-
-/**
- * Preferred Google/GitHub entrypoint: use the redirect flow (no popup, which is
+ * Preferred Google entrypoint: use the redirect flow (no popup, which is
  * more reliable across browsers and embeds). When the environment does not
  * support redirect sign-in, it falls back to a popup and returns the ID token.
  *
@@ -123,16 +103,10 @@ export async function signInWithGithubRedirect(): Promise<void> {
  * the session exchange happens on the next page load via
  * `getFirebaseRedirectResult()`.
  */
-export async function signInWithProvider(
-  provider: 'google' | 'github'
-): Promise<string | null> {
+export async function signInWithProvider(): Promise<string | null> {
   const auth = requireAuth();
-  const authProvider =
-    provider === 'google' ? new GoogleAuthProvider() : new GithubAuthProvider();
-
-  if (provider === 'google') {
-    authProvider.setCustomParameters({ prompt: 'select_account' });
-  }
+  const authProvider = new GoogleAuthProvider();
+  authProvider.setCustomParameters({ prompt: 'select_account' });
 
   try {
     await signInWithRedirect(auth, authProvider);

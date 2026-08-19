@@ -34,15 +34,6 @@ const GOOGLE_ICON = (
   </svg>
 );
 
-const GITHUB_ICON = (
-  <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
-    <path
-      fill="currentColor"
-      d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.15c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.72.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.75 2.69 1.25 3.34.95.1-.74.4-1.25.72-1.53-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.78 0c2.21-1.49 3.18-1.18 3.18-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.25 5.67.41.36.77 1.05.77 2.13v3.16c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"
-    />
-  </svg>
-);
-
 const inputClass =
   'h-11 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-medium text-white placeholder:text-slate-500 outline-none transition focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20';
 
@@ -66,11 +57,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialEr
     setInfo(null);
   };
 
-  const handleProvider = async (provider: 'google' | 'github') => {
-    setLoading(provider);
+  const handleGoogle = async () => {
+    setLoading('google');
     resetMessages();
     try {
-      const idToken = await signInWithProvider(provider);
+      const idToken = await signInWithProvider();
       // A redirect sign-in navigates the whole page away and returns null here;
       // the session is exchanged on the next page load. A popup fallback returns
       // a token directly, which we exchange immediately.
@@ -206,21 +197,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialEr
               <button
                 type="button"
                 disabled={loading !== null}
-                onClick={() => handleProvider('google')}
+                onClick={handleGoogle}
                 className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white px-4 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading === 'google' ? <Loader2 className="h-5 w-5 animate-spin text-slate-500" /> : GOOGLE_ICON}
                 Continuar com Google
-              </button>
-
-              <button
-                type="button"
-                disabled={loading !== null}
-                onClick={() => handleProvider('github')}
-                className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/10 px-4 text-sm font-bold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading === 'github' ? <Loader2 className="h-5 w-5 animate-spin" /> : GITHUB_ICON}
-                Continuar com GitHub
               </button>
 
               <div className="flex items-center gap-3 py-1">
