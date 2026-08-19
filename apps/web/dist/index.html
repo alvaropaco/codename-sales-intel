@@ -24,16 +24,18 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="msapplication-TileColor" content="#030302" />
     <meta name="msapplication-TileImage" content="/ms-icon-144x144.png" />
+    <meta name="application-name" content="B2Base" />
     <meta name="theme-color" content="#0f172a" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="B2Base Platform" />
+    <meta property="og:site_name" content="B2Base" />
     <meta property="og:locale" content="pt_BR" />
     <meta property="og:title" content="B2Base | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B" />
     <meta property="og:description" content="Descubra e qualifique novas empresas com dados de CNPJ, organize prospecção e CRM, gerencie o pipeline, avalie risco e automatize outreach por e-mail." />
     <meta property="og:url" content="https://b2base.net/" />
     <meta property="og:image" content="https://b2base.net/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="B2Base — Inteligência comercial B2B" />
@@ -43,6 +45,7 @@
     <meta name="twitter:title" content="B2Base | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B" />
     <meta name="twitter:description" content="Descubra e qualifique novas empresas com dados de CNPJ, organize prospecção e CRM, gerencie o pipeline e automatize outreach por e-mail." />
     <meta name="twitter:image" content="https://b2base.net/og-image.png" />
+    <meta name="twitter:image:alt" content="B2Base — Inteligência comercial B2B" />
 
     <!-- Structured data (JSON-LD) -->
     <script type="application/ld+json">
@@ -53,15 +56,34 @@
           "@type": "WebSite",
           "@id": "https://b2base.net/#website",
           "url": "https://b2base.net/",
-          "name": "B2Base Platform",
+          "name": "B2Base",
+          "alternateName": "B2Base Platform",
           "description": "Inteligência comercial B2B: dados de CNPJ, prospecção, CRM, pipeline e automação de outreach.",
           "inLanguage": "pt-BR",
           "publisher": { "@id": "https://b2base.net/#organization" }
         },
         {
+          "@type": "WebPage",
+          "@id": "https://b2base.net/#webpage",
+          "url": "https://b2base.net/",
+          "name": "B2Base | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B",
+          "description": "Descubra e qualifique novas empresas com dados de CNPJ, organize prospecção e CRM, gerencie o pipeline e automatize outreach por e-mail.",
+          "inLanguage": "pt-BR",
+          "isPartOf": { "@id": "https://b2base.net/#website" },
+          "about": { "@id": "https://b2base.net/#organization" },
+          "primaryImageOfPage": { "@type": "ImageObject", "url": "https://b2base.net/og-image.png" },
+          "breadcrumb": {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Início", "item": "https://b2base.net/" }
+            ]
+          }
+        },
+        {
           "@type": "SoftwareApplication",
           "@id": "https://b2base.net/#software",
-          "name": "B2Base Platform",
+          "name": "B2Base",
+          "alternateName": "B2Base Platform",
           "applicationCategory": "BusinessApplication",
           "operatingSystem": "Web",
           "url": "https://b2base.net/",
@@ -75,6 +97,7 @@
           "name": "B2Base",
           "url": "https://b2base.net/",
           "logo": { "@type": "ImageObject", "url": "https://b2base.net/logo.svg" },
+          "image": { "@type": "ImageObject", "url": "https://b2base.net/og-image.png" },
           "sameAs": []
         }
       ]
