@@ -1,5 +1,5 @@
 {
-  "name": "salesintel-platform",
+  "name": "b2base-platform",
   "version": "1.0.0",
   "description": "B2B SaaS platform for CNPJ data intelligence and prospect management",
   "private": true,
@@ -15,7 +15,7 @@
     "db:deploy": "npx prisma migrate deploy",
     "db:generate": "npx prisma generate",
     "start": "node server-prod.js",
-    "docker:build": "docker build -t salesintel ."
+    "docker:build": "docker build -t b2base ."
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

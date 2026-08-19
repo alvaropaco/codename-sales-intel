@@ -6,7 +6,7 @@
 //   1. Publicamos  enrichment.company.requested.v1
 //      com { cnpj, company_id, request_event_id } e header Nats-Msg-Id=event_id
 //      (Dedup no envio: reenvios dentro de 2 min são ignorados pelo stream).
-//   2. Consumidor durável exclusivo (salesintel-results) escuta
+//   2. Consumidor durável exclusivo (b2base-results) escuta
 //      enrichment.company.completed.v1 e persiste o resultado IDEMPOTENTE
 //      (chave: company_id + enrichment_version), ACK somente após persistir,
 //       nak() em erro para reentrega.
@@ -30,10 +30,10 @@ const jc = JSONCodec();
 // O enrichment-worker exige `company_id` como UUID e usa esse ID para versionar
 // os enriquecimentos (enrichment_version). Derivar do CNPJ garante estabilidade
 // entre chamadas (re-enriquecimento mantém a mesma empresa no lado do worker).
-const SALESINTEL_NAMESPACE = '6f4c1a2e-9b7d-4e3a-8c5f-1d2e3a4b5c6d';
+const B2BASE_NAMESPACE = '6f4c1a2e-9b7d-4e3a-8c5f-1d2e3a4b5c6d';
 
 function deterministicCompanyId(cnpj) {
-  const ns = Buffer.from(SALESINTEL_NAMESPACE.replace(/-/g, ''), 'hex');
+  const ns = Buffer.from(B2BASE_NAMESPACE.replace(/-/g, ''), 'hex');
   const hash = createHash('sha1')
     .update(Buffer.concat([ns, Buffer.from(String(cnpj || ''), 'utf8')]))
     .digest();
@@ -73,7 +73,7 @@ function buildEnrichmentSummary(summary) {
 // ---------------------------------------------------------------------------
 const NATS_URL = process.env.NATS_URL || 'nats://legal-nats.laweragent.svc.cluster.local:4222';
 const NATS_STREAM = process.env.NATS_STREAM || 'ENRICHMENT';
-const NATS_DURABLE = process.env.NATS_DURABLE || 'salesintel-results';
+const NATS_DURABLE = process.env.NATS_DURABLE || 'b2base-results';
 const NATS_REQUEST_SUBJECT = process.env.NATS_REQUEST_SUBJECT || 'enrichment.company.requested.v1';
 const NATS_COMPLETED_SUBJECT = process.env.NATS_COMPLETED_SUBJECT || 'enrichment.company.completed.v1';
 const NATS_DLQ_SUBJECT = process.env.NATS_DLQ_SUBJECT || 'enrichment.company.dlq.v1';
@@ -99,7 +99,7 @@ async function connectNats() {
   try {
     _nc = await connect({
       servers: NATS_URL,
-      name: 'salesintel-backend',
+      name: 'b2base-backend',
       reconnect: true,
       maxReconnectAttempts: -1,          // nunca desiste; fica tentando
       reconnectTimeWait: 2000,

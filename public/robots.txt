@@ -1,4 +1,4 @@
-# robots.txt — SalesIntel Platform
+# robots.txt — B2Base Platform
 # Allow all crawlers; point search engines to the sitemap and public pages.
 # Authenticated app routes (/outreach, /settings, /prospects, ...) are not
 # listed here and are not accessible to crawlers.
@@ -8,4 +8,4 @@ Allow: /
 Disallow: /api/
 Disallow: /__/
 
-Sitemap: https://salesintel.0xcloud.net/sitemap.xml
+Sitemap: https://b2base.net/sitemap.xml

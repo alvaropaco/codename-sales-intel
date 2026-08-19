@@ -1,6 +1,6 @@
 # Integração com o Pipeline de Enriquecimento (NATS JetStream)
 
-Este documento descreve como o SalesIntel Platform se integra ao pipeline
+Este documento descreve como o B2Base Platform se integra ao pipeline
 `enrichment-worker` via NATS, e como habilitá-lo no deploy (Coolify).
 
 ## Arquitetura
@@ -12,7 +12,7 @@ Este documento descreve como o SalesIntel Platform se integra ao pipeline
 +-----------+                    enrichment.company.completed.v1                 │
           ▲  ◄──────────────────────────────────────────────────────────  enrichment-worker
           │
-    consumer durável "salesintel-results"
+    consumer durável "b2base-results"
     (persiste idempotente + ACK)
 ```
 
@@ -20,7 +20,7 @@ Quando **um lead entra na esteira de "Em Qualificação"** (status `prospect`
 no kanban), o backend publica um pedido de enriquecimento. O worker processa
 (firmografia + descoberta + scoring) e publica o resultado em
 `enrichment.company.completed.v1`. Nosso **consumer durável exclusivo**
-(`salesintel-results`) consome, persiste de forma idempotente e dá ACK.
+(`b2base-results`) consome, persiste de forma idempotente e dá ACK.
 
 ## O que foi implementado
 
@@ -42,7 +42,7 @@ Em **`server-prod.js`**:
    `(companyId, enrichmentVersion)` — a mesma mensagem reentregue não duplica.
 2. **ACK só após persistir**: só `ack()` depois do `upsert` + aplicação no
    `Prospect`. Em erro, `nak()` para reentrega.
-3. **Durable name exclusivo**: `salesintel-results` (não reutiliza `enrichment-worker`).
+3. **Durable name exclusivo**: `b2base-results` (não reutiliza `enrichment-worker`).
 4. **Status**: `COMPLETED`, `PARTIAL`, `FAILED`, `DISCARDED` são mapeados
    para `enriched`, `partial`, `error` no `Prospect`.
 5. **Dedup no envio**: header `Nats-Msg-Id = event_id` (replay dentro de 2 min ignorado).
@@ -55,7 +55,7 @@ Em **`server-prod.js`**:
 | `NATS_URL` | `nats://legal-nats...:4222` | Endereço do NATS |
 | `NATS_ENABLED` | `false` | `true` liga publish + consumer (desliga cai no enriquecimento BrasilAPI síncrono) |
 | `NATS_STREAM` | `ENRICHMENT` | Nome do stream JetStream |
-| `NATS_DURABLE` | `salesintel-results` | Nome do consumer durável |
+| `NATS_DURABLE` | `b2base-results` | Nome do consumer durável |
 | `NATS_REQUEST_SUBJECT` | `enrichment.company.requested.v1` | Subject de pedidos |
 | `NATS_COMPLETED_SUBJECT` | `enrichment.company.completed.v1` | Subject de resultados |
 | `NATS_DLQ_SUBJECT` | `enrichment.company.dlq.v1` | Subject de DLQ |
@@ -71,7 +71,7 @@ No app do Coolify (VPS), adicione/variáveis as variáveis abaixo — **não** e
 NATS_ENABLED=true
 NATS_URL=<endereço acessível do NATS, ex.: nats://<host>:4222 ou via túnel/ingress>
 NATS_STREAM=ENRICHMENT
-NATS_DURABLE=salesintel-results
+NATS_DURABLE=b2base-results
 ```
 
 > ⚠️ O `NATS_URL` de exemplo (`legal-nats.laweragent.svc.cluster.local`) é um
@@ -117,5 +117,5 @@ indicadores, rede de relacionamentos e evidências com confiança/proveniência.
 
 O consumer roda em background no mesmo processo do servidor. Logs:
 - `[nats] pedido publicado ... event=<id>` — publish feito.
-- `[nats] consumindo ... (durável=salesintel-results)` — consumer ativo.
+- `[nats] consumindo ... (durável=b2base-results)` — consumer ativo.
 - `[nats][DLQ] ...` — mensagens rejeitadas na DLQ (vale monitorar).

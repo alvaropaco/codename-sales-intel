@@ -60,7 +60,7 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>SalesIntel Platform</title>
+      <title>B2Base Platform</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; }
@@ -90,7 +90,7 @@ app.get('/', (req, res) => {
     <body>
       <div class="container">
         <header>
-          <h1>📊 SalesIntel Platform</h1>
+          <h1>📊 B2Base Platform</h1>
           <p class="subtitle">B2B SaaS for CNPJ Data Intelligence & Prospect Management</p>
         </header>
 
@@ -298,7 +298,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════╗
-║     SalesIntel Platform Running! 🚀       ║
+║     B2Base Platform Running! 🚀       ║
 ╠════════════════════════════════════════════╣
 ║                                            ║
 ║  🌐 Dashboard: http://localhost:${PORT}          ║

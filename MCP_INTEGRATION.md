@@ -1,15 +1,15 @@
-# SalesIntel MCP Integration
+# B2Base MCP Integration
 
 **Status: ✅ IMPLEMENTED**
 
-The SalesIntel platform now exposes its capabilities via the Model Context Protocol (MCP), allowing LLMs and other clients to interact with the platform programmatically.
+The B2Base platform now exposes its capabilities via the Model Context Protocol (MCP), allowing LLMs and other clients to interact with the platform programmatically.
 
 ## Overview
 
 MCP is a standardized protocol that allows AI models to:
 - **Read resources**: Query prospects, analytics, forecasts
 - **Call tools**: Perform actions like creating prospects, qualifying leads
-- **Interact seamlessly**: Integrate SalesIntel into AI workflows
+- **Interact seamlessly**: Integrate B2Base into AI workflows
 
 ## Quick Start
 
@@ -22,7 +22,7 @@ node mcp-server.js
 ```json
 {
   "mcpServers": {
-    "salesintel": {
+    "b2base": {
       "command": "node",
       "args": ["/Users/alvaropaco/salesintel-platform/mcp-server.js"],
       "env": {

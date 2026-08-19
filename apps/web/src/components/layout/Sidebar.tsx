@@ -59,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Sparkles className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-base font-black tracking-tight text-slate-950 dark:text-white">SalesIntel</h1>
+            <h1 className="text-base font-black tracking-tight text-slate-950 dark:text-white">B2Base</h1>
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Inteligência comercial</p>
           </div>
         </div>

@@ -1,6 +1,6 @@
 # Descoberta de empresas por CNAE (MCP-CNPJ)
 
-Depois do onboarding (que captura segmentos e CNAEs-alvo), a SalesIntel usa um
+Depois do onboarding (que captura segmentos e CNAEs-alvo), a B2Base usa um
 servidor MCP externo de dados empresariais brasileiros para descobrir empresas
 reais com potencial de compra e para enriquecer empresas já cadastradas.
 

@@ -66,7 +66,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500 text-white">
               <Sparkles className="h-5 w-5" />
             </div>
-            <span className="text-lg">SalesIntel</span>
+            <span className="text-lg">B2Base</span>
           </div>
           <nav className="hidden items-center gap-6 text-sm text-slate-300 md:flex">
             <a href="#recursos" className="transition hover:text-white">Recursos</a>
@@ -95,7 +95,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
             Descubra e qualifique novas empresas para o seu time comercial
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-slate-300">
-            A SalesIntel consolida dados de CNPJ, prospectos, pipeline, risco e outreach em uma única
+            A B2Base consolida dados de CNPJ, prospectos, pipeline, risco e outreach em uma única
             plataforma — para que sua equipe atue nos leads certos, no momento certo.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -145,7 +145,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
         <div className="text-center">
           <h2 className="text-3xl font-extrabold tracking-tight">Tudo que sua operação comercial precisa</h2>
           <p className="mx-auto mt-3 max-w-xl text-slate-400">
-            Da descoberta de empresas até o envio de campanhas, a SalesIntel organiza o caminho completo.
+            Da descoberta de empresas até o envio de campanhas, a B2Base organiza o caminho completo.
           </p>
         </div>
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -180,7 +180,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-white">
               <Sparkles className="h-4 w-4" />
             </div>
-            <span>SalesIntel</span>
+            <span>B2Base</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-5 text-sm text-slate-400">
             <a className="transition hover:text-white" onClick={(e) => { e.preventDefault(); onLogin(); }} href="#">
@@ -191,7 +191,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
           </div>
         </div>
         <p className="mt-6 text-center text-xs text-slate-600">
-          © {new Date().getFullYear()} SalesIntel Platform
+          © {new Date().getFullYear()} B2Base Platform
         </p>
       </footer>
     </div>

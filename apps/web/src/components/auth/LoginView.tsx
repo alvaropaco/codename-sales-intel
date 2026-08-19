@@ -177,7 +177,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialEr
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
             <Sparkles className="h-7 w-7 text-indigo-400" />
           </div>
-          <h1 className="text-2xl font-black tracking-tight">SalesIntel Platform</h1>
+          <h1 className="text-2xl font-black tracking-tight">B2Base Platform</h1>
           <p className="mt-2 text-sm text-slate-400">
             Entre com a conta corporativa da sua empresa para acessar o dashboard.
           </p>

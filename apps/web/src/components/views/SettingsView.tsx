@@ -67,7 +67,7 @@ export function SettingsView({
               <Settings className="mr-1.5 h-3.5 w-3.5" /> Preferências comerciais
             </Badge>
             <h1 className="text-3xl font-black tracking-tight text-slate-950 dark:text-white md:text-4xl">
-              Ajuste como a SalesIntel encontra oportunidades para o seu time.
+              Ajuste como a B2Base encontra oportunidades para o seu time.
             </h1>
             <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
               Essas preferências orientam a descoberta de leads, os filtros principais e a priorização comercial. Você pode alterar tudo quando o perfil de cliente ideal mudar.

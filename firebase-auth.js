@@ -1,5 +1,5 @@
 /**
- * Firebase Authentication + session management for the SalesIntel platform.
+ * Firebase Authentication + session management for the B2Base platform.
  *
  * Responsibilities:
  *   - Verify Firebase ID tokens (Google / GitHub) via the Admin SDK.
@@ -13,7 +13,7 @@
  *   FIREBASE_SERVICE_ACCOUNT_PATH   Path to the service account JSON file.
  *   GOOGLE_APPLICATION_CREDENTIALS  Standard GCP path (used as fallback).
  *   SESSION_SECRET                  Secret used to sign session JWTs (>= 32 chars).
- *   SESSION_COOKIE_NAME             Cookie name (default: salesintel_session).
+ *   SESSION_COOKIE_NAME             Cookie name (default: b2base_session).
  *   SESSION_TTL_HOURS               Session lifetime in hours (default: 336 = 14 days).
  *   SESSION_COOKIE_SECURE           Force the Secure flag on the cookie ("true"/"false").
  *   AUTH_ALLOWED_DOMAINS            Optional comma-separated corporate domain allowlist.
@@ -26,7 +26,7 @@ const jwt = require('jsonwebtoken');
 const express = require('express');
 const { parse: parseCookie, serialize: serializeCookie } = require('cookie');
 
-const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'salesintel_session';
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'b2base_session';
 const SESSION_TTL_HOURS = Math.max(1, Number(process.env.SESSION_TTL_HOURS) || 336);
 const SESSION_TTL_SECONDS = SESSION_TTL_HOURS * 60 * 60;
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'shadowtrace-7199f';
@@ -348,13 +348,13 @@ function createSessionToken(user) {
     getSessionSecret(),
     {
       expiresIn: SESSION_TTL_SECONDS,
-      issuer: 'salesintel',
+      issuer: 'b2base',
     }
   );
 }
 
 function verifySessionToken(token) {
-  return jwt.verify(token, getSessionSecret(), { issuer: 'salesintel' });
+  return jwt.verify(token, getSessionSecret(), { issuer: 'b2base' });
 }
 
 function isCookieSecure() {
@@ -393,6 +393,9 @@ function clearSessionCookie(res) {
 
 function cookieParserMiddleware(req, _res, next) {
   req.cookies = parseCookie(req.headers.cookie || '');
+  if (process.env.DEBUG_DASHBOARD === 'true' && req.path && req.path.startsWith('/api/')) {
+    console.log('[dashboard-debug] req', req.method, req.path, 'hasCookie=', !!Object.keys(req.cookies || {}).length, 'cookieKeys=', Object.keys(req.cookies || {}).join(','));
+  }
   next();
 }
 

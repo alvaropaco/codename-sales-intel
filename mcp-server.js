@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * SalesIntel MCP Server
- * Exposes SalesIntel platform capabilities via Model Context Protocol
+ * B2Base MCP Server
+ * Exposes B2Base platform capabilities via Model Context Protocol
  * 
  * Resources:
  *   - prospects: List/read prospect records
@@ -70,7 +70,7 @@ function orgIdFromUri(uri) {
 
 // Initialize MCP server
 const server = new Server({
-  name: "salesintel-mcp",
+  name: "b2base-mcp",
   version: "1.0.0",
 }, {
   capabilities: {
@@ -738,7 +738,7 @@ const toolsHandler = async () => {
             },
             prospect_id: {
               type: "string",
-              description: "Existing SalesIntel prospect ID to enrich",
+              description: "Existing B2Base prospect ID to enrich",
             },
           },
           required: ["orgId", "prospect_id"],
@@ -786,7 +786,7 @@ server.setRequestHandler(ListToolsRequestSchema, toolsHandler);
 async function main() {
   const transport = new StdioServerTransport();
 
-  console.error("[MCP Server] Initializing SalesIntel MCP Server...");
+  console.error("[MCP Server] Initializing B2Base MCP Server...");
   console.error("[MCP Server] Database connection to:", process.env.DATABASE_URL || "localhost:5432");
 
   try {

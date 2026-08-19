@@ -7,7 +7,7 @@ interface SeoOptions {
   canonical?: string;
 }
 
-const SITE_URL = 'https://salesintel.0xcloud.net';
+const SITE_URL = 'https://b2base.net';
 
 /**
  * Lightweight per-route SEO for the SPA: keeps <title>, meta description,
@@ -17,8 +17,8 @@ const SITE_URL = 'https://salesintel.0xcloud.net';
  */
 export function useSeo({ title, description, canonical }: SeoOptions): void {
   useEffect(() => {
-    const BRAND = 'SalesIntel';
-    // Avoid "... | SalesIntel | SalesIntel" when the title already carries the brand.
+    const BRAND = 'B2Base';
+    // Avoid "... | B2Base | B2Base" when the title already carries the brand.
     const pageTitle = title.includes(BRAND) ? title : `${title} | ${BRAND}`;
     document.title = pageTitle;
 
@@ -56,7 +56,7 @@ export function useSeo({ title, description, canonical }: SeoOptions): void {
 
     return () => {
       // On unmount, restore the base title/meta from the static head.
-      document.title = 'SalesIntel | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B';
+      document.title = 'B2Base | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B';
     };
   }, [title, description, canonical]);
 }

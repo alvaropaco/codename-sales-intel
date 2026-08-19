@@ -54,7 +54,7 @@ TOTAL_ELEMENTS=0
 
 echo "   Checking for title..."
 ((TOTAL_ELEMENTS++))
-if echo "$BODY" | grep -q "SalesIntel"; then
+if echo "$BODY" | grep -q "B2Base"; then
   echo "   ✅ Title found"
   ((ELEMENTS_FOUND++))
 else

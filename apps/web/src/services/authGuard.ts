@@ -28,7 +28,7 @@ window.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
   }
 
   if (response.status === 401 && url.includes('/api/') && !url.includes('/api/auth/')) {
-    window.dispatchEvent(new Event('salesintel:unauthorized'));
+    window.dispatchEvent(new Event('b2base:unauthorized'));
   }
 
   return response;

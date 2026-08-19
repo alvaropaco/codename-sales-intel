@@ -2,7 +2,7 @@
  * MCP-CNPJ client
  *
  * Wraps the external Brazilian company-data MCP server (streamable HTTP) so the
- * SalesIntel backend can search, filter and enrich real CNPJ companies using the
+ * B2Base backend can search, filter and enrich real CNPJ companies using the
  * CNAE/segment/location criteria captured during onboarding.
  *
  * Configuration (env):
@@ -109,7 +109,7 @@ async function ensureSession() {
     params: {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'salesintel-backend', version: '1.0.0' },
+      clientInfo: { name: 'b2base-backend', version: '1.0.0' },
     },
   });
   // notify initialized (fire and forget)

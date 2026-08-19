@@ -101,7 +101,7 @@ app.get('/', async (req, res) => {
     return res.sendFile(dashboardPath);
   }
   
-  res.json({ success: true, message: 'SalesIntel Dashboard' });
+  res.json({ success: true, message: 'B2Base Dashboard' });
 });
 
 // ============================================================================
@@ -139,10 +139,10 @@ function renderLegalPage({ path, title, updated, summary, sections, toc }) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${title} — SalesIntel Platform</title>
+<title>${title} — B2Base Platform</title>
 <meta name="description" content="${summary}" />
 <meta name="robots" content="index,follow" />
-<link rel="canonical" href="https://salesintel.0xcloud.net${path}" />
+<link rel="canonical" href="https://b2base.net${path}" />
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
@@ -194,7 +194,7 @@ function renderLegalPage({ path, title, updated, summary, sections, toc }) {
 </head>
 <body>
   <div class="topbar">
-    <span class="brand">SalesIntel Platform</span>
+    <span class="brand">B2Base Platform</span>
     <nav>${nav
       .map((n) => `<a href="${n.href}">${n.label}</a>`)
       .join('')}</nav>
@@ -202,7 +202,7 @@ function renderLegalPage({ path, title, updated, summary, sections, toc }) {
   <main class="wrap">
     <header class="hero">
       <h1>${title}</h1>
-      <p class="meta">SalesIntel Platform · Vigência em <span class="updated">${updated}</span></p>
+      <p class="meta">B2Base Platform · Vigência em <span class="updated">${updated}</span></p>
       <p class="summary">${summary}</p>
     </header>
     <nav class="toc-box" aria-label="Sumário">
@@ -217,7 +217,7 @@ function renderLegalPage({ path, title, updated, summary, sections, toc }) {
     </p>
   </main>
   <footer>
-    <p>SalesIntel Platform · <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a></p>
+    <p>B2Base Platform · <a href="mailto:contato@b2base.net">contato@b2base.net</a></p>
     <p><a href="/privacy-policy">Política de Privacidade</a> · <a href="/terms-of-usage">Termos de Uso</a></p>
   </footer>
 </body>
@@ -232,13 +232,13 @@ app.get('/privacy-policy', (req, res) => {
     title: 'Política de Privacidade',
     updated,
     summary:
-      'Como a SalesIntel Platform coleta, usa, compartilha e protege os dados pessoais dos usuários e das empresas consultadas, em conformidade com a LGPD e com controles de segurança alinhados ao SOC 2.',
+      'Como a B2Base Platform coleta, usa, compartilha e protege os dados pessoais dos usuários e das empresas consultadas, em conformidade com a LGPD e com controles de segurança alinhados ao SOC 2.',
     sections: [
       {
         id: 'quem-somos',
         heading: '1. Quem somos e a abrangência desta política',
         body: `
-          <p>A <strong>SalesIntel Platform</strong> é uma plataforma B2B SaaS de inteligência comercial que
+          <p>A <strong>B2Base Platform</strong> é uma plataforma B2B SaaS de inteligência comercial que
           consolida dados empresariais (insights de CNPJ), prospecção, CRM e automação de outreach por e-mail.</p>
           <p>Esta Política de Privacidade descreve como tratamos dados pessoais no uso da plataforma, tanto os
           dados dos <strong>clientes e usuários</strong> (titulares) quanto os <strong>dados de contato das empresas
@@ -342,7 +342,7 @@ app.get('/privacy-policy', (req, res) => {
             <li>Revogação do consentimento e revisão de decisões automatizadas.</li>
           </ul>
           <p>Para exercer seus direitos, fale conosco pelo e-mail
-          <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a>. Responderemos
+          <a href="mailto:contato@b2base.net">contato@b2base.net</a>. Responderemos
           dentro dos prazos legais, com medidas para confirmar sua identidade.</p>`,
       },
       {
@@ -358,7 +358,7 @@ app.get('/privacy-policy', (req, res) => {
         heading: '10. Encarregado (DPO) e contato LGPD',
         body: `
           <p>Para questões relacionadas à LGPD e à privacidade, você pode contactar nosso Encarregado de Proteção de
-          Dados (DPO) pelo e-mail <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a>
+          Dados (DPO) pelo e-mail <a href="mailto:contato@b2base.net">contato@b2base.net</a>
           ou pela <a href="https://www.gov.br/anpd" target="_blank" rel="noopener">Autoridade Nacional de Proteção de Dados (ANPD)</a>.</p>`,
       },
       {
@@ -382,13 +382,13 @@ app.get('/terms-of-usage', (req, res) => {
     title: 'Termos de Uso',
     updated,
     summary:
-      'Os termos e condições que regem o uso da plataforma SalesIntel Platform, incluindo responsabilidades, uso aceitável, propriedade intelectual e disposições de compliance (LGPD e SOC 2).',
+      'Os termos e condições que regem o uso da plataforma B2Base Platform, incluindo responsabilidades, uso aceitável, propriedade intelectual e disposições de compliance (LGPD e SOC 2).',
     sections: [
       {
         id: 'aceite',
         heading: '1. Aceitação dos termos',
         body: `
-          <p>Ao acessar ou usar a <strong>SalesIntel Platform</strong>, você concorda com estes Termos de Uso e com a
+          <p>Ao acessar ou usar a <strong>B2Base Platform</strong>, você concorda com estes Termos de Uso e com a
           nossa <a href="/privacy-policy">Política de Privacidade</a>. Se você usa a plataforma em nome de uma
           organização, declara ter autoridade para vinculá-la a estes termos. Se não concordar com qualquer
           disposição, cessará imediatamente o uso.</p>`,
@@ -431,7 +431,7 @@ app.get('/terms-of-usage', (req, res) => {
         id: 'propriedade',
         heading: '5. Propriedade intelectual e licença',
         body: `
-          <p>A plataforma, seu código, design, marcas e conteúdo são de titularidade da SalesIntel ou de seus
+          <p>A plataforma, seu código, design, marcas e conteúdo são de titularidade da B2Base ou de seus
           licenciantes. Concedemos a você uma licença limitada, não exclusiva e intransferível para uso do serviço
           durante a vigência do contrato. Os dados que você insere e gerencia na plataforma permanecem seus; você nos
           concede uma licença para processá-los apenas para prestar o serviço.</p>`,
@@ -481,7 +481,7 @@ app.get('/terms-of-usage', (req, res) => {
         heading: '10. Legislação aplicável e foro',
         body: `
           <p>Estes Termos são regidos pelas leis da República Federativa do Brasil. As partes elegem o foro da comarca
-          da sede da SalesIntel para dirimir controvérsias, sem prejuízo de normas de ordem pública e das disposições
+          da sede da B2Base para dirimir controvérsias, sem prejuízo de normas de ordem pública e das disposições
           do CDC e da LGPD.</p>`,
       },
       {
@@ -489,7 +489,7 @@ app.get('/terms-of-usage', (req, res) => {
         heading: '11. Contato',
         body: `
           <p>Para perguntas, solicitações ou notificações relacionadas a estes Termos, fale conosco por
-          <a href="mailto:contato@salesintel.0xcloud.net">contato@salesintel.0xcloud.net</a>.</p>`,
+          <a href="mailto:contato@b2base.net">contato@b2base.net</a>.</p>`,
       },
     ],
   });
@@ -2329,7 +2329,7 @@ async function start() {
     app.listen(PORT, () => {
       console.log('');
       console.log('╔════════════════════════════════════════════╗');
-      console.log('║  SalesIntel Platform - PRODUCTION MODE 🚀  ║');
+      console.log('║  B2Base Platform - PRODUCTION MODE 🚀  ║');
       console.log('╠════════════════════════════════════════════╣');
       console.log('║                                            ║');
       console.log('║  📊 Database: PostgreSQL (localhost:5432) ║');

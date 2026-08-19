@@ -72,7 +72,7 @@ async function fetchBrasilApiCnpj(cnpj) {
     const response = await fetch(`${BRASIL_API_BASE_URL}/${normalized}`, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'SalesIntel-Platform/1.0 (+https://localhost)',
+        'User-Agent': 'B2Base-Platform/1.0 (+https://localhost)',
         'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
       },
       signal: controller.signal,

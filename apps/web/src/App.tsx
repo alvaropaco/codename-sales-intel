@@ -110,7 +110,7 @@ export function App() {
   // Keep the public landing page's strong marketing SEO when unauthenticated;
   // only switch to per-route titles once the user enters the authenticated app.
   const LANDING_SEO = {
-    title: 'SalesIntel | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B',
+    title: 'B2Base | Inteligência de CNPJ, Prospecção, CRM e Pipeline B2B',
     description:
       'Plataforma B2B para descobrir e qualificar empresas via dados de CNPJ, organizar prospecção e CRM, gerir pipeline de vendas, avaliar risco e automatizar outreach por e-mail.',
     canonical: '/',
@@ -189,8 +189,8 @@ export function App() {
 
   useEffect(() => {
     const handleUnauthorized = () => setSession(null);
-    window.addEventListener('salesintel:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('salesintel:unauthorized', handleUnauthorized);
+    window.addEventListener('b2base:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('b2base:unauthorized', handleUnauthorized);
   }, []);
 
   const handleLogout = async () => {

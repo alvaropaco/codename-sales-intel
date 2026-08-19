@@ -49,7 +49,7 @@ async function generateOutreachMessage(prisma, { lead, seq = 1 }) {
   }
 
   const prompt = [
-    `Você é um assistente de vendas B2B do SalesIntel. Escreva um email frio em português brasileiro.`,
+    `Você é um assistente de vendas B2B do B2Base. Escreva um email frio em português brasileiro.`,
     ``,
     `DADOS DO PROSPECTO:`,
     `- Empresa: ${lead.companyName}${lead.tradeName ? ` (${lead.tradeName})` : ''}`,
@@ -65,7 +65,7 @@ async function generateOutreachMessage(prisma, { lead, seq = 1 }) {
     `{`,
     `  "subject": "Assunto curto (máx 60 caracteres)",`,
     `  "body": "Corpo em texto plano",`,
-    `  "htmlBody": "Corpo HTML com pixel de tracking: <img src=\"https://salesintel.com/t/o/{tracking-token}.gif\" width=\"1\" height=\"1\">",`,
+    `  "htmlBody": "Corpo HTML com pixel de tracking: <img src=\"https://b2base.net/t/o/{tracking-token}.gif\" width=\"1\" height=\"1\">",`,
     `  "reasoning_facts": ["fato1", "fato2"]`,
     `}`,
   ].join('\n');
@@ -118,9 +118,9 @@ async function generateOutreachMessage(prisma, { lead, seq = 1 }) {
  */
 function _templateFallback(lead, valueProp) {
   const vp = valueProp || 'encontrar e qualificar leads com mais eficiência';
-  const body = `Olá,\n\nEspero que esteja bem!\n\nConheço a ${lead.companyName} e sei que empresas do segmento ${lead.industry || 'de negócios'} costumam enfrentar desafios na identificação de oportunidades.\n\nNossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.\n\nGostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?\n\nAbs.,\nEquipe SalesIntel`;
+  const body = `Olá,\n\nEspero que esteja bem!\n\nConheço a ${lead.companyName} e sei que empresas do segmento ${lead.industry || 'de negócios'} costumam enfrentar desafios na identificação de oportunidades.\n\nNossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.\n\nGostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?\n\nAbs.,\nEquipe B2Base`;
 
-  const html = `<p>Olá,</p><p>Espero que esteja bem!</p><p>Conheço a <strong>${lead.companyName}</strong> e sei que empresas do segmento <em>${lead.industry || 'de negócios'}</em> costumam enfrentar desafios na identificação de oportunidades.</p><p>Nossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.</p><p>Gostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?</p><p>Abraços,<br/>Equipe SalesIntel</p><img src="https://salesintel.com/t/o/{tracking-token}.gif" width="1" height="1" alt="" />`;
+  const html = `<p>Olá,</p><p>Espero que esteja bem!</p><p>Conheço a <strong>${lead.companyName}</strong> e sei que empresas do segmento <em>${lead.industry || 'de negócios'}</em> costumam enfrentar desafios na identificação de oportunidades.</p><p>Nossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.</p><p>Gostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?</p><p>Abraços,<br/>Equipe B2Base</p><img src="https://b2base.net/t/o/{tracking-token}.gif" width="1" height="1" alt="" />`;
 
   return {
     subject: `Uma oportunidade para ${lead.companyName}`,

@@ -411,7 +411,7 @@ export function OnboardingModal({
               S
             </div>
             <div>
-              <p className="text-sm font-black leading-none text-slate-900 dark:text-white">SalesIntel</p>
+              <p className="text-sm font-black leading-none text-slate-900 dark:text-white">B2Base</p>
               <p className="mt-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400">Configuração da sua conta</p>
             </div>
           </div>

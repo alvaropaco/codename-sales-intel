@@ -27,7 +27,7 @@ async function initDatabase() {
       console.log('Creating default organization...');
       org = await prisma.organization.create({
         data: {
-          name: 'SalesIntel Demo',
+          name: 'B2Base Demo',
           cnpj: '00.000.000/0000-00'
         }
       });
@@ -74,7 +74,7 @@ app.get('/', async (req, res) => {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>SalesIntel Platform - Production</title>
+        <title>B2Base Platform - Production</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; }
@@ -107,7 +107,7 @@ app.get('/', async (req, res) => {
       <body>
         <div class="container">
           <header>
-            <h1>📊 SalesIntel Platform</h1>
+            <h1>📊 B2Base Platform</h1>
             <p class="subtitle">B2B SaaS for CNPJ Data Intelligence & Prospect Management</p>
             <span class="status-badge">✅ PRODUCTION MODE - Connected to PostgreSQL</span>
           </header>
@@ -384,7 +384,7 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`
 ╔════════════════════════════════════════════╗
-║  SalesIntel Platform - PRODUCTION MODE 🚀  ║
+║  B2Base Platform - PRODUCTION MODE 🚀  ║
 ╠════════════════════════════════════════════╣
 ║                                            ║
 ║  📊 Database: PostgreSQL (localhost:5432) ║

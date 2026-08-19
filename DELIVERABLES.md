@@ -1,4 +1,4 @@
-# SalesIntel Platform - Deliverables Summary
+# B2Base Platform - Deliverables Summary
 
 **Completed:** 2026-08-12  
 **Status:** ✅ PRODUCTION DEMO + MCP INTEGRATION READY
@@ -210,7 +210,7 @@ Configure in Claude or other MCP clients:
 ```json
 {
   "mcpServers": {
-    "salesintel": {
+    "b2base": {
       "command": "node",
       "args": ["/path/to/mcp-server.js"]
     }
@@ -281,7 +281,7 @@ Configure in Claude or other MCP clients:
 
 Integração com o pipeline `enrichment-worker` via NATS JetStream. Quando um lead
 entra na esteira de **"Em Qualificação"** (status `prospect`), o backend publica
-`enrichment.company.requested.v1` e um consumer durável (`salesintel-results`)
+`enrichment.company.requested.v1` e um consumer durável (`b2base-results`)
 persiste os resultados de forma idempotente (`companyId + enrichmentVersion`),
 ACK somente após persistir.
 

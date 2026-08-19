@@ -43,7 +43,7 @@ O fluxo OAuth do Firebase precisa de dois pontos de retorno, ambos implementados
    ID token para `POST /api/auth/session`.
 4. O backend valida o token com o Admin SDK e aplica a política de e-mail corporativo.
 5. Se aprovado, o usuário é gravado (upsert) no banco e o backend assina um JWT
-   salvo em cookie `httpOnly` (`salesintel_session`, 14 dias por padrão).
+   salvo em cookie `httpOnly` (`b2base_session`, 14 dias por padrão).
 6. Nas próximas visitas o cookie é enviado automaticamente e `GET /api/auth/session`
    resolve o usuário sem exigir novo login.
 
@@ -86,7 +86,7 @@ Com essa variável definida, **somente** esses domínios são aceitos.
 Status já verificado no projeto `shadowtrace-7199f`:
 
 - Providers **Google** e **GitHub** estão **habilitados** (Identity Toolkit).
-- O Web app **"SalesIntel Web"** foi criado e o config real está em
+- O Web app **"B2Base Web"** foi criado e o config real está em
   `apps/web/.env.local` (ignorado pelo git). O `apps/web/.env.example` documenta
   as mesmas chaves.
 
@@ -136,9 +136,9 @@ VITE_FIREBASE_PROJECT_ID=shadowtrace-7199f
 VITE_FIREBASE_API_KEY=AIza...
 VITE_FIREBASE_APP_ID=1:123456789:web:abc...
 # authDomain PÚBLICO: quando usar domínio próprio, aponte para ele
-# (ex.: salesintel.0xcloud.net) e cadastre a redirect URI
+# (ex.: b2base.net) e cadastre a redirect URI
 # https://SEU_DOMINIO/__/auth/handler no provedor OAuth.
-VITE_FIREBASE_AUTH_DOMAIN=salesintel.0xcloud.net
+VITE_FIREBASE_AUTH_DOMAIN=b2base.net
 VITE_FIREBASE_STORAGE_BUCKET=shadowtrace-7199f.appspot.com
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 ```

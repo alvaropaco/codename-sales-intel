@@ -1,16 +1,16 @@
 # ============================================================================
-# SalesIntel Platform - production container (Coolify-ready)
+# B2Base Platform - production container (Coolify-ready)
 #
-# Build:    docker build -t salesintel .
+# Build:    docker build -t b2base .
 # Runtime:  node server-prod.js  (serves React SPA + API on one port)
 #
 # Env (set these in Coolify, not in the image):
-#   DATABASE_URL       postgresql://user:pass@host:5432/db?schema=salesintel
-#                      IMPORTANT: use a dedicated schema (e.g. salesintel).
+#   DATABASE_URL       postgresql://user:pass@host:5432/db?schema=b2base
+#                      IMPORTANT: use a dedicated schema (e.g. b2base).
 #                      The boot runs `prisma migrate deploy`, which aborts with
 #                      P3005 if the target schema is not empty (e.g. reusing a
 #                      shared Postgres that already has tables). A dedicated
-#                      schema keeps SalesIntel tables isolated and lets migrate
+#                      schema keeps B2Base tables isolated and lets migrate
 #                      deploy run cleanly.
 #   PORT               3001
 #   NODE_ENV           production
@@ -42,7 +42,7 @@ ENV NODE_ENV=development
 # so these MUST be present during `pnpm --filter web build`. Unset/empty values
 # fall back to the defaults baked in apps/web/src/services/firebase.ts.
 # Coolify: set these in the Build section (not runtime). Plain docker:
-#   docker build --build-arg VITE_FIREBASE_AUTH_DOMAIN=salesintel.0xcloud.net .
+#   docker build --build-arg VITE_FIREBASE_AUTH_DOMAIN=b2base.net .
 ARG VITE_FIREBASE_AUTH_DOMAIN
 ARG VITE_FIREBASE_PROJECT_ID
 ARG VITE_FIREBASE_API_KEY

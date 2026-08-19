@@ -74,7 +74,7 @@ Adicione ao arquivo de configuração MCP:
 ```json
 {
   "mcpServers": {
-    "salesintel": {
+    "b2base": {
       "command": "node",
       "args": ["/Users/alvaropaco/salesintel-platform/mcp-server.js"],
       "env": {

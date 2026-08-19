@@ -29,8 +29,8 @@ echo ""
 echo "[TEST 2] Dashboard contains required page elements..."
 ELEMENTS=0
 
-if echo "$BODY" | grep -q "SalesIntel"; then
-  echo "✅ Title 'SalesIntel' found"
+if echo "$BODY" | grep -q "B2Base"; then
+  echo "✅ Title 'B2Base' found"
   ((ELEMENTS++))
 fi
 

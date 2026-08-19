@@ -118,7 +118,7 @@ export const CnpjEnrichmentView: React.FC = () => {
     ].join('\n');
     const link = document.createElement('a');
     link.href = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-    link.download = `salesintel_inteligencia_comercial_${Date.now()}.csv`;
+    link.download = `b2base_inteligencia_comercial_${Date.now()}.csv`;
     link.click();
   };
 
