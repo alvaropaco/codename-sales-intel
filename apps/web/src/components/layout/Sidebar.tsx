@@ -55,9 +55,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="sticky top-0 z-40 hidden h-screen w-72 shrink-0 border-r border-slate-200 bg-white/95 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/95 lg:flex lg:flex-col">
       <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5 dark:border-white/10">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/15 dark:bg-white dark:text-slate-950">
-            <Sparkles className="h-5 w-5" />
-          </div>
+          <img
+            src="/logo.svg"
+            alt="B2Base"
+            className="h-10 w-10 rounded-2xl object-cover shadow-lg shadow-slate-900/15"
+          />
           <div>
             <h1 className="text-base font-black tracking-tight text-slate-950 dark:text-white">B2Base</h1>
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Inteligência comercial</p>

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Sparkles,
   Search,
   Users,
   Kanban,
@@ -63,9 +62,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
       <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
           <div className="flex items-center gap-2 font-extrabold tracking-tight">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500 text-white">
-              <Sparkles className="h-5 w-5" />
-            </div>
+            <img src="/logo.svg" alt="B2Base" className="h-9 w-9 rounded-xl object-cover" />
             <span className="text-lg">B2Base</span>
           </div>
           <nav className="hidden items-center gap-6 text-sm text-slate-300 md:flex">
@@ -177,9 +174,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
       <footer className="border-t border-white/10 bg-slate-950 py-10">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2 font-extrabold">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-white">
-              <Sparkles className="h-4 w-4" />
-            </div>
+            <img src="/logo.svg" alt="B2Base" className="h-8 w-8 rounded-lg object-cover" />
             <span>B2Base</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-5 text-sm text-slate-400">

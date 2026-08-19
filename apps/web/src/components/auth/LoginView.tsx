@@ -5,7 +5,6 @@ import {
   Lock,
   Mail,
   Phone,
-  Sparkles,
 } from 'lucide-react';
 import {
   signInWithProvider,
@@ -164,10 +163,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialEr
       <div id="recaptcha-container" />
 
       <div className="relative w-full max-w-md">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-            <Sparkles className="h-7 w-7 text-indigo-400" />
-          </div>
+        <div className="mb-6 text-center">
+          <img
+            src="/logo.svg"
+            alt="B2Base"
+            className="mx-auto mb-5 h-20 w-20 rounded-3xl object-cover ring-1 ring-white/10"
+          />
           <h1 className="text-2xl font-black tracking-tight">B2Base Platform</h1>
           <p className="mt-2 text-sm text-slate-400">
             Entre com a conta corporativa da sua empresa para acessar o dashboard.
