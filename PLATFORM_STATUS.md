@@ -95,7 +95,7 @@ create_prospect           // Add new prospect to database
 ## 📁 Project Structure
 
 ```
-/Users/alvaropaco/salesintel-platform/
+/Volumes/OxAI/github/b2base-platform/
 ├── server-prod.js              # Express API server (running)
 ├── mcp-server.js               # MCP server (575 lines, ready)
 ├── docker-compose.yml          # PostgreSQL container config

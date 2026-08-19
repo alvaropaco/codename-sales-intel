@@ -103,7 +103,7 @@ POST /api/intelligence/credit-risk - Credit risk assessment
 
 ### Start the Server
 ```bash
-cd /Users/alvaropaco/salesintel-platform
+cd /Volumes/OxAI/github/b2base-platform
 node server-prod.js
 ```
 
@@ -135,7 +135,7 @@ curl http://localhost:3001/api/analytics/pipeline | jq '.'
 ## 📁 Project Structure
 
 ```
-/Users/alvaropaco/salesintel-platform/
+/Volumes/OxAI/github/b2base-platform/
 ├── server-prod.js           # Production Express server
 ├── .env                      # Database connection config
 ├── docker-compose.yml        # PostgreSQL container

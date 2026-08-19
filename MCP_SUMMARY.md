@@ -58,7 +58,7 @@
 ### Iniciar o MCP Server
 
 ```bash
-cd /Users/alvaropaco/salesintel-platform
+cd /Volumes/OxAI/github/b2base-platform
 node mcp-server.js
 ```
 
@@ -76,7 +76,7 @@ Adicione ao arquivo de configuração MCP:
   "mcpServers": {
     "b2base": {
       "command": "node",
-      "args": ["/Users/alvaropaco/salesintel-platform/mcp-server.js"],
+      "args": ["/Volumes/OxAI/github/b2base-platform/mcp-server.js"],
       "env": {
         "DATABASE_URL": "postgresql://cnpj:cnpj@localhost:5432/cnpj?schema=public"
       }
