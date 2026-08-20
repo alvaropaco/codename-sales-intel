@@ -605,6 +605,60 @@ async function assertCanCaptureLead(orgId) {
   }
 }
 
+// ============================================================================
+// E2E enforcement of trial "no export" — data-level redaction
+// ============================================================================
+// O botão "Baixar lista" gera CSV no browser a partir dos dados JÁ renderizados,
+// então esconder o botão não é proteção real (um trial técnico lê o DOM/network).
+// A garantia dura é não ENTREGAR os campos exportáveis (contato/firmografia) à
+// conta trial na resposta da API. Se o dado nunca chega ao browser, não há como
+// exportá-lo.
+//
+// Campos restritos no trial (contato + firmografia exportável). O CNPJ é mantido
+// de propósito: é o identificador público de inscrição usado pelo fluxo de
+// import ("adicionar lead") e é trivialmente recuperável pelo nome da empresa;
+// não é "dado de contato". O que é verdadeiramente sensível a exportação são os
+// contatos enriquecidos (e-mail, telefones, sócios) e a firmografia.
+//
+//   email, cnpjEmail, phones, cnpjPhones, partners, cnpjPartners,
+//   cnpjOpenedAt/openedAt, cnpjLegalNature/legalNature, cnpjRawData
+// Mantemos o resumo comercial (nome, segmento, cidade/UF, status, score, CNPJ)
+// para que o usuário veja a lead e possa importá-la.
+
+const PLAN_EXPORT_SENSITIVE_FIELDS = [
+  'cnpjEmail', 'email',
+  'cnpjPhones', 'phones',
+  'cnpjPartners', 'partners',
+  'cnpjOpenedAt', 'openedAt',
+  'cnpjLegalNature', 'legalNature',
+  'cnpjRawData',
+];
+
+/**
+ * Remove os campos exportáveis de um prospect/contato quando o plano é trial.
+ * Retorna sempre um objeto novo (não muta o original) e marca `dataRestricted`.
+ * No premium retorna o objeto como veio (nenhuma mudança).
+ */
+function redactProspectForPlan(prospect, plan) {
+  if (plan === 'premium' || prospect === null || typeof prospect !== 'object') {
+    return prospect;
+  }
+  const out = { ...prospect };
+  for (const field of PLAN_EXPORT_SENSITIVE_FIELDS) {
+    if (field in out) out[field] = null;
+  }
+  out.dataRestricted = true;
+  return out;
+}
+
+/**
+ * Aplica a redação a uma lista de prospects/contatos conforme o plano da org.
+ */
+function redactProspectListForPlan(list, plan) {
+  if (plan === 'premium' || !Array.isArray(list)) return list;
+  return list.map((item) => redactProspectForPlan(item, plan));
+}
+
 function asStringArray(value) {
   if (Array.isArray(value)) {
     return value.map((item) => String(item || '').trim()).filter(Boolean);
@@ -875,9 +929,12 @@ app.get('/api/prospects', async (req, res) => {
     if (process.env.DEBUG_DASHBOARD === 'true') {
       console.log('[dashboard-debug] GET /api/prospects -> count=', prospects.length, 'orgId=', orgId);
     }
+    // E2E: trial nunca recebe contato/firmografia (não há como exportar o que não chega ao browser).
+    const plan = await getOrgPlan(orgId);
+    const data = redactProspectListForPlan(prospects, plan);
     res.json({
       success: true,
-      data: prospects,
+      data,
       count: prospects.length,
       timestamp: new Date().toISOString()
     });
@@ -898,7 +955,8 @@ app.get('/api/prospects/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Prospect not found' });
     }
 
-    res.json({ success: true, data: prospect });
+    const plan = await getOrgPlan(orgId);
+    res.json({ success: true, data: redactProspectForPlan(prospect, plan) });
   } catch (error) {
     const status = error && error.status ? error.status : 500;
     res.status(status).json({ success: false, error: error.message });
@@ -919,6 +977,7 @@ app.post('/api/prospects', async (req, res) => {
 
     // Plano: garante que o trial ainda pode captar mais um lead antes do create.
     await assertCanCaptureLead(targetOrgId);
+    const plan = await getOrgPlan(targetOrgId);
 
     const prospect = await prisma.prospect.create({
       data: {
@@ -966,7 +1025,7 @@ app.post('/api/prospects', async (req, res) => {
 
     res.json({
       success: true,
-      data: enrichedProspect,
+      data: redactProspectForPlan(enrichedProspect, plan),
       enrichment: {
         status: enrichedProspect.enrichmentStatus,
         source: enrichedProspect.enrichmentSource,
@@ -989,6 +1048,7 @@ app.post('/api/prospects', async (req, res) => {
 app.post('/api/prospects/:id/enrich', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
+    const plan = await getOrgPlan(orgId);
     // Com NATS habilitado, encaminhamos para o pipeline de enriquecimento.
     if (natsEnrichment.isNatsEnabled()) {
       const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
@@ -1000,7 +1060,7 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
       });
       return res.json({
         success: true,
-        data: updated,
+        data: redactProspectForPlan(updated, plan),
         enrichment: { status: 'pending', source: 'nats.enrichment', error: null },
         eventId,
         timestamp: new Date().toISOString(),
@@ -1014,7 +1074,7 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
     const enriched = await enrichProspectWithCnpj(prisma, req.params.id);
     res.json({
       success: true,
-      data: enriched,
+      data: redactProspectForPlan(enriched, plan),
       enrichment: {
         status: enriched.enrichmentStatus,
         source: enriched.enrichmentSource,
@@ -1034,6 +1094,7 @@ app.put('/api/prospects/:id', async (req, res) => {
     const orgId = await requireRequestOrgId(req);
     const previous = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
     if (!previous) return res.status(404).json({ success: false, error: 'Prospect not found' });
+    const plan = await getOrgPlan(orgId);
 
     const prospect = await prisma.prospect.update({
       where: { id: req.params.id },
@@ -1061,7 +1122,7 @@ app.put('/api/prospects/:id', async (req, res) => {
       }
     }
 
-    res.json({ success: true, data: responseData });
+    res.json({ success: true, data: redactProspectForPlan(responseData, plan) });
   } catch (error) {
     if (error.code === 'P2025') {
       return res.status(404).json({ success: false, error: 'Prospect not found' });
@@ -1443,9 +1504,12 @@ app.get('/api/enrichment/contacts', async (req, res) => {
       orgId,
     });
 
+    const plan = await getOrgPlan(orgId);
+    const data = redactProspectListForPlan(contacts, plan);
+
     res.json({
       success: true,
-      data: contacts,
+      data,
       count: contacts.length,
       filters: {
         from: req.query.from || null,
@@ -1494,10 +1558,11 @@ app.post('/api/enrichment/extract', async (req, res) => {
       enriched.push(await enrichProspectWithCnpj(prisma, prospect));
     }
 
+    const plan = await getOrgPlan(orgId);
     res.json({
       success: true,
       processed: enriched.length,
-      data: enriched.map(formatEnrichedProspect),
+      data: redactProspectListForPlan(enriched.map(formatEnrichedProspect), plan),
       filters: { from: from || null, to: to || null, refresh: Boolean(refresh) },
       timestamp: new Date().toISOString()
     });
@@ -1786,9 +1851,13 @@ app.get('/api/discovery/candidates', async (req, res) => {
     const start = (page - 1) * pageSize;
     const data = pool.slice(start, start + pageSize);
 
+    // E2E: trial não recebe os contatos (email/telefones/sócios) dos candidatos.
+    const plan = await getOrgPlan(orgId);
+    const redactedData = redactProspectListForPlan(data, plan);
+
     res.json({
       success: true,
-      data,
+      data: redactedData,
       page,
       pageSize,
       total,
@@ -1835,13 +1904,14 @@ app.post('/api/discovery/import', async (req, res) => {
 
     const orgId = await requireRequestOrgId(req);
     const normalizedCnpj = String(cnpj).replace(/\D/g, '');
+    const plan = await getOrgPlan(orgId);
 
     // Verifica duplicidade DENTRO do org do usuário (não globalmente).
     let prospect = await prisma.prospect.findFirst({ where: { cnpj: normalizedCnpj, orgId } });
     if (prospect) {
       return res.json({
         success: true,
-        data: formatEnrichedProspect(prospect),
+        data: redactProspectForPlan(formatEnrichedProspect(prospect), plan),
         alreadyExists: true,
         timestamp: new Date().toISOString(),
       });
@@ -1893,7 +1963,7 @@ app.post('/api/discovery/import', async (req, res) => {
 
     res.json({
       success: true,
-      data: formatEnrichedProspect(enriched),
+      data: redactProspectForPlan(formatEnrichedProspect(enriched), plan),
       alreadyExists: false,
       enrichment: { status: enriched.enrichmentStatus, source: enriched.enrichmentSource },
       timestamp: new Date().toISOString(),
@@ -1912,12 +1982,13 @@ app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
     const orgId = await requireRequestOrgId(req);
     const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
     if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+    const plan = await getOrgPlan(orgId);
 
     const company = await getCompanyByCnpj(prospect.cnpj);
     if (!company) {
       return res.json({
         success: true,
-        data: prospect,
+        data: redactProspectForPlan(prospect, plan),
         enrichment: { status: 'unavailable', source: 'mcp.cnpj', error: 'Company not found in MCP-CNPJ' },
         timestamp: new Date().toISOString(),
       });
@@ -1941,7 +2012,7 @@ app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
 
     res.json({
       success: true,
-      data: formatEnrichedProspect(updated),
+      data: redactProspectForPlan(formatEnrichedProspect(updated), plan),
       enrichment: { status: 'enriched', source: 'mcp.cnpj' },
       timestamp: new Date().toISOString(),
     });
