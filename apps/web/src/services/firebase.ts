@@ -95,13 +95,13 @@ export async function signInWithGoogleRedirect(): Promise<void> {
 }
 
 /**
- * Preferred Google entrypoint: use the redirect flow (no popup, which is
- * more reliable across browsers and embeds). When the environment does not
- * support redirect sign-in, it falls back to a popup and returns the ID token.
- *
- * Returns null while a redirect is in progress (the browser is navigating away);
- * the session exchange happens on the next page load via
- * `getFirebaseRedirectResult()`.
+ * Preferred Google entrypoint. We try a POPUP first: it exchanges the ID token
+ * in-place (no full-page round trip), so the user is taken straight into the
+ * dashboard without depending on the OAuth redirect being picked up on the
+ * return page load. Popup can be blocked in a few cases (e.g. strict
+ * third-party restrictions/embed), in which case we fall back to the redirect
+ * flow (result is exchanged on the next page load via
+ * `getFirebaseRedirectResult()`).
  */
 export async function signInWithProvider(): Promise<string | null> {
   const auth = requireAuth();
@@ -109,12 +109,13 @@ export async function signInWithProvider(): Promise<string | null> {
   authProvider.setCustomParameters({ prompt: 'select_account' });
 
   try {
-    await signInWithRedirect(auth, authProvider);
-    return null;
+    const result = await signInWithPopup(auth, authProvider);
+    return result.user.getIdToken();
   } catch (err) {
-    if (getErrorCode(err) === 'auth/operation-not-supported-in-this-environment') {
-      const result = await signInWithPopup(auth, authProvider);
-      return result.user.getIdToken();
+    if (getErrorCode(err) === 'auth/popup-blocked' || getErrorCode(err) === 'auth/popup-closed-by-user') {
+      // Fall back to a full-page redirect; the result is exchanged on return.
+      await signInWithRedirect(auth, authProvider);
+      return null;
     }
     throw err;
   }
