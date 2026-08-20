@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { CommercialProfile, DiscoveredCompany, DiscoveryPage, Prospect } from '@/types';
 import { formatCNPJ } from '@/lib/utils';
+import { usePlan } from '@/hooks/usePlan';
 import {
   fetchDiscoveryCandidates,
   importDiscoveredCompany,
@@ -92,6 +93,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
   const [selectedLocation, setSelectedLocation] = useState('');
   const [locationInput, setLocationInput] = useState('');
+  const { canExport } = usePlan();
   const [isLocationFocused, setIsLocationFocused] = useState(false);
   const [selectedSituation, setSelectedSituation] = useState('active');
   const [selectedSize, setSelectedSize] = useState('all');
@@ -267,6 +269,10 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   }, [prospects, searchQuery, selectedAge, selectedIndustry, selectedLocation, selectedSituation, selectedSize, selectedStatus]);
 
   const handleExportList = () => {
+    if (!canExport) {
+      onOpenSettings();
+      return;
+    }
     const headers = ['Lead', 'Segmento', 'Colaboradores', 'Potencial', 'Momento comercial'];
     const rows = filteredProspects.map((p) => [
       `"${p.companyName}"`,
@@ -308,8 +314,17 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
           </Button>
 
           <Button onClick={handleExportList} variant="outline" size="sm" className="h-9 gap-1.5 text-xs font-semibold border-slate-200 dark:border-border text-slate-700 dark:text-foreground hover:bg-slate-50 dark:hover:bg-accent">
-            <Download className="h-3.5 w-3.5" />
-            Baixar lista
+            {canExport ? (
+              <>
+                <Download className="h-3.5 w-3.5" />
+                Baixar lista
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+                Exportar (Premium)
+              </>
+            )}
           </Button>
         </div>
       </div>

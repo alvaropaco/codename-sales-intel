@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { EnrichedCnpjContact } from '@/types';
 import { extractCnpjContacts, fetchEnrichedCnpjContacts } from '@/services/api';
 import { cn, formatCNPJ, whatsappLink } from '@/lib/utils';
+import { usePlan } from '@/hooks/usePlan';
 
 const statusVariant: Record<string, 'qualified' | 'prospect' | 'lead' | 'destructive' | 'outline'> = {
   enriched: 'qualified',
@@ -47,6 +48,7 @@ export const CnpjEnrichmentView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { canExport } = usePlan();
 
   const loadContacts = async () => {
     setIsLoading(true);
@@ -95,6 +97,10 @@ export const CnpjEnrichmentView: React.FC = () => {
   const totalPhones = filtered.reduce((sum, item) => sum + item.phones.length, 0);
 
   const handleExport = () => {
+    if (!canExport) {
+      window.location.href = '/settings?plan=upgrade';
+      return;
+    }
     const rows = filtered.map((item) => ({
       cnpj: item.cnpj,
       companyName: item.companyName,
@@ -143,7 +149,11 @@ export const CnpjEnrichmentView: React.FC = () => {
               {isExtracting ? 'Atualizando...' : 'Atualizar informações'}
             </Button>
             <Button onClick={handleExport} variant="outline" className="h-11 gap-2 rounded-xl" disabled={!filtered.length}>
-              <Download className="h-4 w-4" /> Baixar lista
+              {canExport ? (
+                <><Download className="h-4 w-4" /> Baixar lista</>
+              ) : (
+                <><Sparkles className="h-4 w-4" /> Exportar (Premium)</>
+              )}
             </Button>
           </div>
         </div>
