@@ -40,7 +40,6 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'prospects', label: 'Descobrir leads', badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
     { id: 'pipeline', label: 'Pipeline de vendas', badge: 'Ao vivo' },
     { id: 'risk', label: 'Risco e potencial' },
-    { id: 'workflows', label: 'Ações automáticas' },
     { id: 'enrichment', label: 'Inteligência comercial' },
     { id: 'outreach', label: 'Outreach' },
   ];

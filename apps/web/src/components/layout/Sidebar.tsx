@@ -1,12 +1,10 @@
 import React from 'react';
 import {
-  BarChart3,
   Building2,
   ChevronDown,
   CreditCard,
   Kanban,
   LayoutDashboard,
-  LifeBuoy,
   Moon,
   Network,
   Send,
@@ -14,11 +12,9 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
-  Workflow,
 } from 'lucide-react';
 import { ActiveTab } from '@/types';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -40,15 +36,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'prospects' as ActiveTab, label: 'Descobrir leads', icon: Building2, badge: totalProspectsCount > 0 ? `${totalProspectsCount}` : null },
     { id: 'pipeline' as ActiveTab, label: 'Pipeline de vendas', icon: Kanban, badge: 'Ao vivo' },
     { id: 'risk' as ActiveTab, label: 'Risco e potencial', icon: ShieldCheck, badge: null },
-    { id: 'workflows' as ActiveTab, label: 'Ações automáticas', icon: Workflow, badge: null },
     { id: 'enrichment' as ActiveTab, label: 'Inteligência comercial', icon: Network, badge: null },
     { id: 'outreach' as ActiveTab, label: 'Outreach', icon: Send, badge: null },
   ];
 
   const appItems = [
-    { label: 'Receita e metas', icon: BarChart3 },
     { label: 'Potencial de compra', icon: CreditCard },
-    { label: 'Ajuda ao vendedor', icon: LifeBuoy },
   ];
 
   return (
@@ -65,9 +58,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Inteligência comercial</p>
           </div>
         </div>
-        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] font-black text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
-          PROD
-        </Badge>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
