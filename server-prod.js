@@ -2571,7 +2571,7 @@ async function start() {
       console.log(`║  🌐 Dashboard: http://localhost:${PORT}          ║`);
       console.log('║                                            ║');
       console.log(`║  📡 NATS enrichment: ${natsEnrichment.isNatsEnabled() ? 'ON' : 'OFF'}        ║`);
-      console.log('║  🔐 Firebase auth: Google + GitHub (corporate only)     ║');
+      console.log('║  🔐 Firebase auth: Google + email + phone              ║');
       console.log('║  📧 Outreach (Gmail): configured           ║');
       console.log('║  ✅ Real data from database (no mock!)     ║');
       console.log('║  ✅ All CRUD operations supported          ║');

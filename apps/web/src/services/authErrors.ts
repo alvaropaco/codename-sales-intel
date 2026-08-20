@@ -31,6 +31,14 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
     'Este método de login não é compatível com o seu navegador. Tente outro navegador ou use e-mail e senha.',
   'auth/operation-not-allowed':
     'Este método de login não está habilitado. Entre em contato com o administrador.',
+
+  // Telefone: o provider existe mas o envio de SMS não está habilitado para a
+  // região. O SDK web retorna auth/operation-not-allowed; o Identity Toolkit
+  // RPC retorna OPERATION_NOT_ALLOWED com a mensagem de região abaixo.
+  'OPERATION_NOT_ALLOWED':
+    'O envio de SMS ainda não está habilitado para sua região. Entre em contato com o administrador.',
+  'auth/sms-region-not-enabled':
+    'O envio de SMS ainda não está habilitado para sua região. Entre em contato com o administrador.',
   'auth/unauthorized-domain':
     'Este endereço não está autorizado para o login. Verifique os domínios autorizados no Firebase.',
   'auth/unauthorized-continue-uri':
@@ -94,6 +102,9 @@ export function getAuthErrorMessage(
       }
       if (/network|fetch|offline|internet/i.test(message)) {
         return AUTH_ERROR_MESSAGES['auth/network-request-failed'];
+      }
+      if (/region enabled|sms unable|operation_not_allowed/i.test(message)) {
+        return AUTH_ERROR_MESSAGES['OPERATION_NOT_ALLOWED'];
       }
     }
   }

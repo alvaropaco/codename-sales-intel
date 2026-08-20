@@ -1,6 +1,6 @@
 # Firebase Authentication
 
-Autenticação com **Google**, **GitHub**, **e-mail/senha** e **telefone**. E-mail é
+Autenticação com **Google**, **e-mail/senha** e **telefone**. E-mail é
 restrito a domínios corporativos; telefone é confirmado via código SMS. Sessão
 persistente por cookie httpOnly.
 
@@ -8,7 +8,7 @@ persistente por cookie httpOnly.
 
 | Método | Regra |
 |--------|-------|
-| Google / GitHub | E-mail corporativo obrigatório (e-mail verificado pelo provedor) |
+| Google | E-mail corporativo obrigatório (e-mail verificado pelo provedor) |
 | E-mail e senha | E-mail corporativo obrigatório + e-mail verificado (enviamos link de verificação) |
 | Telefone | Código SMS; sem e-mail, armazenamos o telefone como identificador |
 
@@ -18,10 +18,10 @@ persistente por cookie httpOnly.
 |--------|---------|-------|
 | Backend | `firebase-auth.js` | Verifica ID tokens (Admin SDK), bloqueia e-mails gratuitos, emite cookie de sessão assinado (JWT) e protege as rotas |
 | Backend | `server-prod.js` | Registra `POST/GET /api/auth/session`, `POST /api/auth/logout` e o middleware `requireAuth` em `/api/*` |
-| Frontend | `apps/web/src/services/firebase.ts` | SDK web do Firebase (redirect Google/GitHub com fallback para popup) |
+| Frontend | `apps/web/src/services/firebase.ts` | SDK web do Firebase (redirect Google com fallback para popup) |
 | Frontend | `apps/web/src/services/auth.ts` | Troca o ID token por sessão, resolve a sessão atual e faz logout |
 | Frontend | `apps/web/src/services/authErrors.ts` | Traduz códigos de erro técnicos do Firebase/backend em mensagens amigáveis |
-| Frontend | `apps/web/src/components/auth/LoginView.tsx` | Tela de login (Google/GitHub) |
+| Frontend | `apps/web/src/components/auth/LoginView.tsx` | Tela de login (Google, e-mail/senha, telefone) |
 | Frontend | `apps/web/src/App.tsx` | Gate de autenticação e processamento do callback de redirect do Firebase |
 | Frontend | `apps/web/src/services/authGuard.ts` | Detecta 401 em chamadas protegidas e volta ao login |
 
@@ -36,7 +36,7 @@ O fluxo OAuth do Firebase precisa de dois pontos de retorno, ambos implementados
 
 ## Fluxo
 
-1. O usuário clica em **Continuar com Google/GitHub**.
+1. O usuário clica em **Continuar com Google**.
 2. O SDK web redireciona a página para o provedor (fallback para popup quando o
    navegador não suporta redirect).
 3. Ao voltar, o `App` processa o callback (`getRedirectResult`) e envia o Firebase
@@ -83,12 +83,17 @@ Com essa variável definida, **somente** esses domínios são aceitos.
 
 ## Configuração no Firebase Console
 
-Status já verificado no projeto `shadowtrace-7199f`:
+Status já verificado no projeto `b2base`:
 
-- Providers **Google** e **GitHub** estão **habilitados** (Identity Toolkit).
-- O Web app **"B2Base Web"** foi criado e o config real está em
-  `apps/web/.env.local` (ignorado pelo git). O `apps/web/.env.example` documenta
-  as mesmas chaves.
+- Provider **Google** está **habilitado** (Identity Toolkit).
+- Provider **E-mail/senha** está **habilitado**.
+- Provider **Telefone** está **habilitado**, mas o **envio de SMS precisa ser
+  habilitado para a região** em *Authentication → Settings → Phone → SMS regions
+  policy* (sem isso, o login por telefone retorna
+  `OPERATION_NOT_ALLOWED : SMS unable to be sent until this region enabled`).
+- O Web app **"B2Base Web"** foi criado e o config real está embutido em
+  `apps/web/src/services/firebase.ts` (valores públicos como padrões;
+  `VITE_FIREBASE_*` sobrescreve quando definido).
 
 A service account (`firebase-adminsdk`) só permite ao backend **verificar** tokens.
 O `apiKey`/`appId` do Web app são públicos (vão no bundle) e foram obtidos via
@@ -96,9 +101,11 @@ Firebase Management API a partir da própria service account.
 
 Se precisar recriar em outro projeto:
 
-1. Acesse <https://console.firebase.google.com/project/shadowtrace-7199f>.
-2. **Authentication → Sign-in method** e habilite **Google** e **GitHub**.
-   - GitHub exige registrar um OAuth App e informar Client ID/Secret na página do provedor.
+1. Acesse <https://console.firebase.google.com/project/b2base>.
+2. **Authentication → Sign-in method** e habilite **Google**, **E-mail/senha**
+   e **Telefone**.
+   - Para o login por telefone, habilite também a região de envio de SMS em
+     **Authentication → Settings → Phone**.
 3. **Authentication → Settings → Authorized domains**: adicione os domínios que
    servirão o app (ex.: `localhost`, `seudominio.com`).
 4. **Project settings → General → Your apps** → crie/abra um **Web app** e copie:
@@ -106,9 +113,10 @@ Se precisar recriar em outro projeto:
    - `appId` → `VITE_FIREBASE_APP_ID`
    - (opcional) `messagingSenderId` → `VITE_FIREBASE_MESSAGING_SENDER_ID`
 
-   Preencha `apps/web/.env.local` (copie de `apps/web/.env.example`).
+   Preencha `apps/web/.env.local` (copie de `apps/web/.env.example`) ou ajuste os
+   padrões em `apps/web/src/services/firebase.ts`.
 
-> `projectId` (`shadowtrace-7199f`), `authDomain` e `storageBucket` já têm padrões
+> `projectId` (`b2base`), `authDomain` e `storageBucket` já têm padrões
 > derivados e normalmente não precisam ser alterados.
 
 ## Variáveis de ambiente
@@ -116,7 +124,7 @@ Se precisar recriar em outro projeto:
 ### Backend (`.env.local`)
 
 ```env
-FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/para/shadowtrace-....json
+FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/para/b2base-adminsdk.json
 # ou FIREBASE_SERVICE_ACCOUNT_JSON='{...}' (para Coolify/Render/containers)
 
 SESSION_SECRET=valor_aleatorio_de_no_minimo_32_caracteres
@@ -125,21 +133,21 @@ SESSION_COOKIE_SECURE=false   # true quando servir via HTTPS
 # (opcional) origem para onde o proxy de /__/auth/* repassa os callbacks.
 # Padrão: <FIREBASE_PROJECT_ID>.firebaseapp.com. Só mude se o handler estiver
 # em um domínio customizado conectado ao Firebase Hosting.
-FIREBASE_AUTH_HANDLER_ORIGIN=shadowtrace-7199f.firebaseapp.com
+FIREBASE_AUTH_HANDLER_ORIGIN=b2base.firebaseapp.com
 # AUTH_ALLOWED_DOMAINS=meudominio.com.br
 ```
 
 ### Frontend (`apps/web/.env.local`)
 
 ```env
-VITE_FIREBASE_PROJECT_ID=shadowtrace-7199f
+VITE_FIREBASE_PROJECT_ID=b2base
 VITE_FIREBASE_API_KEY=AIza...
 VITE_FIREBASE_APP_ID=1:123456789:web:abc...
 # authDomain PÚBLICO: quando usar domínio próprio, aponte para ele
 # (ex.: b2base.net) e cadastre a redirect URI
 # https://SEU_DOMINIO/__/auth/handler no provedor OAuth.
 VITE_FIREBASE_AUTH_DOMAIN=b2base.net
-VITE_FIREBASE_STORAGE_BUCKET=shadowtrace-7199f.appspot.com
+VITE_FIREBASE_STORAGE_BUCKET=b2base.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 ```
 
