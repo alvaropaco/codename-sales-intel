@@ -29,7 +29,7 @@ const { parse: parseCookie, serialize: serializeCookie } = require('cookie');
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'b2base_session';
 const SESSION_TTL_HOURS = Math.max(1, Number(process.env.SESSION_TTL_HOURS) || 336);
 const SESSION_TTL_SECONDS = SESSION_TTL_HOURS * 60 * 60;
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'shadowtrace-7199f';
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'b2base';
 
 /**
  * Origin of the real Firebase Auth handler. When the Web SDK's `authDomain`
@@ -455,7 +455,7 @@ async function upsertUserFromDecodedToken(prisma, decodedToken) {
 
   // Phone sign-in has no email. Store a synthetic, unique email so the existing
   // `email @unique` column keeps working; the real identifier is `phone`.
-  const email = emailFromToken || (phone ? `phone-${decodedToken.uid}@shadowtrace.local` : '');
+  const email = emailFromToken || (phone ? `phone-${decodedToken.uid}@b2base.local` : '');
 
   if (!email) {
     throw new Error('Não foi possível identificar um e-mail ou telefone no token.');

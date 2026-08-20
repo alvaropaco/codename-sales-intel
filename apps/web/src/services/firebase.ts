@@ -19,18 +19,18 @@ const env = import.meta.env;
 
 /**
  * Firebase Web SDK config is PUBLIC (it ships in the JS bundle) and is not a
- * secret. We bake the shadowtrace-7199f values as defaults so the app is
- * configured in every environment (dev, prod, Docker/Coolify) without extra
- * env setup. VITE_FIREBASE_* still wins when set, e.g. to point at another
- * Firebase project.
+ * secret. We bake the b2base values as defaults so the app is configured in
+ * every environment (dev, prod, Docker/Coolify) without extra env setup.
+ * VITE_FIREBASE_* still wins when set, e.g. to point at another Firebase
+ * project.
  */
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyB1hzBHuiSVolIX5q7_gbpJbdGJd60L7lQ',
-  authDomain: 'shadowtrace-7199f.firebaseapp.com',
-  projectId: 'shadowtrace-7199f',
-  storageBucket: 'shadowtrace-7199f.firebasestorage.app',
-  messagingSenderId: '421752671625',
-  appId: '1:421752671625:web:c3ed13421447db68fe2558',
+  apiKey: 'AIzaSyD8gSKEI3TmTo34qDDk9jIpiDuK8aAVbfM',
+  authDomain: 'b2base.firebaseapp.com',
+  projectId: 'b2base',
+  storageBucket: 'b2base.firebasestorage.app',
+  messagingSenderId: '64540157690',
+  appId: '1:64540157690:web:aa95c8745ffdc385060b43',
 };
 
 function pick(name: string, fallback: string): string {
