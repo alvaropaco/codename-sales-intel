@@ -1,5 +1,16 @@
 export type ProspectStatus = 'qualified' | 'prospect' | 'lead' | 'contacted' | 'proposal' | 'closed';
 
+export type PlanType = 'trial' | 'premium';
+
+export interface PlanInfo {
+  plan: PlanType;
+  canExport: boolean;
+  leadLimit: number | null;
+  leadCount: number;
+  leadsRemaining: number | null;
+  atLeadLimit: boolean;
+}
+
 export interface EnrichmentSummary {
   domain?: string | null;
   website_active?: boolean | null;

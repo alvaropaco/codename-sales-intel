@@ -9,6 +9,7 @@ export interface SessionUser {
   phone?: string | null;
   role: string;
   orgId: string;
+  plan?: 'trial' | 'premium';
 }
 
 /**

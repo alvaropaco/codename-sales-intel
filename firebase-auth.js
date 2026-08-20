@@ -498,7 +498,20 @@ async function upsertUserFromDecodedToken(prisma, decodedToken) {
   });
 }
 
-function serializeUser(user) {
+async function serializeUser(user) {
+  // Inclui o plano da Organization (trial | premium) para a UI sem um round-trip
+  // extra. Resolve com tolerância: se a consulta falhar, assume "trial".
+  let plan = 'trial';
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: user.orgId },
+      select: { plan: true },
+    });
+    if (org && org.plan) plan = org.plan === 'premium' ? 'premium' : 'trial';
+  } catch (_err) {
+    // Mantém o fallback "trial".
+  }
+
   return {
     uid: user.id,
     email: user.email,
@@ -506,6 +519,7 @@ function serializeUser(user) {
     phone: user.phone ?? null,
     role: user.role,
     orgId: user.orgId,
+    plan,
   };
 }
 
@@ -563,7 +577,7 @@ async function loginWithIdToken(prisma, idToken) {
 
   const user = await upsertUserFromDecodedToken(prisma, decoded);
   const token = createSessionToken(user);
-  return { token, user: serializeUser(user) };
+  return { token, user: await serializeUser(user) };
 }
 
 function createAuthRouter(prisma) {
@@ -628,7 +642,7 @@ function createAuthRouter(prisma) {
       res.json({
         success: true,
         authenticated: true,
-        data: serializeUser(user),
+        data: await serializeUser(user),
         timestamp: new Date().toISOString(),
       });
     } catch (_err) {

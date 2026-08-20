@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Clock3, Compass, Settings, Sparkles, Mail, ExternalLink, Inbox } from 'lucide-react';
+import { CheckCircle2, Clock3, Compass, Settings, Sparkles, Mail, ExternalLink, Inbox, Crown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { CommercialProfile, EmailAccount } from '@/types';
+import { CommercialProfile, EmailAccount, PlanInfo } from '@/types';
 import { CommercialProfileForm } from '@/components/settings/CommercialProfileForm';
-import { fetchGmailAuthUrl, fetchGmailAccounts, disconnectGmailAccount } from '@/services/api';
+import { fetchGmailAuthUrl, fetchGmailAccounts, disconnectGmailAccount, fetchPlan, upgradeToPremium } from '@/services/api';
 
 export function SettingsView({
   profile,
@@ -23,6 +23,19 @@ export function SettingsView({
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [gmailNotice, setGmailNotice] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [plan, setPlan] = useState<PlanInfo | null>(null);
+  const [planLoading, setPlanLoading] = useState(true);
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
+
+  const loadPlan = async () => {
+    try {
+      setPlan(await fetchPlan());
+    } catch {
+      setPlan(null);
+    } finally {
+      setPlanLoading(false);
+    }
+  };
 
   const loadAccounts = async () => {
     setAccounts(await fetchGmailAccounts());
@@ -30,13 +43,29 @@ export function SettingsView({
 
   useEffect(() => {
     loadAccounts();
+    void loadPlan();
     const params = new URLSearchParams(window.location.search);
     if (params.get('gmail_connected')) {
       setGmailNotice(`Gmail conectado: ${params.get('gmail_connected')}`);
     } else if (params.get('gmail_error')) {
       setGmailNotice('Não foi possível conectar a conta do Gmail.');
+    } else if (params.get('plan') === 'upgrade') {
+      setPlanNotice('Faça o upgrade para liberar leads ilimitados e exportação de dados.');
     }
   }, []);
+
+  const handleUpgrade = async () => {
+    setPlanLoading(true);
+    setPlanNotice(null);
+    try {
+      setPlan(await upgradeToPremium());
+      setPlanNotice('Plano Premium ativado! Leads ilimitados e exportação liberados.');
+    } catch (err) {
+      setPlanNotice(err instanceof Error ? err.message : 'Erro ao fazer upgrade');
+    } finally {
+      setPlanLoading(false);
+    }
+  };
 
   const connectedAccounts = accounts.filter((a) => a.status === 'connected');
 
@@ -78,6 +107,71 @@ export function SettingsView({
           </Badge>
         </div>
       </section>
+
+      {/* Plano / assinatura (trial | premium) */}
+      <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-amber-500/10 p-2 text-amber-500">
+                <Crown className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-bold">Plano</CardTitle>
+                <CardDescription>Seu plano de assinatura e limites de uso</CardDescription>
+              </div>
+            </div>
+            {!planLoading && plan && plan.plan === 'premium' && (
+              <Badge variant="qualified" className="rounded-full px-4 py-1 text-xs font-black">
+                Premium
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {planNotice && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300">
+              {planNotice}
+            </div>
+          )}
+
+          {planLoading ? (
+            <p className="text-sm text-slate-500">Carregando plano...</p>
+          ) : plan ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Plano atual</p>
+                <p className="mt-1 text-lg font-black capitalize text-slate-950 dark:text-white">{plan.plan}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Leads captados</p>
+                <p className="mt-1 text-lg font-black text-slate-950 dark:text-white">
+                  {plan.leadLimit === null ? `${plan.leadCount} (ilimitado)` : `${plan.leadCount} / ${plan.leadLimit}`}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Exportação de dados</p>
+                <p className="mt-1 text-lg font-black text-slate-950 dark:text-white">
+                  {plan.canExport ? 'Liberada' : 'Bloqueada'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">Não foi possível carregar o plano.</p>
+          )}
+
+          {!planLoading && plan && plan.plan === 'trial' && (
+            <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/20 dark:bg-amber-500/10 sm:flex-row sm:items-center">
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                No plano Trial você pode captar até {plan.leadLimit} leads e não pode exportar dados. Faça o upgrade para liberar tudo.
+              </p>
+              <Button variant="gradient" size="sm" onClick={handleUpgrade} disabled={planLoading} className="gap-2">
+                <Crown className="h-4 w-4" /> Fazer upgrade
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">

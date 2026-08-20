@@ -547,6 +547,64 @@ async function requireRequestOrgId(req) {
   return orgId;
 }
 
+// ============================================================================
+// PLANOS DE ASSINATURA (trial | premium)
+// ============================================================================
+// Toda conta começa em "trial". O plano é por Organization.
+//  - Trial: máximo de 10 leads captados, sem exportação de dados.
+//  - Premium: acesso completo (sem esses limites).
+
+const PLAN_TRIAL_LEAD_LIMIT = 10;
+
+const PLANS = {
+  trial: { canExport: false, leadLimit: PLAN_TRIAL_LEAD_LIMIT },
+  premium: { canExport: true, leadLimit: null },
+};
+
+function normalizePlan(value) {
+  return value === 'premium' ? 'premium' : 'trial';
+}
+
+// Retorna o plano normalizado de uma Organization (ou null se não existir).
+async function getOrgPlan(orgId) {
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { plan: true },
+  });
+  return org ? normalizePlan(org.plan) : 'trial';
+}
+
+function planLimits(plan) {
+  return PLANS[normalizePlan(plan)] || PLANS.trial;
+}
+
+// Conta os leads (prospects) já captados para a Organization.
+async function countOrgLeads(orgId) {
+  return prisma.prospect.count({ where: { orgId } });
+}
+
+/**
+ * Garante que a Organization ainda pode captar um novo lead.
+ * Lança erro 403 (com code PLAN_LIMIT_REACHED) quando o plano trial já atingiu
+ * o teto de leads. É chamado ANTES de qualquer criação de prospect.
+ */
+async function assertCanCaptureLead(orgId) {
+  const plan = await getOrgPlan(orgId);
+  const { leadLimit } = planLimits(plan);
+  if (leadLimit !== null) {
+    const count = await countOrgLeads(orgId);
+    if (count >= leadLimit) {
+      const err = new Error(
+        `Limite do plano Trial atingido: você pode captar até ${leadLimit} leads. ` +
+          'Faça upgrade para o plano Premium para captar leads ilimitados.'
+      );
+      err.status = 403;
+      err.code = 'PLAN_LIMIT_REACHED';
+      throw err;
+    }
+  }
+}
+
 function asStringArray(value) {
   if (Array.isArray(value)) {
     return value.map((item) => String(item || '').trim()).filter(Boolean);
@@ -681,6 +739,100 @@ app.put('/api/settings/commercial-profile', async (req, res) => {
   }
 });
 
+// ============================================================================
+// PLANOS DE ASSINATURA — endpoints
+// ============================================================================
+
+// GET /api/plan - plano atual da Organization (trial | premium) + limites e uso.
+app.get('/api/plan', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const plan = await getOrgPlan(orgId);
+    const { canExport, leadLimit } = planLimits(plan);
+    const leadCount = await countOrgLeads(orgId);
+    res.json({
+      success: true,
+      data: {
+        plan,
+        canExport,
+        leadLimit,
+        leadCount,
+        leadsRemaining: leadLimit === null ? null : Math.max(0, leadLimit - leadCount),
+        atLeadLimit: leadLimit !== null && leadCount >= leadLimit,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/plan/upgrade - promove a Organization para "premium".
+// (Placeholder de pagamento: em produção integrar com um PSP/checkout real.)
+app.post('/api/plan/upgrade', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    await prisma.organization.update({
+      where: { id: orgId },
+      data: { plan: 'premium' },
+    });
+    const leadCount = await countOrgLeads(orgId);
+    res.json({
+      success: true,
+      data: { plan: 'premium', canExport: true, leadLimit: null, leadCount, leadsRemaining: null, atLeadLimit: false },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/prospects/export - CSV dos prospects (somente plano premium).
+app.get('/api/prospects/export', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const plan = await getOrgPlan(orgId);
+    const { canExport } = planLimits(plan);
+    if (!canExport) {
+      return res.status(403).json({
+        success: false,
+        error: 'A exportação de dados está disponível apenas no plano Premium.',
+        code: 'EXPORT_NOT_ALLOWED',
+      });
+    }
+
+    const prospects = await prisma.prospect.findMany({
+      where: { orgId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const header = ['cnpj', 'companyName', 'tradeName', 'status', 'industry', 'city', 'state', 'cnpjEmail', 'employees', 'revenueEstimate', 'opportunityScore', 'createdAt'];
+    const escapeCsv = (value) => {
+      const str = value === null || value === undefined ? '' : String(value);
+      if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+      return str;
+    };
+    const lines = [
+      header.join(','),
+      ...prospects.map((p) =>
+        header
+          .map((key) => {
+            let v = p[key];
+            if (v instanceof Date) v = v.toISOString();
+            return escapeCsv(v);
+          })
+          .join(',')
+      ),
+    ];
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="prospects.csv"');
+    res.send('\uFEFF' + lines.join('\n'));
+  } catch (error) {
+    res.status(error.status || 500).json({ success: false, error: error.message });
+  }
+});
+
 // GET /api/prospects - Get all prospects (escopado pelo usuário autenticado)
 app.get('/api/prospects', async (req, res) => {
   try {
@@ -765,6 +917,9 @@ app.post('/api/prospects', async (req, res) => {
     // Sempre associa o prospect ao orgId do usuário autenticado.
     const targetOrgId = await requireRequestOrgId(req);
 
+    // Plano: garante que o trial ainda pode captar mais um lead antes do create.
+    await assertCanCaptureLead(targetOrgId);
+
     const prospect = await prisma.prospect.create({
       data: {
         cnpj,
@@ -822,6 +977,9 @@ app.post('/api/prospects', async (req, res) => {
   } catch (error) {
     if (error.code === 'P2002') {
       return res.status(400).json({ success: false, error: 'CNPJ already exists' });
+    }
+    if (error.code === 'PLAN_LIMIT_REACHED' || error.status === 403) {
+      return res.status(403).json({ success: false, error: error.message, code: 'PLAN_LIMIT_REACHED' });
     }
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1689,6 +1847,9 @@ app.post('/api/discovery/import', async (req, res) => {
       });
     }
 
+    // Plano: garante que o trial ainda pode captar mais um lead antes do create.
+    await assertCanCaptureLead(orgId);
+
     prospect = await prisma.prospect.create({
       data: {
         cnpj: normalizedCnpj,
@@ -1738,6 +1899,9 @@ app.post('/api/discovery/import', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (error.code === 'PLAN_LIMIT_REACHED' || error.status === 403) {
+      return res.status(403).json({ success: false, error: error.message, code: 'PLAN_LIMIT_REACHED' });
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });

@@ -11,6 +11,7 @@ import {
   DiscoveredCompany,
   DiscoveryCriteria,
   DiscoveryPage,
+  PlanInfo,
   CompanyGraph,
   EmailAccount,
   OutreachCampaign,
@@ -34,6 +35,46 @@ export async function fetchProspects(): Promise<Prospect[]> {
   }
 }
 
+// ── Planos de assinatura (trial | premium) ──────────────────────────────────
+
+export async function fetchPlan(): Promise<PlanInfo> {
+  const res = await fetch(`${API_BASE}/plan`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar o plano');
+  }
+  return json.data;
+}
+
+export async function upgradeToPremium(): Promise<PlanInfo> {
+  const res = await fetch(`${API_BASE}/plan/upgrade`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao fazer upgrade do plano');
+  }
+  return json.data;
+}
+
+export async function exportProspectsCsv(): Promise<void> {
+  const res = await fetch(`${API_BASE}/prospects/export`);
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(json.error || 'Erro ao exportar prospects');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'prospects.csv';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export async function createProspect(data: {
   cnpj: string;
   companyName: string;
@@ -49,7 +90,9 @@ export async function createProspect(data: {
   });
   const json = await res.json();
   if (!res.ok || !json.success) {
-    throw new Error(json.error || 'Erro ao criar prospecto');
+    const error = new Error(json.error || 'Erro ao criar prospecto');
+    (error as Error & { code?: string }).code = json.code;
+    throw error;
   }
   return json.data;
 }
@@ -348,7 +391,9 @@ export async function importDiscoveredCompany(data: {
   });
   const json = await res.json();
   if (!res.ok || !json.success) {
-    throw new Error(json.error || 'Erro ao importar lead');
+    const error = new Error(json.error || 'Erro ao importar lead');
+    (error as Error & { code?: string }).code = json.code;
+    throw error;
   }
   return { prospect: json.data, alreadyExists: json.alreadyExists || false };
 }

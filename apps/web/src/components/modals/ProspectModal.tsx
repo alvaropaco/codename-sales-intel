@@ -24,6 +24,7 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
   const [revenueEstimate, setRevenueEstimate] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [planLimitError, setPlanLimitError] = useState(false);
 
   if (!isOpen) return null;
 
@@ -31,9 +32,11 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
     e.preventDefault();
     if (!cnpj || !companyName) {
       setError('Por favor preencha o CNPJ e o nome do lead.');
+      setPlanLimitError(false);
       return;
     }
     setError('');
+    setPlanLimitError(false);
     setLoading(true);
     try {
       await createProspect({
@@ -47,7 +50,12 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Não foi possível salvar este lead');
+      if (err?.code === 'PLAN_LIMIT_REACHED') {
+        setPlanLimitError(true);
+        setError(err.message || 'Você atingiu o limite de leads do plano Trial.');
+      } else {
+        setError(err.message || 'Não foi possível salvar este lead');
+      }
     } finally {
       setLoading(false);
     }
@@ -75,8 +83,16 @@ export const ProspectModal: React.FC<ProspectModalProps> = ({
         </div>
 
         {error && (
-          <div className="p-3 rounded-lg bg-destructive/20 border border-destructive/30 text-destructive text-xs font-semibold">
+          <div className={`p-3 rounded-lg border text-xs font-semibold ${planLimitError ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-destructive/20 border-destructive/30 text-destructive'}`}>
             {error}
+            {planLimitError && (
+              <a
+                href="/settings?plan=upgrade"
+                className="ml-2 underline underline-offset-2 text-amber-100 font-bold"
+              >
+                Fazer upgrade para Premium
+              </a>
+            )}
           </div>
         )}
 
