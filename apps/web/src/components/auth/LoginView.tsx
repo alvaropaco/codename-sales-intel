@@ -165,9 +165,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialEr
       <div className="relative w-full max-w-md">
         <div className="mb-6 text-center">
           <img
-            src="/logo.svg"
+            src="/logo-symbol.png"
             alt="B2Base"
-            className="mx-auto mb-5 h-20 w-20 rounded-3xl object-cover ring-1 ring-white/10"
+            className="mx-auto mb-5 h-24 w-24 object-contain"
           />
           <h1 className="text-2xl font-black tracking-tight">B2Base Platform</h1>
           <p className="mt-2 text-sm text-slate-400">

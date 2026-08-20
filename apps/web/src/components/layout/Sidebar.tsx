@@ -56,9 +56,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5 dark:border-white/10">
         <div className="flex items-center gap-3">
           <img
-            src="/logo.svg"
+            src="/logo-symbol.png"
             alt="B2Base"
-            className="h-10 w-10 rounded-2xl object-cover shadow-lg shadow-slate-900/15"
+            className="h-10 w-10 object-contain"
           />
           <div>
             <h1 className="text-base font-black tracking-tight text-slate-950 dark:text-white">B2Base</h1>
