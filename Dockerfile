@@ -95,6 +95,13 @@ COPY gmail-auth.js ./
 COPY outreach-queues.js ./
 COPY outreach-rate-limiter.js ./
 COPY outreach-workers.js ./
+COPY waha-provider.js ./
+COPY whatsapp-utils.js ./
+COPY whatsapp-rate-limiter.js ./
+COPY whatsapp-queues.js ./
+COPY whatsapp-nats.js ./
+COPY whatsapp-engine.js ./
+COPY whatsapp-workers.js ./
 COPY package.json ./
 
 # Copy built SPA + fallback dashboard

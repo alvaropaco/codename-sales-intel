@@ -5,6 +5,7 @@ import {
   CreditCard,
   Kanban,
   LayoutDashboard,
+  MessageCircle,
   Moon,
   Network,
   Send,
@@ -38,6 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'risk' as ActiveTab, label: 'Risco e potencial', icon: ShieldCheck, badge: null },
     { id: 'enrichment' as ActiveTab, label: 'Inteligência comercial', icon: Network, badge: null },
     { id: 'outreach' as ActiveTab, label: 'Outreach', icon: Send, badge: null },
+    { id: 'whatsapp' as ActiveTab, label: 'WhatsApp', icon: MessageCircle, badge: null },
   ];
 
   const appItems = [

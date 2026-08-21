@@ -54,6 +54,10 @@ const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
     title: 'Outreach',
     subtitle: 'Campanhas de e-mail, contas do Gmail e acompanhamento de aberturas e respostas.',
   },
+  whatsapp: {
+    title: 'WhatsApp',
+    subtitle: 'Conexão, campanhas de prospecção e conversas em atendimento.',
+  },
   settings: {
     title: 'Preferências',
     subtitle: 'Ajustes da organização, segmentos de interesse e preferências comerciais.',

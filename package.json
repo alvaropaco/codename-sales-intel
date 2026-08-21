@@ -15,6 +15,7 @@
     "db:deploy": "npx prisma migrate deploy",
     "db:generate": "npx prisma generate",
     "start": "node server-prod.js",
+    "test": "node --test test/*.test.js",
     "docker:build": "docker build -t b2base ."
   },
   "devDependencies": {

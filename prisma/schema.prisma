@@ -315,3 +315,158 @@ model SuppressionList {
   @@unique([tenantId, email])
   @@index([tenantId])
 }
+
+// ============================================================================
+// WHATSAPP — Prospecção E2E via WAHA (WhatsApp HTTP API)
+// ============================================================================
+
+// Conta WhatsApp conectada ao workspace através do WAHA.
+// Não armazena credenciais: a API key do WAHA vive apenas no ambiente do servidor.
+model WhatsAppAccount {
+  id          String   @id @default(cuid())
+  orgId       String                         // organization.id
+  userId      String                         // user.id (dono da conta)
+  provider    String   @default("waha")      // waha
+  sessionName String   @unique               // nome determinístico da sessão WAHA
+  phoneNumber String?
+  status      String   @default("CREATED")   // CREATED, STARTING, QR_REQUIRED, CONNECTED, DISCONNECTED, STOPPED, ERROR
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaigns     WhatsAppCampaign[]
+  conversations WhatsAppConversation[]
+
+  @@index([orgId])
+  @@index([userId])
+}
+
+// Campanha de prospecção via WhatsApp (agrupa leads e sequência de etapas).
+model WhatsAppCampaign {
+  id                String   @id @default(cuid())
+  orgId             String                         // organization.id
+  name              String
+  whatsappAccountId String?
+  whatsappAccount   WhatsAppAccount? @relation(fields: [whatsappAccountId], references: [id], onDelete: SetNull)
+  status            String   @default("DRAFT")     // DRAFT, SCHEDULED, RUNNING, PAUSED, COMPLETED, CANCELLED
+  startedAt         DateTime?
+  pausedAt          DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  steps    WhatsAppSequenceStep[]
+  contacts WhatsAppCampaignContact[]
+
+  @@index([orgId])
+  @@index([status])
+}
+
+// Etapa da sequência de mensagens de uma campanha (mensagem + delay + condições).
+model WhatsAppSequenceStep {
+  id              String   @id @default(cuid())
+  campaignId      String
+  campaign        WhatsAppCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  orderIndex      Int      @default(0)
+  messageTemplate String
+  delayMinutes    Int      @default(0)             // delay em minutos antes deste step
+  conditions      Json     @default("[]")          // condições opcionais (ex.: só enviar se lead abriu)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([campaignId, orderIndex])
+  @@index([campaignId])
+}
+
+// Relação lead ↔ campanha: âncora de idempotência e progresso da sequência.
+model WhatsAppCampaignContact {
+  id               String   @id @default(cuid())
+  campaignId       String
+  campaign         WhatsAppCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  prospectId       String
+  phoneNumber      String?
+  status           String   @default("QUEUED")     // QUEUED → SENDING → SENT → REPLIED | CANCELLED, OPTED_OUT
+  currentStepIndex Int      @default(0)
+  lastSentAt       DateTime?
+  nextSendAt       DateTime?
+  cancelReason     String?                          // replied, opted_out, do_not_contact, cancelled
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([campaignId, prospectId])
+  @@index([prospectId])
+  @@index([status])
+}
+
+// Conversa 1:1 com um lead via WhatsApp (inbox).
+model WhatsAppConversation {
+  id                   String   @id @default(cuid())
+  orgId                String
+  whatsappAccountId    String?
+  whatsappAccount      WhatsAppAccount? @relation(fields: [whatsappAccountId], references: [id], onDelete: SetNull)
+  prospectId           String?
+  phoneNumber          String
+  status               String   @default("ACTIVE") // ACTIVE, PAUSED, HUMAN_HANDOFF, CLOSED, OPTED_OUT
+  lastMessageAt        DateTime?
+  lastInboundMessageAt DateTime?
+  assignedTo           String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  messages WhatsAppMessage[]
+
+  @@unique([orgId, phoneNumber])
+  @@index([orgId])
+  @@index([prospectId])
+  @@index([status])
+}
+
+// Mensagem individual (enviada ou recebida). providerMessageId é único por
+// conversa → dedup de eventos at-least-once do webhook.
+model WhatsAppMessage {
+  id                String   @id @default(cuid())
+  conversationId    String
+  conversation      WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  orgId             String
+  campaignContactId String?
+  direction         String                           // INBOUND, OUTBOUND
+  type              String   @default("TEXT")        // TEXT, IMAGE, DOCUMENT, AUDIO, VIDEO, LOCATION
+  content           String?
+  mediaUrl          String?
+  providerMessageId String?
+  status            String   @default("PENDING")     // PENDING, SENT, DELIVERED, READ, FAILED
+  stepIndex         Int?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  error             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([conversationId, providerMessageId])
+  @@unique([campaignContactId, stepIndex])
+  @@index([conversationId])
+  @@index([direction])
+  @@index([status])
+}
+
+// Estado de engajamento do lead POR CANAL (whatsapp, email, linkedin, ...).
+// Permite opt-out / do-not-contact do WhatsApp sem afetar os demais canais e
+// sem duplicar o cadastro do lead (que permanece no modelo Prospect).
+model LeadChannelState {
+  id          String   @id @default(cuid())
+  orgId       String
+  prospectId  String
+  channel     String   @default("whatsapp")          // whatsapp, email, linkedin
+  status      String   @default("active")            // active, opted_out, do_not_contact
+  phoneNumber String?
+  reason      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([prospectId, channel])
+  @@index([orgId])
+  @@index([channel])
+  @@index([status])
+}

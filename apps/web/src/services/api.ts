@@ -18,7 +18,12 @@ import {
   OutreachContactSummary,
   OutreachEvent,
   SuppressionEntry,
-  StartCampaignResult
+  StartCampaignResult,
+  WhatsAppAccount,
+  WhatsAppCampaign,
+  WhatsAppConversation,
+  WhatsAppMessage,
+  WhatsAppConnectResult
 } from '../types';
 
 const API_BASE = '/api';
@@ -558,4 +563,191 @@ export async function removeFromSuppressionList(id: string): Promise<void> {
   if (!res.ok || !json.success) {
     throw new Error(json.error || 'Erro ao remover da lista de supressão');
   }
+}
+
+// ── WhatsApp (prospecção via WAHA) ───────────────────────────────────────────
+
+export async function fetchWhatsAppAccounts(): Promise<WhatsAppAccount[]> {
+  try {
+    const res = await fetch(`${API_BASE}/whatsapp/accounts`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao listar conexões');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchWhatsAppAccounts error:', error);
+    return [];
+  }
+}
+
+export async function createWhatsAppAccount(): Promise<WhatsAppAccount> {
+  const res = await fetch(`${API_BASE}/whatsapp/accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao criar conexão');
+  }
+  return json.data;
+}
+
+export async function connectWhatsAppAccount(id: string): Promise<WhatsAppConnectResult> {
+  const res = await fetch(`${API_BASE}/whatsapp/accounts/${id}/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao conectar');
+  }
+  return json.data;
+}
+
+export async function fetchWhatsAppQr(id: string): Promise<{ qrCode?: string | null; raw?: string | null }> {
+  const res = await fetch(`${API_BASE}/whatsapp/accounts/${id}/qr`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao obter o QR Code');
+  }
+  return json.data?.qr || { qrCode: null, raw: null };
+}
+
+export async function disconnectWhatsAppAccount(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/accounts/${id}/disconnect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao desconectar');
+  }
+}
+
+export async function reconnectWhatsAppAccount(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/accounts/${id}/reconnect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao reconectar');
+  }
+}
+
+export async function removeWhatsAppAccount(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/accounts/${id}`, { method: 'DELETE' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao remover conexão');
+  }
+}
+
+export async function fetchWhatsAppConversations(): Promise<WhatsAppConversation[]> {
+  try {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao listar conversas');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchWhatsAppConversations error:', error);
+    return [];
+  }
+}
+
+export async function fetchWhatsAppConversation(id: string): Promise<WhatsAppConversation> {
+  const res = await fetch(`${API_BASE}/whatsapp/conversations/${id}`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar conversa');
+  }
+  return json.data;
+}
+
+export async function fetchWhatsAppMessages(conversationId: string): Promise<WhatsAppMessage[]> {
+  try {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations/${conversationId}/messages`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar mensagens');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchWhatsAppMessages error:', error);
+    return [];
+  }
+}
+
+export async function sendWhatsAppMessage(conversationId: string, text: string): Promise<WhatsAppMessage> {
+  const res = await fetch(`${API_BASE}/whatsapp/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao enviar mensagem');
+  }
+  return json.data;
+}
+
+export async function assignWhatsAppConversation(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/conversations/${id}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao assumir conversa');
+  }
+}
+
+export async function markDoNotContact(prospectId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/prospects/${prospectId}/do-not-contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao bloquear contato');
+  }
+}
+
+export async function fetchWhatsAppCampaigns(): Promise<WhatsAppCampaign[]> {
+  try {
+    const res = await fetch(`${API_BASE}/whatsapp/campaigns`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao listar campanhas');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchWhatsAppCampaigns error:', error);
+    return [];
+  }
+}
+
+export async function createWhatsAppCampaign(data: {
+  name: string;
+  whatsappAccountId?: string | null;
+  steps: Array<{ orderIndex: number; messageTemplate: string; delayMinutes: number; conditions?: unknown[] }>;
+}): Promise<WhatsAppCampaign> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao criar campanha');
+  }
+  return json.data;
+}
+
+export async function startWhatsAppCampaign(campaignId: string, prospectIds: string[]): Promise<{ campaignId: string; jobsQueued: number }> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns/${campaignId}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prospectIds }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao iniciar campanha');
+  }
+  return json.data;
+}
+
+export async function pauseWhatsAppCampaign(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns/${id}/pause`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao pausar campanha');
+}
+
+export async function resumeWhatsAppCampaign(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns/${id}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao retomar campanha');
+}
+
+export async function cancelWhatsAppCampaign(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns/${id}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao cancelar campanha');
 }

@@ -62,6 +62,14 @@ const gmailApi = require('./gmail-api');
 const outreachWorkers = require('./outreach-workers');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
 
+// ─── WhatsApp modules (WAHA) ───────────────────────────────────────
+const wahaProvider = require('./waha-provider');
+const whatsappEngine = require('./whatsapp-engine');
+const whatsappWorkers = require('./whatsapp-workers');
+const whatsappNats = require('./whatsapp-nats');
+const whatsappUtils = require('./whatsapp-utils');
+const { closeWhatsAppQueues, getWhatsAppQueues } = require('./whatsapp-queues');
+
 // Middleware
 // Self-hosted Firebase Auth callback endpoints. Registered before the body
 // parsers so raw OAuth POSTs to /__/auth/* can be forwarded untouched.
@@ -2515,6 +2523,497 @@ app.delete('/api/outreach/suppression/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// WHATSAPP (WAHA) — Webhook + API
+// ============================================================================
+
+// Mapeia um evento WAHA para um subject interno do NATS (`whatsapp.*`).
+function whatsappSubjectForEvent(event) {
+  const type = event && event.event;
+  if (type === 'message') return whatsappNats.SUBJECTS.MESSAGE_RECEIVED;
+  if (type === 'message.ack') return whatsappNats.SUBJECTS.MESSAGE_DELIVERED;
+  if (type === 'session.status') {
+    const mapped = whatsappEngine.mapWahaSessionStatus(event.payload && event.payload.status);
+    return mapped === 'CONNECTED'
+      ? whatsappNats.SUBJECTS.SESSION_CONNECTED
+      : whatsappNats.SUBJECTS.SESSION_DISCONNECTED;
+  }
+  return 'whatsapp.events';
+}
+
+// POST /webhooks/whatsapp/waha — recebe eventos do WAHA.
+// Valida a chave, resolve a sessão, publica no NATS e responde 2xx rápido.
+// Processamento pesado fica no consumer NATS (fallback inline se NATS off).
+app.post('/webhooks/whatsapp/waha', async (req, res) => {
+  try {
+    const key = req.headers['x-api-key'] || req.query.apiKey;
+    if (!wahaProvider.verifyWebhookApiKey(key)) {
+      return res.status(401).json({ success: false, error: 'Chave de webhook inválida' });
+    }
+
+    const event = req.body || {};
+    const sessionName = event.session;
+    if (!sessionName) {
+      return res.status(400).json({ success: false, error: 'session ausente' });
+    }
+
+    // Identifica a conta (isolamento multi-tenant) apenas para validar.
+    const account = await prisma.whatsAppAccount.findUnique({ where: { sessionName } });
+    if (!account) {
+      return res.status(404).json({ success: false, error: 'Sessão desconhecida' });
+    }
+
+    if (whatsappNats.isEnabled()) {
+      await whatsappNats.publishEvent(whatsappSubjectForEvent(event), event);
+    } else {
+      // Fallback: processa inline (idempotente), sem bloquear a resposta.
+      whatsappEngine
+        .handleEvent(prisma, wahaProvider.WAHAWhatsAppProvider, { subject: event.event, payload: event })
+        .catch((e) => console.error('[whatsapp:webhook] erro no processamento inline:', e.message));
+    }
+
+    res.json({ success: true, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[whatsapp:webhook] erro:', err.message);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
+});
+
+// ─── Contas WhatsApp ────────────────────────────────────────────────────────
+
+// POST /api/whatsapp/accounts — cria a conta (sessão determinística por workspace).
+app.post('/api/whatsapp/accounts', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const sessionName = wahaProvider.deterministicSessionName(orgId);
+
+    const existing = await prisma.whatsAppAccount.findUnique({ where: { sessionName } });
+    if (existing) {
+      return res.json({ success: true, data: existing, alreadyExists: true, timestamp: new Date().toISOString() });
+    }
+
+    const account = await prisma.whatsAppAccount.create({
+      data: { orgId, userId: req.user.id || req.user.uid, provider: 'waha', sessionName, status: 'CREATED' },
+    });
+
+    res.json({ success: true, data: account, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/accounts — lista contas do workspace.
+app.get('/api/whatsapp/accounts', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const accounts = await prisma.whatsAppAccount.findMany({
+      where: { orgId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, provider: true, sessionName: true, phoneNumber: true, status: true,
+        metadata: true, createdAt: true, updatedAt: true,
+      },
+    });
+    res.json({ success: true, data: accounts, count: accounts.length, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/accounts/:id — detalha uma conta (reconcilia status com WAHA).
+app.get('/api/whatsapp/accounts/:id', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
+    if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
+
+    await whatsappEngine.reconcileSessionStatus(prisma, wahaProvider.WAHAWhatsAppProvider, account);
+    const fresh = await prisma.whatsAppAccount.findUnique({ where: { id: account.id } });
+
+    res.json({ success: true, data: fresh, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/accounts/:id/connect — inicia sessão e devolve o QR Code.
+app.post('/api/whatsapp/accounts/:id/connect', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
+    if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
+
+    const provider = wahaProvider.WAHAWhatsAppProvider;
+    try { await provider.createSession(account.sessionName); } catch (_e) { /* idempotente */ }
+    await provider.startSession(account.sessionName);
+
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'STARTING' } });
+
+    const qr = await provider.getQRCode(account.sessionName);
+    if (qr && qr.qrCode) {
+      await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'QR_REQUIRED' } });
+    }
+
+    res.json({ success: true, data: { accountId: account.id, status: qr.qrCode ? 'QR_REQUIRED' : 'STARTING', qr }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/accounts/:id/qr — QR Code atualizado (re-pareamento).
+app.get('/api/whatsapp/accounts/:id/qr', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
+    if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
+
+    const qr = await wahaProvider.WAHAWhatsAppProvider.getQRCode(account.sessionName);
+    res.json({ success: true, data: { accountId: account.id, qr }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/accounts/:id/disconnect — desconecta (mantém dados).
+app.post('/api/whatsapp/accounts/:id/disconnect', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
+    if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
+
+    try { await wahaProvider.WAHAWhatsAppProvider.stopSession(account.sessionName); } catch (_e) { /* ignora */ }
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'STOPPED' } });
+
+    res.json({ success: true, data: { accountId: account.id, status: 'STOPPED' }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/accounts/:id/reconnect — reconecta uma sessão existente.
+app.post('/api/whatsapp/accounts/:id/reconnect', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
+    if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
+
+    await wahaProvider.WAHAWhatsAppProvider.startSession(account.sessionName);
+    await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'STARTING' } });
+
+    res.json({ success: true, data: { accountId: account.id, status: 'STARTING' }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/whatsapp/accounts/:id — remove a conta (logout + delete da sessão).
+app.delete('/api/whatsapp/accounts/:id', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
+    if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
+
+    try { await wahaProvider.WAHAWhatsAppProvider.logout(account.sessionName); } catch (_e) { /* ignora */ }
+    try { await wahaProvider.WAHAWhatsAppProvider.deleteSession(account.sessionName); } catch (_e) { /* ignora */ }
+    await prisma.whatsAppAccount.delete({ where: { id: account.id } });
+
+    res.json({ success: true, message: 'Conta removida', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Conversas (inbox) ──────────────────────────────────────────────────────
+
+// GET /api/whatsapp/conversations — lista conversas do workspace.
+app.get('/api/whatsapp/conversations', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const conversations = await prisma.whatsAppConversation.findMany({
+      where: { orgId },
+      orderBy: { lastMessageAt: 'desc' },
+      include: {
+        whatsappAccount: { select: { id: true, phoneNumber: true, status: true } },
+        _count: { select: { messages: true } },
+      },
+    });
+
+    // Enriquecer com nome do prospect (sem N+1 pesado).
+    const prospectIds = [...new Set(conversations.map((c) => c.prospectId).filter(Boolean))];
+    const prospects = prospectIds.length
+      ? await prisma.prospect.findMany({ where: { id: { in: prospectIds } }, select: { id: true, companyName: true, cnpj: true, city: true, state: true } })
+      : [];
+    const prospectMap = new Map(prospects.map((p) => [p.id, p]));
+
+    const data = conversations.map((c) => ({ ...c, prospect: c.prospectId ? prospectMap.get(c.prospectId) || null : null }));
+
+    res.json({ success: true, data, count: data.length, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/conversations/:id — detalha uma conversa.
+app.get('/api/whatsapp/conversations/:id', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const conversation = await prisma.whatsAppConversation.findFirst({
+      where: { id: req.params.id, orgId },
+      include: { whatsappAccount: { select: { id: true, phoneNumber: true, status: true } } },
+    });
+    if (!conversation) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+
+    const prospect = conversation.prospectId
+      ? await prisma.prospect.findUnique({ where: { id: conversation.prospectId }, select: { id: true, companyName: true, cnpj: true, city: true, state: true, industry: true } })
+      : null;
+
+    res.json({ success: true, data: { ...conversation, prospect }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/conversations/:id/messages — histórico.
+app.get('/api/whatsapp/conversations/:id/messages', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const conversation = await prisma.whatsAppConversation.findFirst({ where: { id: req.params.id, orgId }, select: { id: true } });
+    if (!conversation) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+
+    const messages = await prisma.whatsAppMessage.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    res.json({ success: true, data: messages, count: messages.length, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/conversations/:id/messages — resposta manual (handoff).
+app.post('/api/whatsapp/conversations/:id/messages', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const conversation = await prisma.whatsAppConversation.findFirst({
+      where: { id: req.params.id, orgId },
+      include: { whatsappAccount: true },
+    });
+    if (!conversation) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+
+    const { text } = req.body || {};
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ success: false, error: 'text é obrigatório' });
+    }
+
+    const account = conversation.whatsappAccount;
+    if (!account || account.status !== 'CONNECTED') {
+      return res.status(409).json({ success: false, error: 'Conta WhatsApp não conectada' });
+    }
+
+    const chatId = whatsappUtils.toChatId(conversation.phoneNumber);
+    const result = await wahaProvider.WAHAWhatsAppProvider.sendText(account.sessionName, chatId, String(text).trim());
+
+    const now = new Date();
+    const message = await prisma.whatsAppMessage.create({
+      data: {
+        conversationId: conversation.id,
+        orgId,
+        direction: 'OUTBOUND',
+        type: 'TEXT',
+        content: String(text).trim(),
+        providerMessageId: result.providerMessageId,
+        status: 'SENT',
+        sentAt: now,
+      },
+    });
+
+    await prisma.whatsAppConversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: now, assignedTo: req.user.id || req.user.uid || conversation.assignedTo, status: 'ACTIVE' },
+    });
+
+    res.json({ success: true, data: message, timestamp: now.toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/conversations/:id/assign — assume a conversa.
+app.post('/api/whatsapp/conversations/:id/assign', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const conversation = await prisma.whatsAppConversation.findFirst({ where: { id: req.params.id, orgId } });
+    if (!conversation) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+
+    await prisma.whatsAppConversation.update({
+      where: { id: conversation.id },
+      data: { assignedTo: req.user.id || req.user.uid },
+    });
+
+    res.json({ success: true, data: { id: conversation.id, assignedTo: req.user.id || req.user.uid }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/prospects/:id/do-not-contact — bloqueio manual.
+app.post('/api/whatsapp/prospects/:id/do-not-contact', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId }, select: { id: true } });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+
+    const result = await whatsappEngine.markDoNotContact(prisma, { orgId, prospectId: prospect.id, reason: 'manual' });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Campanhas ──────────────────────────────────────────────────────────────
+
+// GET /api/whatsapp/campaigns — lista campanhas.
+app.get('/api/whatsapp/campaigns', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const campaigns = await prisma.whatsAppCampaign.findMany({
+      where: { orgId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        steps: { orderBy: { orderIndex: 'asc' } },
+        whatsappAccount: { select: { id: true, phoneNumber: true, status: true } },
+        _count: { select: { contacts: true } },
+      },
+    });
+    res.json({ success: true, data: campaigns, count: campaigns.length, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/campaigns/:id — detalha uma campanha.
+app.get('/api/whatsapp/campaigns/:id', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const campaign = await prisma.whatsAppCampaign.findFirst({
+      where: { id: req.params.id, orgId },
+      include: {
+        steps: { orderBy: { orderIndex: 'asc' } },
+        whatsappAccount: { select: { id: true, phoneNumber: true, status: true } },
+        contacts: { include: { prospect: { select: { id: true, companyName: true, cnpj: true } } } },
+      },
+    });
+    if (!campaign) return res.status(404).json({ success: false, error: 'Campanha não encontrada' });
+
+    res.json({ success: true, data: campaign, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/campaigns — cria campanha + sequência de etapas.
+app.post('/api/whatsapp/campaigns', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const { name, whatsappAccountId, steps } = req.body || {};
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ success: false, error: 'name é obrigatório' });
+    }
+
+    const account = whatsappAccountId
+      ? await prisma.whatsAppAccount.findFirst({ where: { id: whatsappAccountId, orgId }, select: { id: true } })
+      : null;
+    if (whatsappAccountId && !account) {
+      return res.status(400).json({ success: false, error: 'Conta WhatsApp inválida' });
+    }
+
+    const normalizedSteps = Array.isArray(steps) && steps.length
+      ? steps.map((s, i) => ({
+          orderIndex: Number.isInteger(s.orderIndex) ? s.orderIndex : i,
+          messageTemplate: String(s.messageTemplate || ''),
+          delayMinutes: Number(s.delayMinutes) || 0,
+          conditions: Array.isArray(s.conditions) ? s.conditions : [],
+        })).filter((s) => s.messageTemplate.trim())
+      : null;
+
+    const campaign = await prisma.whatsAppCampaign.create({
+      data: {
+        orgId,
+        name: String(name).trim(),
+        whatsappAccountId: account ? account.id : null,
+        status: 'DRAFT',
+        ...(normalizedSteps ? {
+          steps: { create: normalizedSteps },
+        } : {}),
+      },
+      include: { steps: { orderBy: { orderIndex: 'asc' } } },
+    });
+
+    res.json({ success: true, data: campaign, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/campaigns/:id/start — inicia a campanha nos leads selecionados.
+app.post('/api/whatsapp/campaigns/:id/start', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const { prospectIds } = req.body || {};
+    if (!prospectIds || !Array.isArray(prospectIds) || prospectIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'prospectIds é obrigatório (array)' });
+    }
+
+    // Isolamento: os leads devem pertencer ao org do usuário.
+    const owned = await prisma.prospect.findMany({
+      where: { id: { in: prospectIds }, orgId },
+      select: { id: true },
+    });
+    if (owned.length !== new Set(prospectIds).size) {
+      return res.status(400).json({ success: false, error: 'Um ou mais leads não pertencem à sua conta.' });
+    }
+
+    const result = await whatsappWorkers.startCampaign(prisma, { campaignId: req.params.id, prospectIds, orgId });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/campaigns/:id/pause — pausa a campanha.
+app.post('/api/whatsapp/campaigns/:id/pause', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await whatsappWorkers.pauseCampaign(prisma, { campaignId: req.params.id, orgId });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/campaigns/:id/resume — retoma a campanha.
+app.post('/api/whatsapp/campaigns/:id/resume', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await whatsappWorkers.resumeCampaign(prisma, { campaignId: req.params.id, orgId });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/campaigns/:id/cancel — cancela a campanha.
+app.post('/api/whatsapp/campaigns/:id/cancel', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await whatsappWorkers.cancelCampaign(prisma, { campaignId: req.params.id, orgId });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
 // SPA fallback: serve index.html for extensionless GET requests that accept
 // HTML (e.g. the Firebase OAuth redirect landing page /auth/callback and any
 // future client-side routes). API and asset requests keep a 404 JSON response.
@@ -2561,6 +3060,31 @@ async function start() {
       console.log('[outreach] continuing without workers (BullMQ/Redis unavailable)');
     }
 
+    // Inicia workers do canal WhatsApp (WAHA) + consumer NATS + resume de sessões.
+    try {
+      whatsappWorkers.registerAllWorkers();
+      console.log('[whatsapp] workers initialized');
+    } catch (err) {
+      console.error('[whatsapp] failed to initialize workers:', err.message);
+      console.log('[whatsapp] continuing without WhatsApp workers');
+    }
+
+    if (whatsappNats.isEnabled()) {
+      whatsappNats.startConsumer(prisma, async ({ subject, payload }) => {
+        await whatsappEngine.handleEvent(prisma, wahaProvider.WAHAWhatsAppProvider, { subject, payload });
+      });
+    } else {
+      console.log('[whatsapp] NATS desabilitado — eventos processados inline no webhook.');
+    }
+
+    // Conexão durável: retoma sessões conectadas após reinício do servidor.
+    try {
+      const resumed = await whatsappEngine.resumeSessions(prisma, wahaProvider.WAHAWhatsAppProvider);
+      if (resumed > 0) console.log(`[whatsapp] ${resumed} sessão(ões) retomada(s) no boot.`);
+    } catch (err) {
+      console.error('[whatsapp] falha ao retomar sessões:', err.message);
+    }
+
     app.listen(PORT, () => {
       console.log('');
       console.log('╔════════════════════════════════════════════╗');
@@ -2592,16 +3116,20 @@ async function start() {
 process.on('SIGINT', async () => {
   console.log('\nShutting down...');
   await natsEnrichment.shutdown();
+  await whatsappNats.shutdown();
   await closeAllWorkers();
   await closeAllQueues();
+  await closeWhatsAppQueues();
   await prisma.$disconnect();
   process.exit(0);
 });
 process.on('SIGTERM', async () => {
   console.log('\nShutting down (SIGTERM)...');
   await natsEnrichment.shutdown();
+  await whatsappNats.shutdown();
   await closeAllWorkers();
   await closeAllQueues();
+  await closeWhatsAppQueues();
   await prisma.$disconnect();
   process.exit(0);
 });

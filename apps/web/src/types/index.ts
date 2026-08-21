@@ -172,7 +172,7 @@ export interface EnrichedCnpjContact {
   createdAt: string;
 }
 
-export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'outreach' | 'settings';
+export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'outreach' | 'whatsapp' | 'settings';
 
 // --- Outreach / Cold sales via Gmail ----------------------------------------
 
@@ -246,6 +246,105 @@ export interface StartCampaignResult {
   campaignId: string;
   jobsQueued: number;
   jobIds: string[];
+}
+
+// --- WhatsApp (prospecção via WAHA) ------------------------------------------
+
+export type WhatsAppAccountStatus =
+  | 'CREATED'
+  | 'STARTING'
+  | 'QR_REQUIRED'
+  | 'CONNECTED'
+  | 'DISCONNECTED'
+  | 'STOPPED'
+  | 'ERROR';
+
+export interface WhatsAppAccount {
+  id: string;
+  provider: string;
+  sessionName: string;
+  phoneNumber?: string | null;
+  status: string;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WhatsAppCampaignStatus =
+  | 'DRAFT'
+  | 'SCHEDULED'
+  | 'RUNNING'
+  | 'PAUSED'
+  | 'COMPLETED'
+  | 'CANCELLED';
+
+export interface WhatsAppSequenceStep {
+  id: string;
+  campaignId: string;
+  orderIndex: number;
+  messageTemplate: string;
+  delayMinutes: number;
+  conditions: unknown[];
+  createdAt?: string;
+}
+
+export interface WhatsAppCampaign {
+  id: string;
+  name: string;
+  whatsappAccountId?: string | null;
+  whatsappAccount?: Pick<WhatsAppAccount, 'id' | 'phoneNumber' | 'status'> | null;
+  status: string;
+  startedAt?: string | null;
+  pausedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  steps?: WhatsAppSequenceStep[];
+  _count?: { contacts: number };
+  contacts?: Array<{ id: string; status: string; prospect?: { id: string; companyName: string; cnpj: string } | null }>;
+}
+
+export interface WhatsAppMessage {
+  id: string;
+  conversationId: string;
+  direction: 'INBOUND' | 'OUTBOUND';
+  type: string;
+  content?: string | null;
+  mediaUrl?: string | null;
+  providerMessageId?: string | null;
+  status: string;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  createdAt: string;
+  error?: string | null;
+}
+
+export type WhatsAppConversationStatus =
+  | 'ACTIVE'
+  | 'PAUSED'
+  | 'HUMAN_HANDOFF'
+  | 'CLOSED'
+  | 'OPTED_OUT';
+
+export interface WhatsAppConversation {
+  id: string;
+  phoneNumber: string;
+  status: string;
+  prospectId?: string | null;
+  assignedTo?: string | null;
+  lastMessageAt?: string | null;
+  lastInboundMessageAt?: string | null;
+  whatsappAccountId?: string | null;
+  whatsappAccount?: Pick<WhatsAppAccount, 'id' | 'phoneNumber' | 'status'> | null;
+  prospect?: { id: string; companyName: string; cnpj: string; city?: string | null; state?: string | null; industry?: string | null } | null;
+  _count?: { messages: number };
+}
+
+export interface WhatsAppConnectResult {
+  accountId: string;
+  status: string;
+  qr?: { qrCode?: string | null; raw?: string | null } | null;
 }
 
 // --- Grafo de enriquecimento (v_company_graph) -------------------------------
