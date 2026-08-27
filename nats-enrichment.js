@@ -54,8 +54,9 @@ function toIntOrNull(value) {
   return n === null ? null : Math.round(n);
 }
 
-// O worker envia um `summary` reduzido no evento completed.v1. Normalizamos
-// exatamente as chaves que ele publica (ver _summary no job_runner do worker).
+// O worker envia um `summary` reduzido no evento completed.v1. Aceitamos tanto
+// as chaves antigas (tech_count, commercial_potential) quanto as atuais
+// (technologies, people, social_platforms...) publicadas pelo _summary do job_runner.
 function buildEnrichmentSummary(summary) {
   return {
     domain: summary.domain ?? null,
@@ -64,7 +65,11 @@ function buildEnrichmentSummary(summary) {
     launch_velocity: toNumberOrNull(summary.launch_velocity),
     operational_readiness: toNumberOrNull(summary.operational_readiness),
     commercial_potential: toNumberOrNull(summary.commercial_potential),
-    tech_count: toIntOrNull(summary.tech_count),
+    tech_count: toIntOrNull(summary.tech_count ?? summary.technologies),
+    people: toIntOrNull(summary.people),
+    social_platforms: toIntOrNull(summary.social_platforms),
+    financial_indicators: toIntOrNull(summary.financial_indicators),
+    relationship_edges: toIntOrNull(summary.relationship_edges),
   };
 }
 
@@ -184,7 +189,10 @@ async function persistEnrichmentResult(prisma, result) {
   const summary = result.summary || {};
   const cnpj = normalizeCnpj(result.cnpj || summary.cnpj);
   const companyId = result.company_id || summary.company_id || deterministicCompanyId(cnpj);
-  const enrichmentVersion = result.enrichment_version ?? result.version ?? 1;
+  // O worker publica `enrichment_version: null` e `version` como string ("1").
+  // Sem a coerção o Prisma rejeita a query (Expected Int, provided String) e a
+  // mensagem entra em loop de nak até ser abandonada (max_deliver).
+  const enrichmentVersion = toIntOrNull(result.enrichment_version ?? result.version) ?? 1;
   const status = (result.status || 'COMPLETED').toUpperCase();
   const requestEventId = result.request_event_id || null;
 
@@ -311,7 +319,7 @@ async function startEnrichmentConsumer(prisma) {
               await persistEnrichmentResult(prisma, result);
               await m.ack();            // ACK somente após persistir
             } catch (err) {
-              console.error('[nats] erro ao processar mensagem:', err.message);
+              console.error('[nats] erro ao processar mensagem:', (err && (err.stack || err.message)) || String(err));
               try {
                 await m.nak();          // reentrega se falhar
               } catch (_) { /* ignora */ }
