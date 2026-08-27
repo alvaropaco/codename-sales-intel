@@ -160,13 +160,17 @@ async function requestEnrichment(prisma, prospectOrId) {
 
   try {
     const nc = await connectNats();
+    // js.publish exige ack do JetStream: se o stream não conseguir armazenar a
+    // mensagem (ex.: storage do server cheio), o erro volta aqui em vez de ser
+    // descartado silenciosamente como no publish core (fire-and-forget).
+    const js = nc.jetstream();
     // Nats-Msg-Id: dedup no envio (reenvios dentro de 2 min são ignorados).
     const hdr = headers();
     hdr.set('Nats-Msg-Id', eventId);
-    await nc.publish(
+    await js.publish(
       NATS_REQUEST_SUBJECT,
       jc.encode(payload),
-      { headers: hdr }
+      { headers: hdr, timeout: 5000 }
     );
     console.log(`[nats] pedido publicado ${NATS_REQUEST_SUBJECT} company=${companyId} cnpj=${cnpj} event=${eventId}`);
     return eventId;

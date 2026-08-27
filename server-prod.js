@@ -1062,15 +1062,30 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
       const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
       if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
       const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-      const updated = await prisma.prospect.update({
-        where: { id: req.params.id },
-        data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
-      });
+      if (eventId) {
+        const updated = await prisma.prospect.update({
+          where: { id: req.params.id },
+          data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
+        });
+        return res.json({
+          success: true,
+          data: redactProspectForPlan(updated, plan),
+          enrichment: { status: 'pending', source: 'nats.enrichment', error: null },
+          eventId,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      // Pipeline indisponível (NATS fora do ar / ack JetStream falhou) — cai no
+      // enriquecimento síncrono via BrasilAPI, mesma política do POST /api/prospects.
+      const enriched = await enrichProspectWithCnpj(prisma, prospect);
       return res.json({
         success: true,
-        data: redactProspectForPlan(updated, plan),
-        enrichment: { status: 'pending', source: 'nats.enrichment', error: null },
-        eventId,
+        data: redactProspectForPlan(enriched, plan),
+        enrichment: {
+          status: enriched.enrichmentStatus,
+          source: enriched.enrichmentSource,
+          error: enriched.enrichmentError
+        },
         timestamp: new Date().toISOString(),
       });
     }
