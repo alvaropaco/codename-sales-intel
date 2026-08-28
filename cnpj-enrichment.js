@@ -135,7 +135,12 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
 
     return prisma.prospect.update({
       where: { id: prospect.id },
-      data,
+      data: {
+        ...data,
+        // Enriquecimento concluído: card em "Em Qualificação" avança
+        // automaticamente para "Prontas para contato".
+        ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
+      },
     });
   } catch (error) {
     return prisma.prospect.update({

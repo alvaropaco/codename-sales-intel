@@ -1104,12 +1104,70 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
 });
 
 // PUT /api/prospects/:id - Update prospect
+// ============================================================================
+// PIPELINE — regras de transição de estágio (kanban)
+// ============================================================================
+// "Em Qualificação" (prospect) é o estágio do pipeline de enriquecimento: o
+// card entra a partir de "Novas oportunidades" (lead), o enriquecimento roda,
+// e ao CONCLUIR o card avança automaticamente para "Prontas para contato"
+// (qualified). Regras:
+//   - prospect → qualified: bloqueado enquanto o enriquecimento não teve
+//     conclusão (null/pending). Estados terminais (enriched/partial/
+//     unavailable/error) permitem avanço manual (escape para dados legados
+//     e falhas de pipeline).
+//   - qualified/closed → prospect: sempre bloqueado — o estágio representa
+//     um pipeline que já rodou e não pode ser "desfeito".
+
+function stageTransitionError(previousStatus, nextStatus, prospect) {
+  if (nextStatus === 'qualified') {
+    const concluded = prospect.enrichmentStatus && prospect.enrichmentStatus !== 'pending';
+    if (!concluded) {
+      return 'O lead ainda está sendo enriquecido — aguarde a conclusão do pipeline para avançar para "Prontas para contato".';
+    }
+  }
+  if (nextStatus === 'prospect' && (previousStatus === 'qualified' || previousStatus === 'closed')) {
+    return 'Não é possível retornar um lead para "Em Qualificação" depois que o enriquecimento foi concluído.';
+  }
+  return null;
+}
+
+/**
+ * Dispara a esteira de enriquecimento de um prospect que acabou de entrar em
+ * "Em Qualificação" (NATS quando disponível; fallback síncrono BrasilAPI).
+ */
+async function triggerQualificationEnrichment(prisma, prospect) {
+  if (natsEnrichment.isNatsEnabled()) {
+    const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+    if (!eventId) {
+      // Pipeline indisponível — enriquece de forma síncrona via BrasilAPI.
+      return enrichProspectWithCnpj(prisma, prospect);
+    }
+    return prospect;
+  }
+  // NATS desligado: usa o fallback síncrono BrasilAPI, igual ao fluxo de
+  // criação. Sem isso, mover uma empresa para "Em Qualificação" não
+  // disparava enriquecimento nenhum (ficava 'pending' para sempre).
+  return enrichProspectWithCnpj(prisma, prospect);
+}
+
 app.put('/api/prospects/:id', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
     const previous = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
     if (!previous) return res.status(404).json({ success: false, error: 'Prospect not found' });
     const plan = await getOrgPlan(orgId);
+
+    // Regras de transição do kanban (fonte da verdade server-side)
+    const nextStatus = req.body && req.body.status;
+    if (nextStatus && nextStatus !== previous.status) {
+      const transitionError = stageTransitionError(previous.status, nextStatus, previous);
+      if (transitionError) {
+        const err = new Error(transitionError);
+        err.status = 422;
+        err.code = 'STAGE_TRANSITION_BLOCKED';
+        throw err;
+      }
+    }
 
     const prospect = await prisma.prospect.update({
       where: { id: req.params.id },
@@ -1123,18 +1181,7 @@ app.put('/api/prospects/:id', async (req, res) => {
 
     let responseData = prospect;
     if (enteredQualification) {
-      if (natsEnrichment.isNatsEnabled()) {
-        const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-        if (!eventId) {
-          // Pipeline indisponível — enriquece de forma síncrona via BrasilAPI.
-          responseData = await enrichProspectWithCnpj(prisma, prospect);
-        }
-      } else {
-        // NATS desligado: usa o fallback síncrono BrasilAPI, igual ao fluxo de
-        // criação. Sem isso, mover uma empresa para "Em Qualificação" não
-        // disparava enriquecimento nenhum (ficava 'pending' para sempre).
-        responseData = await enrichProspectWithCnpj(prisma, prospect);
-      }
+      responseData = await triggerQualificationEnrichment(prisma, prospect);
     }
 
     res.json({ success: true, data: redactProspectForPlan(responseData, plan) });
@@ -1142,7 +1189,8 @@ app.put('/api/prospects/:id', async (req, res) => {
     if (error.code === 'P2025') {
       return res.status(404).json({ success: false, error: 'Prospect not found' });
     }
-    res.status(500).json({ success: false, error: error.message });
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message, ...(error.code ? { code: error.code } : {}) });
   }
 });
 
@@ -1189,11 +1237,51 @@ app.post('/api/prospects/bulk', async (req, res) => {
       if (!validStatuses.includes(status)) {
         return res.status(400).json({ success: false, error: 'Estágio de destino inválido.' });
       }
-      const result = await prisma.prospect.updateMany({
+
+      // Valida a transição de cada item (mesmas regras do PUT) e move apenas
+      // os permitidos — devolve `skipped` para a UI explicar o que ficou.
+      const current = await prisma.prospect.findMany({
         where: { id: { in: ids }, orgId },
+        select: { id: true, status: true, enrichmentStatus: true },
+      });
+      const allowed = current.filter((p) => !stageTransitionError(p.status, status, p));
+      const skipped = current.length - allowed.length;
+
+      if (allowed.length === 0) {
+        const firstBlocked = current[0];
+        const reason =
+          (firstBlocked && stageTransitionError(firstBlocked.status, status, firstBlocked)) ||
+          'Transição de estágio não permitida.';
+        return res
+          .status(422)
+          .json({ success: false, code: 'STAGE_TRANSITION_BLOCKED', error: reason });
+      }
+
+      const result = await prisma.prospect.updateMany({
+        where: { id: { in: allowed.map((p) => p.id) }, orgId },
         data: { status },
       });
-      return res.json({ success: true, data: { count: result.count }, timestamp: new Date().toISOString() });
+
+      // Entrou em "Em Qualificação" via lote também dispara enriquecimento
+      // (antes só o PUT disparava — card movido em lote ficava pendente
+      // para sempre e, com o gate de transição, ficaria travado).
+      if (status === 'prospect') {
+        const entered = allowed.filter((p) => p.status !== 'prospect');
+        for (const item of entered) {
+          const fresh = await prisma.prospect.findUnique({ where: { id: item.id } });
+          if (fresh) {
+            triggerQualificationEnrichment(prisma, fresh).catch((err) => {
+              console.error(`[bulk] erro ao enriquecer prospect ${item.id}:`, err.message);
+            });
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: { count: result.count, skipped },
+        timestamp: new Date().toISOString(),
+      });
     }
 
     return res.status(400).json({ success: false, error: 'Ação em lote inválida.' });
@@ -2035,6 +2123,9 @@ app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
         enrichmentSource: 'mcp.cnpj',
         enrichmentError: null,
         enrichedAt: new Date(),
+        // Enriquecimento concluído: card em "Em Qualificação" avança
+        // automaticamente para "Prontas para contato".
+        ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
       },
     });
 

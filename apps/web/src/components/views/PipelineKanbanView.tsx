@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  ChevronRight, 
+import {
+  ChevronRight,
   ChevronLeft,
   Trash2,
   X,
+  Loader2,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -46,7 +47,9 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
       await updateProspect(prospect.id, { status: newStatus });
       onRefresh();
     } catch (err) {
-      console.error('Erro ao mover estágio:', err);
+      // Regras de transição vêm do backend (ex.: enriquecimento pendente,
+      // retorno proibido para "Em Qualificação") — mostra o motivo.
+      alert(err instanceof Error ? err.message : 'Erro ao mover estágio.');
     }
   };
 
@@ -76,11 +79,18 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
     if (!selectedIds.size) return;
     setBulkBusy(true);
     try {
-      await bulkUpdateProspects(Array.from(selectedIds), 'move', status);
+      const { count, skipped } = await bulkUpdateProspects(Array.from(selectedIds), 'move', status);
       clearSelection();
       onRefresh();
+      if (skipped > 0) {
+        alert(
+          `${count} ${count === 1 ? 'lead movido' : 'leads movidos'}. ${skipped} ${
+            skipped === 1 ? 'lead não pôde ser movido' : 'leads não puderam ser movidos'
+          } (enriquecimento em andamento ou retorno a "Em Qualificação" bloqueado).`
+        );
+      }
     } catch (err) {
-      console.error('Erro ao mover em lote:', err);
+      alert(err instanceof Error ? err.message : 'Erro ao mover em lote.');
     } finally {
       setBulkBusy(false);
     }
@@ -246,33 +256,66 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
 
                           {/* Stage Movement Controls */}
                           <div className="flex items-center justify-between pt-2">
-                            <Button
-                              disabled={col.id === 'lead'}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const prevStage = col.id === 'closed' ? 'qualified' : col.id === 'qualified' ? 'prospect' : 'lead';
-                                handleMoveStage(p, prevStage as ProspectStatus);
-                              }}
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-[10px] text-slate-500 dark:text-muted-foreground"
-                            >
-                              <ChevronLeft className="h-3 w-3 mr-0.5" /> Voltar
-                            </Button>
+                            {/* "Prontas para contato" não volta para "Em
+                                Qualificação" (estágio de enriquecimento já
+                                concluído) — sem botão de retorno. */}
+                            {col.id !== 'qualified' && (
+                              <Button
+                                disabled={col.id === 'lead'}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const prevStage = col.id === 'closed' ? 'qualified' : col.id === 'prospect' ? 'lead' : 'lead';
+                                  handleMoveStage(p, prevStage as ProspectStatus);
+                                }}
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-[10px] text-slate-500 dark:text-muted-foreground"
+                              >
+                                <ChevronLeft className="h-3 w-3 mr-0.5" /> Voltar
+                              </Button>
+                            )}
 
-                            <Button
-                              disabled={col.id === 'closed'}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const nextStage = col.id === 'lead' ? 'prospect' : col.id === 'prospect' ? 'qualified' : 'closed';
-                                handleMoveStage(p, nextStage as ProspectStatus);
-                              }}
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2 text-[10px] font-bold border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 dark:border-indigo-500/30 dark:text-indigo-300 dark:bg-indigo-500/20"
-                            >
-                              Avançar <ChevronRight className="h-3 w-3 ml-0.5" />
-                            </Button>
+                            {/* "Em Qualificação" não tem avanço manual enquanto o
+                                enriquecimento roda: o card avança sozinho para
+                                "Prontas para contato" quando o pipeline conclui.
+                                Estados terminais (erro/indisponível/legado)
+                                mantêm o avanço manual como escape. */}
+                            {col.id === 'prospect' && (!p.enrichmentStatus || p.enrichmentStatus === 'pending') ? (
+                              <span
+                                className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                                title="O card avança automaticamente para 'Prontas para contato' quando o enriquecimento concluir"
+                              >
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Enriquecendo dados…
+                              </span>
+                            ) : col.id === 'prospect' && p.enrichmentStatus && p.enrichmentStatus !== 'pending' ? (
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMoveStage(p, 'qualified');
+                                }}
+                                variant="outline"
+                                size="sm"
+                                className="ml-auto h-7 px-2 text-[10px] font-bold border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 dark:border-indigo-500/30 dark:text-indigo-300 dark:bg-indigo-500/20"
+                                title="Enriquecimento concluído — avançar para 'Prontas para contato'"
+                              >
+                                Avançar <ChevronRight className="h-3 w-3 ml-0.5" />
+                              </Button>
+                            ) : (
+                              <Button
+                                disabled={col.id === 'closed'}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const nextStage = col.id === 'lead' ? 'prospect' : 'closed';
+                                  handleMoveStage(p, nextStage as ProspectStatus);
+                                }}
+                                variant="outline"
+                                size="sm"
+                                className="ml-auto h-7 px-2 text-[10px] font-bold border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 dark:border-indigo-500/30 dark:text-indigo-300 dark:bg-indigo-500/20"
+                              >
+                                Avançar <ChevronRight className="h-3 w-3 ml-0.5" />
+                              </Button>
+                            )}
                           </div>
                         </CardContent>
                       </Card>

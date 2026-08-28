@@ -255,6 +255,9 @@ async function persistEnrichmentResult(prisma, result) {
             enrichmentError: null,
             enrichmentVersion,
             enrichedAt: new Date(),
+            // Enriquecimento concluído: card em "Em Qualificação" avança
+            // automaticamente para "Prontas para contato".
+            ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
           },
         });
       }
