@@ -1,0 +1,107 @@
+# Build & deploy — padrão GitOps do cluster (ver AGENTS.md do k8s-infra):
+#   1. Builda a imagem e pusha no GHCR (ghcr.io/alvaropaco/b2base-platform).
+#   2. Faz o write-back da tag no apps/b2base/values.yaml do k8s-infra
+#      (branch master — a que o ArgoCD rastreia).
+#   3. ArgoCD detecta (~3min) e sincroniza o cluster.
+#
+# Secrets necessários (Settings → Secrets → Actions):
+#   GH_PAT                  — PAT com `repo` (k8s-infra) + `write:packages`,
+#                             usado no job de write-back. Sem ele a imagem é
+#                             buildada, mas a tag não é propagada.
+#   VITE_FIREBASE_*         — (opcional) config do Firebase Web SDK, inlined no
+#                             bundle em build-time (ver Dockerfile).
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/alvaropaco/b2base-platform
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute short sha
+        id: meta
+        run: |
+          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "shashort=${SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          build-args: |
+            VITE_FIREBASE_AUTH_DOMAIN=${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+            VITE_FIREBASE_PROJECT_ID=${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+            VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}
+            VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}
+            VITE_FIREBASE_STORAGE_BUCKET=${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+            VITE_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:sha-${{ steps.meta.outputs.shashort }}
+            ${{ env.IMAGE_NAME }}:latest
+
+  bump-k8s-infra:
+    runs-on: ubuntu-latest
+    needs: build-push
+    if: ${{ secrets.GH_PAT != '' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Compute short sha
+        id: meta
+        run: |
+          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "shashort=${SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout k8s-infra
+        uses: actions/checkout@v4
+        with:
+          repository: alvaropaco/k8s-infra
+          token: ${{ secrets.GH_PAT }}
+          path: k8s-infra
+
+      - name: Bump image tag in values.yaml
+        working-directory: k8s-infra
+        run: |
+          VALUES="apps/b2base/values.yaml"
+          SHORT="${{ steps.meta.outputs.shashort }}"
+          sed -i "s|^  repository: .*|  repository: ghcr.io/alvaropaco/b2base-platform|" "$VALUES"
+          sed -i "s|^  tag: .*|  tag: sha-${SHORT}|" "$VALUES"
+          git diff -- "$VALUES"
+
+      - name: Commit and push (master = ArgoCD default branch)
+        working-directory: k8s-infra
+        run: |
+          git config user.name "b2base-ci"
+          git config user.email "ci@0xcloud.net"
+          if git diff --quiet apps/b2base/values.yaml; then
+            echo "values.yaml unchanged; skip"
+          else
+            git add apps/b2base/values.yaml
+            git commit -m "b2base: bump image tag to sha-${{ steps.meta.outputs.shashort }} [skip ci]"
+            git push origin HEAD:master
+          fi

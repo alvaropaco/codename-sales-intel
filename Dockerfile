@@ -92,6 +92,8 @@ COPY nats-enrichment.js ./
 COPY enrichment-graph.js ./
 COPY gmail-api.js ./
 COPY gmail-auth.js ./
+COPY email-provider.js ./
+COPY plan-masking.js ./
 COPY outreach-queues.js ./
 COPY outreach-rate-limiter.js ./
 COPY outreach-workers.js ./
