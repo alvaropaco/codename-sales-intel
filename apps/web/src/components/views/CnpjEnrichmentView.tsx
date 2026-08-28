@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LockedText } from '@/components/ui/locked-text';
 import { EnrichedCnpjContact } from '@/types';
 import { extractCnpjContacts, fetchEnrichedCnpjContacts } from '@/services/api';
 import { cn, formatCNPJ, whatsappLink } from '@/lib/utils';
@@ -220,11 +221,19 @@ export const CnpjEnrichmentView: React.FC = () => {
                       {item.tradeName && <p className="mt-1 text-[11px] text-slate-500">Fantasia: {item.tradeName}</p>}
                     </td>
                     <td className="px-6 py-4">
-                      {item.email ? <span className="font-semibold text-slate-800 dark:text-slate-200">{item.email}</span> : <span className="text-slate-400">Não disponível</span>}
+                      {item.email ? (
+                        item.dataRestricted ? (
+                          <LockedText className="font-semibold text-slate-800 dark:text-slate-200">{item.email}</LockedText>
+                        ) : (
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">{item.email}</span>
+                        )
+                      ) : (
+                        <span className="text-slate-400">Não disponível</span>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       {item.phones.length ? item.phones.map((phone) => {
-                        const wa = whatsappLink(phone);
+                        const wa = item.dataRestricted ? null : whatsappLink(phone);
                         return wa ? (
                           <a
                             key={phone}
@@ -236,6 +245,8 @@ export const CnpjEnrichmentView: React.FC = () => {
                           >
                             <Phone className="h-3 w-3" />{phone}
                           </a>
+                        ) : item.dataRestricted ? (
+                          <LockedText key={phone} className="mb-1 mr-1 inline-flex">{phone}</LockedText>
                         ) : (
                           <Badge key={phone} variant="outline" className="mb-1 mr-1">{phone}</Badge>
                         );
@@ -246,7 +257,13 @@ export const CnpjEnrichmentView: React.FC = () => {
                         <div key={`${partner.name}-${index}`} className="mb-2 flex items-start gap-2">
                           <UserRound className="mt-0.5 h-3.5 w-3.5 text-indigo-500" />
                           <div>
-                            <p className="font-bold text-slate-800 dark:text-slate-200">{partner.name || 'Sócio não informado'}</p>
+                            {item.dataRestricted ? (
+                              <LockedText className="font-bold text-slate-800 dark:text-slate-200">
+                                {partner.name || 'Sócio não informado'}
+                              </LockedText>
+                            ) : (
+                              <p className="font-bold text-slate-800 dark:text-slate-200">{partner.name || 'Sócio não informado'}</p>
+                            )}
                             <p className="text-[11px] text-slate-500">{partner.qualification || 'Qualificação não informada'}</p>
                           </div>
                         </div>

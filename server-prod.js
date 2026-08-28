@@ -60,6 +60,7 @@ const firebaseAuth = require('./firebase-auth');
 const gmailAuth = require('./gmail-auth');
 const gmailApi = require('./gmail-api');
 const emailProvider = require('./email-provider');
+const { maskProspectForTrial, maskCompanyGraphForTrial, stripMaskedIncomingFields } = require('./plan-masking');
 const outreachWorkers = require('./outreach-workers');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
 
@@ -615,7 +616,7 @@ async function assertCanCaptureLead(orgId) {
 }
 
 // ============================================================================
-// E2E enforcement of trial "no export" — data-level redaction
+// E2E enforcement of trial "no export" — data-level masking (blur + lock)
 // ============================================================================
 // O botão "Baixar lista" gera CSV no browser a partir dos dados JÁ renderizados,
 // então esconder o botão não é proteção real (um trial técnico lê o DOM/network).
@@ -623,28 +624,23 @@ async function assertCanCaptureLead(orgId) {
 // conta trial na resposta da API. Se o dado nunca chega ao browser, não há como
 // exportá-lo.
 //
-// Campos restritos no trial (contato + firmografia exportável). O CNPJ é mantido
-// de propósito: é o identificador público de inscrição usado pelo fluxo de
-// import ("adicionar lead") e é trivialmente recuperável pelo nome da empresa;
-// não é "dado de contato". O que é verdadeiramente sensível a exportação são os
-// contatos enriquecidos (e-mail, telefones, sócios) e a firmografia.
+// Desde a introdução do teaser visual (blur + cadeado), a redação passou a ser
+// MÁSCARA PARCIAL em vez de nulificar: o trial recebe "j••••@e••••.com.br" —
+// suficiente para ver que o dado existe, insuficiente para reconstruí-lo —
+// e a UI marca o campo com `dataRestricted` (blur + cadeado + CTA upgrade).
+//
+// Campos mascarados no trial (contato + firmografia exportável). O CNPJ é
+// mantido de propósito: é o identificador público de inscrição usado pelo fluxo
+// de import ("adicionar lead") e é trivialmente recuperável pelo nome da
+// empresa; não é "dado de contato". O endereço completo (logradouro etc.) vive
+// no cnpjRawData, que segue não entregue (null) — cidade/UF são resumo comercial
+// público e permitem navegar a lista.
 //
 //   email, cnpjEmail, phones, cnpjPhones, partners, cnpjPartners,
 //   cnpjOpenedAt/openedAt, cnpjLegalNature/legalNature, cnpjRawData
-// Mantemos o resumo comercial (nome, segmento, cidade/UF, status, score, CNPJ)
-// para que o usuário veja a lead e possa importá-la.
-
-const PLAN_EXPORT_SENSITIVE_FIELDS = [
-  'cnpjEmail', 'email',
-  'cnpjPhones', 'phones',
-  'cnpjPartners', 'partners',
-  'cnpjOpenedAt', 'openedAt',
-  'cnpjLegalNature', 'legalNature',
-  'cnpjRawData',
-];
 
 /**
- * Remove os campos exportáveis de um prospect/contato quando o plano é trial.
+ * Mascara os campos exportáveis de um prospect/contato quando o plano é trial.
  * Retorna sempre um objeto novo (não muta o original) e marca `dataRestricted`.
  * No premium retorna o objeto como veio (nenhuma mudança).
  */
@@ -652,12 +648,7 @@ function redactProspectForPlan(prospect, plan) {
   if (plan === 'premium' || prospect === null || typeof prospect !== 'object') {
     return prospect;
   }
-  const out = { ...prospect };
-  for (const field of PLAN_EXPORT_SENSITIVE_FIELDS) {
-    if (field in out) out[field] = null;
-  }
-  out.dataRestricted = true;
-  return out;
+  return maskProspectForTrial(prospect);
 }
 
 /**
@@ -1944,6 +1935,19 @@ app.post('/api/discovery/import', async (req, res) => {
     // Plano: garante que o trial ainda pode captar mais um lead antes do create.
     await assertCanCaptureLead(orgId);
 
+    // Trial: o client só conhece valores MASCARADOS desses campos (a resposta
+    // de discovery os mascara), então não podemos gravá-los como se fossem
+    // reais — a esteira de enriquecimento re-preenche com dados verdadeiros.
+    let importEmail = email;
+    let importOpeningDate = openingDate;
+    let importLegalNature = legalNature;
+    if (plan !== 'premium') {
+      const sanitized = stripMaskedIncomingFields({ email, openingDate, legalNature });
+      importEmail = sanitized.email;
+      importOpeningDate = sanitized.openingDate;
+      importLegalNature = sanitized.legalNature;
+    }
+
     prospect = await prisma.prospect.create({
       data: {
         cnpj: normalizedCnpj,
@@ -1952,9 +1956,9 @@ app.post('/api/discovery/import', async (req, res) => {
         industry: industry || null,
         city: city || null,
         state: state || null,
-        cnpjEmail: email || null,
-        cnpjOpenedAt: openingDate ? new Date(openingDate) : null,
-        cnpjLegalNature: legalNature || null,
+        cnpjEmail: importEmail || null,
+        cnpjOpenedAt: importOpeningDate ? new Date(importOpeningDate) : null,
+        cnpjLegalNature: importLegalNature || null,
         status: status === 'active' ? 'prospect' : 'lead',
         opportunityScore: 60,
         // Não marcamos como 'enriched': a esteira de enriquecimento (NATS) ou o
@@ -2092,8 +2096,23 @@ app.get('/api/enrichment/status/:id', async (req, res) => {
 app.get('/api/enrichment/graph/:cnpj', async (req, res) => {
   try {
     const graph = await enrichmentGraph.fetchCompanyGraph(req.params.cnpj);
-    res.json({ success: true, ...graph, timestamp: new Date().toISOString() });
+
+    // Trial: máscara dos pontos de contato (email/telefone) e do quadro
+    // societário; raw_facts (payload bruto com endereço) não é entregue.
+    let data = graph.data;
+    if (data) {
+      const orgId = await requireRequestOrgId(req);
+      const plan = await getOrgPlan(orgId);
+      if (plan !== 'premium') {
+        data = maskCompanyGraphForTrial(data);
+      }
+    }
+
+    res.json({ success: true, ...graph, data, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (error.status === 401) {
+      return res.status(401).json({ success: false, error: error.message });
+    }
     console.error('[enrichment-graph] erro ao buscar grafo:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }

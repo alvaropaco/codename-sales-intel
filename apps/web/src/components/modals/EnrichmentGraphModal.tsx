@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LockedText } from '@/components/ui/locked-text';
 import { CompanyGraph, GraphNode } from '@/types';
 import { fetchCompanyGraph } from '@/services/api';
 import { formatCNPJ, whatsappLink } from '@/lib/utils';
@@ -269,6 +270,7 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
   }, [cnpj]);
 
   const profile = graph?.profile;
+  const restricted = Boolean(graph?.dataRestricted);
   const fg = profile?.firmographics || {};
   const domain = domainInfo(profile?.domain);
   const socialEntries = Object.entries(profile?.social || {});
@@ -413,7 +415,7 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
                   {contacts.length > 0 ? (
                     <div className="space-y-2">
                       {contacts.map((c, i) => {
-                        const wa = c.type === 'phone' ? whatsappLink(c.value) : null;
+                        const wa = !restricted && c.type === 'phone' ? whatsappLink(c.value) : null;
                         return (
                           <div key={i} className="flex items-center justify-between rounded-xl border border-border/70 bg-secondary/30 px-4 py-2.5">
                             {wa ? (
@@ -430,7 +432,7 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
                             ) : (
                               <span className="flex items-center gap-2 text-sm text-foreground">
                                 {c.type === 'phone' ? <Phone className="h-4 w-4 text-muted-foreground" /> : <Mail className="h-4 w-4 text-muted-foreground" />}
-                                {c.value}
+                                {restricted ? <LockedText>{c.value}</LockedText> : c.value}
                               </span>
                             )}
                             <ConfidenceBadge confidence={c.confidence} />
@@ -471,7 +473,11 @@ export const EnrichmentGraphModal: React.FC<EnrichmentGraphModalProps> = ({
                               {p.label?.charAt(0)?.toUpperCase() || '?'}
                             </div>
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-foreground">{p.label}</p>
+                              {restricted ? (
+                                <LockedText className="truncate text-sm font-medium text-foreground">{p.label}</LockedText>
+                              ) : (
+                                <p className="truncate text-sm font-medium text-foreground">{p.label}</p>
+                              )}
                               <p className="text-[11px] text-muted-foreground capitalize">{p.role}</p>
                             </div>
                           </div>

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { LockedText } from '@/components/ui/locked-text';
 import { Prospect, OutreachContactSummary } from '@/types';
 import { formatCNPJ, formatCurrency, whatsappLink } from '@/lib/utils';
 import { EnrichmentGraphModal } from './EnrichmentGraphModal';
@@ -78,6 +79,8 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
 
   if (!prospect) return null;
 
+  // Trial: campos sensíveis chegam mascarados do backend (dataRestricted)
+  const restricted = Boolean(prospect.dataRestricted);
   const summary = prospect.enrichmentSummary;
   const hasSummary =
     summary && Object.values(summary).some((v) => v !== null && v !== undefined);
@@ -171,14 +174,28 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                     <span className="text-muted-foreground font-semibold flex items-center gap-1">
                       <Landmark className="h-3.5 w-3.5 text-muted-foreground" /> Natureza jurídica
                     </span>
-                    <p className="font-medium text-foreground">{prospect.cnpjLegalNature || '—'}</p>
+                    <p className="font-medium text-foreground">
+                      {restricted ? (
+                        <LockedText>{prospect.cnpjLegalNature || '—'}</LockedText>
+                      ) : (
+                        prospect.cnpjLegalNature || '—'
+                      )}
+                    </p>
                   </div>
                   <div className="space-y-1">
                     <span className="text-muted-foreground font-semibold flex items-center gap-1">
                       <Calendar className="h-3.5 w-3.5 text-muted-foreground" /> Abertura
                     </span>
                     <p className="font-medium text-foreground">
-                      {prospect.cnpjOpenedAt ? new Date(prospect.cnpjOpenedAt).toLocaleDateString('pt-BR') : '—'}
+                      {prospect.cnpjOpenedAt ? (
+                        restricted ? (
+                          <LockedText>{prospect.cnpjOpenedAt}</LockedText>
+                        ) : (
+                          new Date(prospect.cnpjOpenedAt).toLocaleDateString('pt-BR')
+                        )
+                      ) : (
+                        '—'
+                      )}
                     </p>
                   </div>
                 </div>
@@ -188,13 +205,14 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                 <div className="space-y-2">
                   {prospect.cnpjEmail && (
                     <p className="font-medium text-foreground flex items-center gap-1.5">
-                      <Mail className="h-3.5 w-3.5 text-muted-foreground" /> {prospect.cnpjEmail}
+                      <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+                      {restricted ? <LockedText>{prospect.cnpjEmail}</LockedText> : prospect.cnpjEmail}
                     </p>
                   )}
                   {phones.length > 0 && (
                     <div className="space-y-1.5">
                       {phones.map((phone) => {
-                        const wa = whatsappLink(phone);
+                        const wa = restricted ? null : whatsappLink(phone);
                         return wa ? (
                           <a
                             key={phone}
@@ -208,7 +226,8 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                           </a>
                         ) : (
                           <p key={phone} className="font-medium text-foreground flex items-center gap-1.5">
-                            <Phone className="h-3.5 w-3.5 text-muted-foreground" /> {phone}
+                            <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                            {restricted ? <LockedText>{phone}</LockedText> : phone}
                           </p>
                         );
                       })}
@@ -222,8 +241,17 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                   <span className="text-muted-foreground font-semibold">Sócios / representantes</span>
                   {partners.map((partner, i) => (
                     <p key={i} className="font-medium text-foreground">
-                      {partner.name || 'Sócio'}
-                      {partner.qualification ? ` · ${partner.qualification}` : ''}
+                      {restricted ? (
+                        <LockedText>
+                          {partner.name || 'Sócio'}
+                          {partner.qualification ? ` · ${partner.qualification}` : ''}
+                        </LockedText>
+                      ) : (
+                        <>
+                          {partner.name || 'Sócio'}
+                          {partner.qualification ? ` · ${partner.qualification}` : ''}
+                        </>
+                      )}
                     </p>
                   ))}
                 </div>

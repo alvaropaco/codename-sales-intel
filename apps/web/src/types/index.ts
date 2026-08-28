@@ -49,6 +49,8 @@ export interface Prospect {
   enrichedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** true quando o plano trial mascarou os campos sensíveis na resposta da API */
+  dataRestricted?: boolean;
 }
 
 export interface PipelineAnalytics {
@@ -170,6 +172,8 @@ export interface EnrichedCnpjContact {
   enrichmentError?: string | null;
   enrichedAt?: string | null;
   createdAt: string;
+  /** true quando o plano trial mascarou os campos sensíveis na resposta da API */
+  dataRestricted?: boolean;
 }
 
 export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'outreach' | 'whatsapp' | 'settings';
@@ -408,6 +412,8 @@ export interface CompanyGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   facts: GraphFact[];
+  /** true quando o plano trial mascarou contatos/quadro societário na resposta */
+  dataRestricted?: boolean;
 }
 
 // --- Taxonomia CNAE ---------------------------------------------------------
