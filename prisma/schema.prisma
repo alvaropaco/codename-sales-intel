@@ -89,7 +89,8 @@ model Prospect {
   enrichmentSummary     Json?
   enrichedAt            DateTime?
   activitiesCount       Int      @default(0)
-  lastContact           DateTime?
+  lastContact           DateTime?                     // timestamp do 1º envio real (email/whatsapp)
+  contactedChannels     Json     @default("[]")       // ["email","whatsapp"] — badge "Contatado"
   qualificationStage    String   @default("initial_contact")
   creditRiskScore       Int?
   creditRiskLevel       String?
@@ -205,8 +206,21 @@ model OutreachCampaign {
   name        String
   description String?
   status      String   @default("draft")     // draft, active, paused, completed
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  // ── Suíte multicanal (gatilho pós-enriquecimento) ──────────────────
+  // trigger=on_enrichment + autoActive: assim que o enriquecimento do lead
+  // conclui, dispara os canais selecionados com os templates configurados.
+  trigger                String   @default("manual")  // manual | on_enrichment
+  channels               Json     @default("[]")      // ["email", "whatsapp"]
+  autoActive             Boolean  @default(false)     // automação ligada?
+  emailAccountId         String?                      // conta de envio do disparo automático
+  emailTemplateSubject   String?                      // placeholders {{companyName}}, {{firstName}}, {{city}}, {{industry}}
+  emailTemplateBody      String?                      // texto plano (email single-shot quando template custom)
+  whatsappAccountId      String?                      // conta WAHA do disparo automático
+  whatsappTemplate       String?                      // mensagem WhatsApp (mesmos placeholders)
+  autoWhatsAppCampaignId String?                      // WhatsAppCampaign criada p/ automação (reusada)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   contacts    OutreachContact[]
 

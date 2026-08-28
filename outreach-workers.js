@@ -183,15 +183,32 @@ async function processPrepare(job) {
     return { skipped: true, contactId: contact.id };
   }
 
-  // Generate email via AI
-  const generated = await generateOutreachMessage(prisma, { lead, seq: contact.outreachSequence });
+  // Conteúdo: template custom da campanha (suíte multicanal) quando
+  // configurado; senão geração via IA com fallback de template.
+  const campaign = await prisma.outreachCampaign.findUnique({
+    where: { id: campaignId },
+  });
+  let generated;
+  if (campaign?.emailTemplateSubject && campaign?.emailTemplateBody) {
+    const { renderTemplate } = require('./whatsapp-utils');
+    generated = {
+      subject: renderTemplate(campaign.emailTemplateSubject, lead),
+      body: renderTemplate(campaign.emailTemplateBody, lead),
+      htmlBody: `<p>${renderTemplate(campaign.emailTemplateBody, lead)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\n{2,}/g, '</p><p>')
+        .replace(/\n/g, '<br/>')}</p>`,
+      reasoningFacts: ['campaign_template'],
+    };
+  } else {
+    generated = await generateOutreachMessage(prisma, { lead, seq: contact.outreachSequence });
+  }
 
   // Add tracking pixel
   const trackingToken = crypto.randomUUID();
-  const htmlWithPixel = generated.htmlBody.replace(
-    '{tracking-token}',
-    trackingToken
-  );
+  const htmlWithPixel = generated.htmlBody.includes('{tracking-token}')
+    ? generated.htmlBody.replace('{tracking-token}', trackingToken)
+    : `${generated.htmlBody}<img src="https://b2base.net/t/o/${trackingToken}.gif" width="1" height="1" alt="" />`;
 
   // Create outreach_message (calculateDelay retorna segundos)
   const delaySeconds = calculateDelay(getRateConfig());
@@ -356,6 +373,10 @@ async function processSend(job) {
 
   // Schedule follow-up if appropriate
   await _scheduleFollowup(prisma, message.contactId);
+
+  // Sinaliza o lead como contatado (canal email) — badge "Contatado" na UI
+  const { markContacted } = require('./campaign-suite');
+  await markContacted(prisma, message.contact.prospectId, 'email').catch(() => {});
 
   console.log(`[send] ✓ sent to ${recipientEmail} (provider msg: ${result.messageId})`);
   return { messageId: result.messageId, threadId: result.threadId };
@@ -546,6 +567,12 @@ async function _scheduleFollowup(prisma, contactId) {
 
   // Terminal states → no follow-up
   if (contact.status === 'REPLIED' || contact.status === 'UNSUBSCRIBED' || contact.status === 'CANCELLED') {
+    return;
+  }
+
+  // Campanhas com template custom (suíte multicanal) são single-shot:
+  // reenviar o mesmo template em follow-up seria duplicar a mensagem.
+  if (contact.campaign?.emailTemplateBody) {
     return;
   }
 

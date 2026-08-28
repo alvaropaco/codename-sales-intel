@@ -516,10 +516,20 @@ export async function fetchOutreachCampaigns(): Promise<OutreachCampaign[]> {
   }
 }
 
-export async function createOutreachCampaign(data: {
+export interface CreateCampaignPayload {
   name: string;
   description?: string;
-}): Promise<OutreachCampaign> {
+  trigger?: 'manual' | 'on_enrichment';
+  channels?: string[];
+  autoActive?: boolean;
+  emailAccountId?: string | null;
+  emailTemplateSubject?: string;
+  emailTemplateBody?: string;
+  whatsappAccountId?: string | null;
+  whatsappTemplate?: string;
+}
+
+export async function createOutreachCampaign(data: CreateCampaignPayload): Promise<OutreachCampaign> {
   const res = await fetch(`${API_BASE}/outreach/campaigns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -528,6 +538,22 @@ export async function createOutreachCampaign(data: {
   const json = await res.json();
   if (!res.ok || !json.success) {
     throw new Error(json.error || 'Erro ao criar campanha');
+  }
+  return json.data;
+}
+
+export async function updateOutreachCampaign(
+  id: string,
+  data: Partial<CreateCampaignPayload>
+): Promise<OutreachCampaign> {
+  const res = await fetch(`${API_BASE}/outreach/campaigns/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao atualizar campanha');
   }
   return json.data;
 }

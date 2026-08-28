@@ -260,6 +260,19 @@ async function persistEnrichmentResult(prisma, result) {
             ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
           },
         });
+
+        // Suíte multicanal pós-enriquecimento (email/WhatsApp). Falhas
+        // isoladas não afetam o consumer.
+        try {
+          const campaignSuite = require('./campaign-suite');
+          await campaignSuite.onLeadEnriched(prisma, {
+            ...prospect,
+            enrichmentStatus: status === 'PARTIAL' ? 'partial' : 'enriched',
+            enrichmentVersion,
+          });
+        } catch (suiteErr) {
+          console.error('[suite] erro pós-enriquecimento (nats):', suiteErr.message);
+        }
       }
     } else if (status === 'FAILED') {
       if (enrichmentVersion > appliedVersion) {

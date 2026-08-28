@@ -3,6 +3,7 @@ import {
   Send,
   Plus,
   Mail,
+  MessageCircle,
   ShieldBan,
   RefreshCw,
   CheckCircle2,
@@ -10,18 +11,22 @@ import {
   ExternalLink,
   Inbox,
   Loader2,
+  Zap,
+  Eye,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Prospect, EmailAccount, OutreachCampaign, SuppressionEntry } from '@/types';
+import { Prospect, EmailAccount, WhatsAppAccount, OutreachCampaign, SuppressionEntry } from '@/types';
 import {
   fetchGmailAuthUrl,
   fetchGmailAccounts,
   disconnectGmailAccount,
+  fetchWhatsAppAccounts,
   fetchOutreachCampaigns,
   createOutreachCampaign,
+  updateOutreachCampaign,
   startOutreachCampaign,
   fetchSuppressionList,
   addToSuppressionList,
@@ -42,12 +47,23 @@ const STATUS_META: Record<string, { label: string; variant: 'default' | 'seconda
 export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   const [campaigns, setCampaigns] = useState<OutreachCampaign[]>([]);
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [waAccounts, setWaAccounts] = useState<WhatsAppAccount[]>([]);
   const [suppression, setSuppression] = useState<SuppressionEntry[]>([]);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [creating, setCreating] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
+
+  // Suíte multicanal
+  const [suiteChannels, setSuiteChannels] = useState<Set<string>>(new Set(['email']));
+  const [suiteAuto, setSuiteAuto] = useState(true);
+  const [suiteEmailAccount, setSuiteEmailAccount] = useState('');
+  const [suiteSubject, setSuiteSubject] = useState('');
+  const [suiteBody, setSuiteBody] = useState('');
+  const [suiteWaAccount, setSuiteWaAccount] = useState('');
+  const [suiteWaMessage, setSuiteWaMessage] = useState('');
+  const [toggling, setToggling] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [startCampaignId, setStartCampaignId] = useState<string>('');
@@ -61,13 +77,15 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
 
   const loadAll = async () => {
     setLoading(true);
-    const [c, a, s] = await Promise.all([
+    const [c, a, w, s] = await Promise.all([
       fetchOutreachCampaigns(),
       fetchGmailAccounts(),
+      fetchWhatsAppAccounts(),
       fetchSuppressionList(),
     ]);
     setCampaigns(c);
     setAccounts(a);
+    setWaAccounts(w);
     setSuppression(s);
     setLoading(false);
   };
@@ -78,6 +96,90 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   }, []);
 
   const connectedAccounts = accounts.filter((a) => a.status === 'connected');
+  const connectedWaAccounts = waAccounts.filter((a) => a.status === 'CONNECTED');
+
+  const toggleChannel = (channel: string) => {
+    setSuiteChannels((prev) => {
+      const next = new Set(prev);
+      if (next.has(channel)) next.delete(channel);
+      else next.add(channel);
+      return next;
+    });
+  };
+
+  const renderPreview = (template: string) =>
+    template
+      .replace(/{{firstName}}/g, 'Mariana')
+      .replace(/{{companyName}}/g, 'Transportes Alfa Ltda')
+      .replace(/{{jobTitle}}/g, 'Sócia-Administradora')
+      .replace(/{{city}}/g, 'Curitiba')
+      .replace(/{{industry}}/g, 'Transporte rodoviário de carga')
+      .replace(/{{[a-zA-Z]+}}/g, '');
+
+  const handleCreateSuite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!name.trim()) return;
+    const channels = Array.from(suiteChannels);
+    if (channels.length === 0) {
+      setError('Selecione ao menos um canal (email ou WhatsApp).');
+      return;
+    }
+    if (channels.includes('email') && (suiteAuto || !suiteEmailAccount || !suiteSubject.trim() || !suiteBody.trim())) {
+      if (!suiteEmailAccount || !suiteSubject.trim() || !suiteBody.trim()) {
+        setError('Canal email: selecione a conta de envio e preencha assunto e mensagem.');
+        return;
+      }
+    }
+    if (channels.includes('whatsapp') && (!suiteWaAccount || !suiteWaMessage.trim())) {
+      setError('Canal WhatsApp: selecione a conta conectada e escreva a mensagem.');
+      return;
+    }
+    setCreating(true);
+    try {
+      const created = await createOutreachCampaign({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        trigger: suiteAuto ? 'on_enrichment' : 'manual',
+        channels,
+        autoActive: suiteAuto,
+        emailAccountId: channels.includes('email') ? suiteEmailAccount : null,
+        emailTemplateSubject: channels.includes('email') ? suiteSubject.trim() : undefined,
+        emailTemplateBody: channels.includes('email') ? suiteBody.trim() : undefined,
+        whatsappAccountId: channels.includes('whatsapp') ? suiteWaAccount : null,
+        whatsappTemplate: channels.includes('whatsapp') ? suiteWaMessage.trim() : undefined,
+      });
+      setCampaigns([created, ...campaigns]);
+      setName('');
+      setDescription('');
+      setSuiteSubject('');
+      setSuiteBody('');
+      setSuiteWaMessage('');
+      setNotice(
+        suiteAuto
+          ? `Suíte "${created.name}" criada e ATIVA: leads enriquecidos disparam ${channels.join(' + ')} automaticamente.`
+          : `Campanha "${created.name}" criada. Use "Iniciar em leads" para lançar manualmente.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao criar campanha');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleToggleAuto = async (campaign: OutreachCampaign) => {
+    setToggling(campaign.id);
+    setError(null);
+    try {
+      const updated = await updateOutreachCampaign(campaign.id, { autoActive: !campaign.autoActive });
+      setCampaigns(campaigns.map((c) => (c.id === updated.id ? updated : c)));
+      setNotice(`Automação de "${updated.name}" ${updated.autoActive ? 'ATIVADA' : 'desativada'}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao atualizar campanha');
+    } finally {
+      setToggling(null);
+    }
+  };
 
   const handleConnectGmail = async () => {
     setError(null);
@@ -86,24 +188,6 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
       window.location.href = url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao conectar o Gmail');
-    }
-  };
-
-  const handleCreateCampaign = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (!name.trim()) return;
-    setCreating(true);
-    try {
-      const created = await createOutreachCampaign({ name: name.trim(), description: description.trim() || undefined });
-      setCampaigns([created, ...campaigns]);
-      setName('');
-      setDescription('');
-      setNotice(`Campanha "${created.name}" criada. Use "Iniciar" para lançar em leads.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao criar campanha');
-    } finally {
-      setCreating(false);
     }
   };
 
@@ -250,26 +334,29 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
         </CardContent>
       </Card>
 
-      {/* Create campaign + list */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="glass-card lg:col-span-1">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <div className="rounded-xl bg-indigo-500/10 p-2 text-indigo-500">
-                <Plus className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-bold">Nova campanha</CardTitle>
-                <CardDescription>Crie uma sequência para um grupo de leads</CardDescription>
-              </div>
+      {/* Suíte de campanha (formulário guiado) */}
+      <Card className="glass-card">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-indigo-500/10 p-2 text-indigo-500">
+              <Zap className="h-5 w-5" />
             </div>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleCreateCampaign} className="space-y-4">
+            <div>
+              <CardTitle className="text-base font-bold">Nova suíte de campanha</CardTitle>
+              <CardDescription>
+                Escolha os canais, personalize a mensagem de cada um e dispare automaticamente quando o enriquecimento do lead terminar
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleCreateSuite} className="space-y-5">
+            {/* Gatilho */}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Nome da campanha</label>
+                <label className="text-xs font-semibold text-muted-foreground">Nome da suíte</label>
                 <Input
-                  placeholder="Ex: Lançamento SDR - Q4"
+                  placeholder="Ex: Prospecção automática Q4"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="bg-secondary/40 text-xs"
@@ -284,62 +371,255 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                   className="bg-secondary/40 text-xs"
                 />
               </div>
-              <Button type="submit" variant="gradient" className="w-full gap-2 text-xs" disabled={creating}>
-                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Criar campanha
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+            </div>
 
-        <Card className="glass-card lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base font-bold">Campanhas ({campaigns.length})</CardTitle>
-            <CardDescription>Sequências de email criadas na sua organização</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {loading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Carregando campanhas…
+            <button
+              type="button"
+              onClick={() => setSuiteAuto((v) => !v)}
+              className={`flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left transition ${
+                suiteAuto
+                  ? 'border-emerald-400/60 bg-emerald-500/10'
+                  : 'border-border/80 bg-secondary/30'
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                <Zap className={`mt-0.5 h-4 w-4 shrink-0 ${suiteAuto ? 'text-emerald-400' : 'text-muted-foreground'}`} />
+                <div>
+                  <p className="text-sm font-bold text-foreground">Disparo automático pós-enriquecimento</p>
+                  <p className="text-xs text-muted-foreground">
+                    Assim que o enriquecimento de um lead termina, a suíte envia as mensagens nos canais selecionados.
+                    Leads já contatados e com opt-out são pulados automaticamente.
+                  </p>
+                </div>
               </div>
-            ) : campaigns.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhuma campanha ainda. Crie a primeira ao lado.</p>
-            ) : (
-              campaigns.map((campaign) => {
-                const meta = STATUS_META[campaign.status] || { label: campaign.status, variant: 'outline' as const };
-                return (
-                  <div
-                    key={campaign.id}
-                    className="flex flex-col justify-between gap-3 rounded-xl border border-border/80 bg-secondary/30 p-4 md:flex-row md:items-center"
+              <span
+                className={`flex h-6 w-11 shrink-0 items-center rounded-full px-1 transition ${
+                  suiteAuto ? 'justify-end bg-emerald-500' : 'justify-start bg-muted-foreground/30'
+                }`}
+              >
+                <span className="h-4 w-4 rounded-full bg-white shadow" />
+              </span>
+            </button>
+
+            {/* Canais */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {/* Email */}
+              <div
+                className={`space-y-3 rounded-xl border p-4 transition ${
+                  suiteChannels.has('email') ? 'border-indigo-400/60 bg-indigo-500/5' : 'border-border/80 bg-secondary/20'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleChannel('email')}
+                  className="flex w-full items-center gap-2 text-left"
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded border ${
+                      suiteChannels.has('email') ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-muted-foreground'
+                    }`}
                   >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Send className="h-4 w-4 text-indigo-400" />
-                        <h4 className="text-sm font-bold text-foreground">{campaign.name}</h4>
-                        <Badge variant={meta.variant}>{meta.label}</Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {campaign.description || 'Sem descrição'} · Criada em {new Date(campaign.createdAt).toLocaleDateString('pt-BR')}
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setStartCampaignId(campaign.id);
-                        setStartAccountId(connectedAccounts.length === 1 ? connectedAccounts[0].id : '');
-                      }}
-                      className="gap-2 self-start md:self-auto"
+                    {suiteChannels.has('email') && <CheckCircle2 className="h-3 w-3" />}
+                  </span>
+                  <Mail className="h-4 w-4 text-indigo-400" />
+                  <span className="text-sm font-bold text-foreground">Email</span>
+                </button>
+                {suiteChannels.has('email') && (
+                  <div className="space-y-2.5">
+                    <select
+                      value={suiteEmailAccount}
+                      onChange={(e) => setSuiteEmailAccount(e.target.value)}
+                      className="h-9 w-full rounded-lg border border-border/80 bg-background/50 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/60"
                     >
-                      <PlayCircleIcon /> Iniciar em leads
-                    </Button>
+                      <option value="">Conta de envio…</option>
+                      {connectedAccounts.map((acct) => (
+                        <option key={acct.id} value={acct.id}>
+                          {acct.email}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      placeholder="Assunto — ex: Uma oportunidade para {{companyName}}"
+                      value={suiteSubject}
+                      onChange={(e) => setSuiteSubject(e.target.value)}
+                      className="bg-secondary/40 text-xs"
+                    />
+                    <textarea
+                      placeholder={'Mensagem…\n\nOlá {{firstName}}, vi que a {{companyName}}…'}
+                      value={suiteBody}
+                      onChange={(e) => setSuiteBody(e.target.value)}
+                      rows={5}
+                      className="w-full rounded-lg border border-border/80 bg-secondary/40 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/60"
+                    />
                   </div>
-                );
-              })
+                )}
+              </div>
+
+              {/* WhatsApp */}
+              <div
+                className={`space-y-3 rounded-xl border p-4 transition ${
+                  suiteChannels.has('whatsapp') ? 'border-emerald-400/60 bg-emerald-500/5' : 'border-border/80 bg-secondary/20'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleChannel('whatsapp')}
+                  className="flex w-full items-center gap-2 text-left"
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded border ${
+                      suiteChannels.has('whatsapp') ? 'border-emerald-400 bg-emerald-500 text-white' : 'border-muted-foreground'
+                    }`}
+                  >
+                    {suiteChannels.has('whatsapp') && <CheckCircle2 className="h-3 w-3" />}
+                  </span>
+                  <MessageCircle className="h-4 w-4 text-emerald-400" />
+                  <span className="text-sm font-bold text-foreground">WhatsApp</span>
+                </button>
+                {suiteChannels.has('whatsapp') && (
+                  <div className="space-y-2.5">
+                    <select
+                      value={suiteWaAccount}
+                      onChange={(e) => setSuiteWaAccount(e.target.value)}
+                      className="h-9 w-full rounded-lg border border-border/80 bg-background/50 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/60"
+                    >
+                      <option value="">Conta conectada…</option>
+                      {connectedWaAccounts.length === 0 && <option value="" disabled>— conecte um número em WhatsApp —</option>}
+                      {connectedWaAccounts.map((acct) => (
+                        <option key={acct.id} value={acct.id}>
+                          {acct.phoneNumber || acct.sessionName}
+                        </option>
+                      ))}
+                    </select>
+                    <textarea
+                      placeholder={'Mensagem…\n\nOlá {{firstName}}, tudo bem? Sou da…'}
+                      value={suiteWaMessage}
+                      onChange={(e) => setSuiteWaMessage(e.target.value)}
+                      rows={5}
+                      className="w-full rounded-lg border border-border/80 bg-secondary/40 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/60"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Preview + placeholders */}
+            {(suiteBody.trim() || suiteWaMessage.trim()) && (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {suiteChannels.has('email') && suiteBody.trim() && (
+                  <div className="rounded-xl border border-border/80 bg-background/40 p-3 text-xs">
+                    <p className="mb-1 flex items-center gap-1 font-bold text-muted-foreground">
+                      <Eye className="h-3 w-3" /> Preview email
+                    </p>
+                    <p className="font-bold text-foreground">{renderPreview(suiteSubject) || '(sem assunto)'}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{renderPreview(suiteBody)}</p>
+                  </div>
+                )}
+                {suiteChannels.has('whatsapp') && suiteWaMessage.trim() && (
+                  <div className="rounded-xl border border-border/80 bg-background/40 p-3 text-xs">
+                    <p className="mb-1 flex items-center gap-1 font-bold text-muted-foreground">
+                      <Eye className="h-3 w-3" /> Preview WhatsApp
+                    </p>
+                    <p className="whitespace-pre-wrap text-foreground">{renderPreview(suiteWaMessage)}</p>
+                  </div>
+                )}
+              </div>
             )}
-          </CardContent>
-        </Card>
-      </div>
+            <p className="text-[11px] text-muted-foreground">
+              Variáveis disponíveis: <span className="font-mono">{'{{firstName}}'}</span>{' '}
+              <span className="font-mono">{'{{companyName}}'}</span> <span className="font-mono">{'{{jobTitle}}'}</span>{' '}
+              <span className="font-mono">{'{{city}}'}</span> <span className="font-mono">{'{{industry}}'}</span> — preenchidas com os dados do enriquecimento.
+            </p>
+
+            <Button type="submit" variant="gradient" className="w-full gap-2 text-xs" disabled={creating}>
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              Criar suíte {suiteAuto ? 'com disparo automático' : '(manual)'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Campaigns list */}
+      <Card className="glass-card">
+        <CardHeader>
+          <CardTitle className="text-base font-bold">Campanhas ({campaigns.length})</CardTitle>
+          <CardDescription>Suítes configuradas na sua organização</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando campanhas…
+            </div>
+          ) : campaigns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhuma campanha ainda. Crie a primeira acima.</p>
+          ) : (
+            campaigns.map((campaign) => {
+              const meta = STATUS_META[campaign.status] || { label: campaign.status, variant: 'outline' as const };
+              const channels = Array.isArray(campaign.channels) ? campaign.channels : [];
+              const isAuto = campaign.trigger === 'on_enrichment';
+              return (
+                <div
+                  key={campaign.id}
+                  className="flex flex-col justify-between gap-3 rounded-xl border border-border/80 bg-secondary/30 p-4 md:flex-row md:items-center"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Send className="h-4 w-4 text-indigo-400" />
+                      <h4 className="text-sm font-bold text-foreground">{campaign.name}</h4>
+                      <Badge variant={meta.variant}>{meta.label}</Badge>
+                      {channels.includes('email') && (
+                        <Badge variant="outline" className="gap-1">
+                          <Mail className="h-3 w-3" /> Email
+                        </Badge>
+                      )}
+                      {channels.includes('whatsapp') && (
+                        <Badge variant="outline" className="gap-1">
+                          <MessageCircle className="h-3 w-3" /> WhatsApp
+                        </Badge>
+                      )}
+                      {isAuto && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAuto(campaign)}
+                          disabled={toggling === campaign.id}
+                          title={campaign.autoActive ? 'Desativar disparo automático' : 'Ativar disparo automático'}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black transition ${
+                            campaign.autoActive
+                              ? 'bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25'
+                              : 'bg-muted-foreground/15 text-muted-foreground hover:bg-muted-foreground/25'
+                          }`}
+                        >
+                          {toggling === campaign.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Zap className={`h-3 w-3 ${campaign.autoActive ? 'fill-emerald-400' : ''}`} />
+                          )}
+                          {campaign.autoActive ? 'AUTO ATIVA' : 'auto off'}
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {campaign.description || 'Sem descrição'} · Criada em {new Date(campaign.createdAt).toLocaleDateString('pt-BR')}
+                      {isAuto && ' · Dispara quando o enriquecimento do lead termina'}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setStartCampaignId(campaign.id);
+                      setStartAccountId(campaign.emailAccountId || (connectedAccounts.length === 1 ? connectedAccounts[0].id : ''));
+                    }}
+                    className="gap-2 self-start md:self-auto"
+                  >
+                    <PlayCircleIcon /> Iniciar em leads
+                  </Button>
+                </div>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
 
       {/* Launch panel */}
       {startCampaignId && (

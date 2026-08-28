@@ -5,6 +5,8 @@ import {
   Trash2,
   X,
   Loader2,
+  Mail,
+  MessageCircle,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -253,6 +255,25 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
                               {p.revenueEstimate ? formatCurrency(p.revenueEstimate) : 'A confirmar'}
                             </span>
                           </div>
+
+                          {/* Badge "Contatado" — canais em que o lead já recebeu contato real */}
+                          {Array.isArray(p.contactedChannels) && p.contactedChannels.length > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                Contatado
+                              </span>
+                              {p.contactedChannels.includes('email') && (
+                                <span title="Contatado por email" className="text-indigo-400">
+                                  <Mail className="h-3 w-3" />
+                                </span>
+                              )}
+                              {p.contactedChannels.includes('whatsapp') && (
+                                <span title="Contatado por WhatsApp" className="text-emerald-500">
+                                  <MessageCircle className="h-3 w-3" />
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {/* Stage Movement Controls */}
                           <div className="flex items-center justify-between pt-2">

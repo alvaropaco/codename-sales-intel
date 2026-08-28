@@ -32,6 +32,8 @@ export interface Prospect {
   revenueEstimate?: number | null;
   qualificationStage?: string | null;
   lastContact?: string | null;
+  /** canais em que o lead já recebeu contato real (badge "Contatado") */
+  contactedChannels?: string[];
   orgId?: string;
   city?: string | null;
   state?: string | null;
@@ -199,6 +201,15 @@ export interface OutreachCampaign {
   name: string;
   description?: string | null;
   status: string; // draft, active, paused, completed
+  // Suíte multicanal (gatilho pós-enriquecimento)
+  trigger?: string; // manual | on_enrichment
+  channels?: string[]; // ["email", "whatsapp"]
+  autoActive?: boolean;
+  emailAccountId?: string | null;
+  emailTemplateSubject?: string | null;
+  emailTemplateBody?: string | null;
+  whatsappAccountId?: string | null;
+  whatsappTemplate?: string | null;
   createdAt: string;
   updatedAt: string;
 }

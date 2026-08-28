@@ -248,10 +248,13 @@ async function processSend(job) {
     });
 
     if (message.campaignContactId) {
-      await prisma.whatsAppCampaignContact.update({
+      const updated = await prisma.whatsAppCampaignContact.update({
         where: { id: message.campaignContactId },
         data: { status: CONTACT_STATUS.SENT, lastSentAt: now },
       });
+      // Sinaliza o lead como contatado (canal whatsapp) — badge "Contatado"
+      const { markContacted } = require('./campaign-suite');
+      await markContacted(prisma, updated.prospectId, 'whatsapp').catch(() => {});
     }
 
     await whatsappNats.publishEvent(whatsappNats.SUBJECTS.MESSAGE_SENT, {

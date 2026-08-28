@@ -133,7 +133,7 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
     });
     data.enrichmentError = null;
 
-    return prisma.prospect.update({
+    const updated = await prisma.prospect.update({
       where: { id: prospect.id },
       data: {
         ...data,
@@ -142,6 +142,15 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
         ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
       },
     });
+
+    // Suíte multicanal: dispara campanhas configuradas com gatilho
+    // pós-enriquecimento (email/WhatsApp). Fire-and-forget — falha aqui
+    // nunca derruba o fluxo de enriquecimento.
+    require('./campaign-suite')
+      .onLeadEnriched(prisma, updated)
+      .catch((err) => console.error('[suite] erro pós-enriquecimento:', err.message));
+
+    return updated;
   } catch (error) {
     return prisma.prospect.update({
       where: { id: prospect.id },

@@ -2093,6 +2093,12 @@ app.post('/api/discovery/import', async (req, res) => {
 });
 
 // POST /api/prospects/:id/enrich-mcp - enrich an existing prospect via MCP-CNPJ
+// Suíte multicanal pós-enriquecimento (email/WhatsApp) — ver campaign-suite.js
+function emailSuiteHook(updatedProspect) {
+  require('./campaign-suite')
+    .onLeadEnriched(prisma, updatedProspect)
+    .catch((err) => console.error('[suite] erro pós-enriquecimento (mcp):', err.message));
+}
 app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
@@ -2128,6 +2134,9 @@ app.post('/api/prospects/:id/enrich-mcp', async (req, res) => {
         ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
       },
     });
+
+    // Suíte multicanal pós-enriquecimento (email/WhatsApp)
+    emailSuiteHook(updated);
 
     res.json({
       success: true,
@@ -2412,7 +2421,7 @@ app.get('/api/outreach/campaigns', async (req, res) => {
   }
 });
 
-// POST /api/outreach/campaigns — create campaign
+// POST /api/outreach/campaigns — create campaign (suíte multicanal ou manual)
 app.post('/api/outreach/campaigns', async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -2421,11 +2430,104 @@ app.post('/api/outreach/campaigns', async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
 
-    const { name, description } = req.body || {};
+    const {
+      name, description,
+      trigger, channels, autoActive,
+      emailAccountId, emailTemplateSubject, emailTemplateBody,
+      whatsappAccountId, whatsappTemplate,
+    } = req.body || {};
     if (!name) return res.status(400).json({ success: false, error: 'Campaign name required' });
 
+    // Validação da suíte multicanal
+    const validChannels = Array.isArray(channels)
+      ? channels.filter((c) => ['email', 'whatsapp'].includes(c))
+      : [];
+    if (trigger === 'on_enrichment') {
+      if (validChannels.length === 0) {
+        return res.status(400).json({ success: false, error: 'Selecione ao menos um canal (email ou WhatsApp).' });
+      }
+      if (validChannels.includes('email') && (!emailAccountId || !emailTemplateSubject || !emailTemplateBody)) {
+        return res.status(400).json({ success: false, error: 'Canal email: selecione a conta de envio e preencha assunto e mensagem.' });
+      }
+      if (validChannels.includes('whatsapp') && (!whatsappAccountId || !whatsappTemplate)) {
+        return res.status(400).json({ success: false, error: 'Canal WhatsApp: selecione a conta conectada e escreva a mensagem.' });
+      }
+    }
+
     const campaign = await prisma.outreachCampaign.create({
-      data: { tenantId: user.orgId, name, description: description || null },
+      data: {
+        tenantId: user.orgId,
+        name,
+        description: description || null,
+        trigger: trigger === 'on_enrichment' ? 'on_enrichment' : 'manual',
+        channels: validChannels,
+        autoActive: trigger === 'on_enrichment' ? Boolean(autoActive) : false,
+        emailAccountId: emailAccountId || null,
+        emailTemplateSubject: emailTemplateSubject || null,
+        emailTemplateBody: emailTemplateBody || null,
+        whatsappAccountId: whatsappAccountId || null,
+        whatsappTemplate: whatsappTemplate || null,
+      },
+    });
+
+    res.json({ success: true, data: campaign, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/outreach/campaigns/:id — atualizar config da suíte (templates,
+// canais, contas, toggle de automação)
+app.patch('/api/outreach/campaigns/:id', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    const existing = await prisma.outreachCampaign.findFirst({
+      where: { id: req.params.id, tenantId: user?.orgId },
+    });
+    if (!existing) return res.status(404).json({ success: false, error: 'Campaign not found' });
+
+    const {
+      name, description, status,
+      trigger, channels, autoActive,
+      emailAccountId, emailTemplateSubject, emailTemplateBody,
+      whatsappAccountId, whatsappTemplate,
+    } = req.body || {};
+
+    const validChannels = Array.isArray(channels)
+      ? channels.filter((c) => ['email', 'whatsapp'].includes(c))
+      : undefined;
+
+    if (autoActive === true) {
+      const ch = validChannels ?? existing.channels ?? [];
+      if (!Array.isArray(ch) || ch.length === 0) {
+        return res.status(400).json({ success: false, error: 'Configure ao menos um canal antes de ativar a automação.' });
+      }
+      if (ch.includes('email') && (!(emailAccountId ?? existing.emailAccountId) || !(emailTemplateSubject ?? existing.emailTemplateSubject) || !(emailTemplateBody ?? existing.emailTemplateBody))) {
+        return res.status(400).json({ success: false, error: 'Canal email incompleto: conta de envio, assunto e mensagem são obrigatórios.' });
+      }
+      if (ch.includes('whatsapp') && (!(whatsappAccountId ?? existing.whatsappAccountId) || !(whatsappTemplate ?? existing.whatsappTemplate))) {
+        return res.status(400).json({ success: false, error: 'Canal WhatsApp incompleto: conta conectada e mensagem são obrigatórias.' });
+      }
+    }
+
+    const campaign = await prisma.outreachCampaign.update({
+      where: { id: existing.id },
+      data: {
+        ...(name ? { name } : {}),
+        ...(description !== undefined ? { description: description || null } : {}),
+        ...(status ? { status } : {}),
+        ...(trigger ? { trigger: trigger === 'on_enrichment' ? 'on_enrichment' : 'manual' } : {}),
+        ...(validChannels ? { channels: validChannels } : {}),
+        ...(autoActive !== undefined ? { autoActive: Boolean(autoActive) } : {}),
+        ...(emailAccountId !== undefined ? { emailAccountId: emailAccountId || null } : {}),
+        ...(emailTemplateSubject !== undefined ? { emailTemplateSubject: emailTemplateSubject || null } : {}),
+        ...(emailTemplateBody !== undefined ? { emailTemplateBody: emailTemplateBody || null } : {}),
+        ...(whatsappAccountId !== undefined ? { whatsappAccountId: whatsappAccountId || null } : {}),
+        ...(whatsappTemplate !== undefined ? { whatsappTemplate: whatsappTemplate || null } : {}),
+      },
     });
 
     res.json({ success: true, data: campaign, timestamp: new Date().toISOString() });
