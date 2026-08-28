@@ -73,9 +73,10 @@ async function exchangeCodeForTokens(prisma, code, userId) {
   const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
   const { data: googleUser } = await oauth2.userinfo.get();
 
-  // Find or create EmailAccount
+  // Find or create EmailAccount (uma linha por email; não pode
+  // sobrescrever contas de outros providers do mesmo usuário)
   let account = await prisma.emailAccount.findFirst({
-    where: { userId },
+    where: { userId, email: googleUser.email },
   });
 
   const encryptedRefreshToken = tokens.refresh_token
@@ -88,8 +89,10 @@ async function exchangeCodeForTokens(prisma, code, userId) {
     account = await prisma.emailAccount.update({
       where: { id: account.id },
       data: {
+        provider: 'gmail',
         email: googleUser.email,
         encryptedRefreshToken,
+        encryptedSecret: null,
         scopes,
         status: 'connected',
       },

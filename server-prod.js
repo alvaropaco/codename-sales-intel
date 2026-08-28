@@ -59,6 +59,7 @@ const firebaseAuth = require('./firebase-auth');
 // ─── Outreach modules ─────────────────────────────────────────────
 const gmailAuth = require('./gmail-auth');
 const gmailApi = require('./gmail-api');
+const emailProvider = require('./email-provider');
 const outreachWorkers = require('./outreach-workers');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
 
@@ -2146,7 +2147,7 @@ app.get('/api/gmail/callback', async (req, res) => {
   }
 });
 
-// GET /api/gmail/accounts — list connected Gmail accounts
+// GET /api/gmail/accounts — list connected email accounts (todos os providers)
 app.get('/api/gmail/accounts', async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -2160,6 +2161,9 @@ app.get('/api/gmail/accounts', async (req, res) => {
         provider: true,
         status: true,
         scopes: true,
+        fromName: true,
+        smtpHost: true,
+        smtpPort: true,
         lastHistoryId: true,
         createdAt: true,
         updatedAt: true,
@@ -2191,10 +2195,80 @@ app.delete('/api/gmail/accounts/:id', async (req, res) => {
 
     await prisma.emailAccount.update({
       where: { id: account.id },
-      data: { status: 'revoked', encryptedRefreshToken: null },
+      data: { status: 'revoked', encryptedRefreshToken: null, encryptedSecret: null },
     });
 
     res.json({ success: true, message: 'Account disconnected', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Conexão de contas SMTP / Resend (alternativas ao Gmail OAuth) ──
+
+// POST /api/email/connect — conectar conta via SMTP (ex.: Gmail App Password)
+// ou Resend (API key). Valida as credenciais antes de salvar.
+app.post('/api/email/connect', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const {
+      provider, email, password, apiKey, smtpHost, smtpPort, smtpSecure, fromName,
+    } = req.body || {};
+
+    if (!['smtp', 'resend'].includes(provider)) {
+      return res.status(400).json({ success: false, error: 'provider deve ser "smtp" ou "resend"' });
+    }
+
+    const secret =
+      provider === 'smtp'
+        ? password
+        : (apiKey || process.env.RESEND_API_KEY); // fallback: key da plataforma
+
+    const account = await emailProvider.connectEmailAccount(prisma, {
+      provider,
+      email,
+      secret,
+      smtpHost,
+      smtpPort: smtpPort ? Number(smtpPort) : undefined,
+      smtpSecure: Boolean(smtpSecure),
+      fromName,
+      userId,
+    });
+
+    console.log(`[email] ✓ conta ${provider} conectada: ${account.email}`);
+    res.status(201).json({
+      success: true,
+      data: {
+        id: account.id,
+        email: account.email,
+        provider: account.provider,
+        status: account.status,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[email] connect error:', err.message);
+    // Erro de validação de credencial → 400 com mensagem amigável
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/email/providers — opções de provider disponíveis (para a UI)
+app.get('/api/email/providers', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    res.json({
+      success: true,
+      data: {
+        gmailOAuth: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+        resendPlatformKey: Boolean(process.env.RESEND_API_KEY),
+      },
+      timestamp: new Date().toISOString(),
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

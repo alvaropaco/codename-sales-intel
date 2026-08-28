@@ -13,6 +13,7 @@
  * as a hard cap.
  */
 const { getQueues } = require('./outreach-queues');
+const { PROVIDER_DAILY_CAPS } = require('./email-provider');
 
 const DEFAULTS = {
   dailyLimit: 30,
@@ -24,7 +25,9 @@ const DEFAULTS = {
   timezone: 'America/Sao_Paulo',
 };
 
-const GMAIL_FREE_TIER_DAILY_CAP = 5000;
+// Teto diário por provider (hard cap): gmail API 5000, SMTP Gmail
+// gratuito 500, Resend free tier 100.
+const DEFAULT_PROVIDER_CAP = 500;
 
 // ─── Get config from env ─────────────────────────────────────────
 function getConfig() {
@@ -56,12 +59,18 @@ function isWithinAllowedHours(cfg) {
 async function checkLimit(prisma, emailAccount_id, cfg) {
   const limit = getConfig();
 
-  // Hard cap
-  if (limit.dailyLimit > GMAIL_FREE_TIER_DAILY_CAP) {
-    console.warn(`[ratelimit] dailyLimit ${limit.dailyLimit} exceeds Gmail free tier (${GMAIL_FREE_TIER_DAILY_CAP}) — capping.`);
+  // Hard cap específico do provider da conta
+  const account = await prisma.emailAccount.findUnique({
+    where: { id: emailAccount_id },
+    select: { provider: true },
+  });
+  const providerCap = PROVIDER_DAILY_CAPS[account?.provider] || DEFAULT_PROVIDER_CAP;
+
+  if (limit.dailyLimit > providerCap) {
+    console.warn(`[ratelimit] dailyLimit ${limit.dailyLimit} exceeds provider cap (${providerCap}) — capping.`);
   }
 
-  const dailyCap = Math.min(limit.dailyLimit, GMAIL_FREE_TIER_DAILY_CAP);
+  const dailyCap = Math.min(limit.dailyLimit, providerCap);
 
   const now = new Date();
   const todayStart = new Date(now);

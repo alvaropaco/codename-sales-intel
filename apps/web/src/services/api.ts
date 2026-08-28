@@ -464,6 +464,46 @@ export async function disconnectGmailAccount(id: string): Promise<boolean> {
   return Boolean(json.success);
 }
 
+export interface ConnectEmailPayload {
+  provider: 'smtp' | 'resend';
+  email: string;
+  password?: string; // smtp: senha / app password
+  apiKey?: string; // resend
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  fromName?: string;
+}
+
+export async function connectEmailAccount(payload: ConnectEmailPayload): Promise<EmailAccount> {
+  const res = await fetch(`${API_BASE}/email/connect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Não foi possível conectar a conta de email');
+  }
+  return json.data;
+}
+
+export interface EmailProviderOptions {
+  gmailOAuth: boolean;
+  resendPlatformKey: boolean;
+}
+
+export async function fetchEmailProviderOptions(): Promise<EmailProviderOptions | null> {
+  try {
+    const res = await fetch(`${API_BASE}/email/providers`);
+    const json = await res.json();
+    if (!res.ok || !json.success) return null;
+    return json.data || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchOutreachCampaigns(): Promise<OutreachCampaign[]> {
   try {
     const res = await fetch(`${API_BASE}/outreach/campaigns`);

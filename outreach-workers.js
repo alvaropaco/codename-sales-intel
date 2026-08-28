@@ -15,7 +15,8 @@
 const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { createWorker, registerWorker } = require('./outreach-queues');
-const { sendEmail, listHistory } = require('./gmail-api');
+const { listHistory } = require('./gmail-api');
+const { sendEmailForAccount } = require('./email-provider');
 const { checkLimit, calculateDelay, getConfig: getRateConfig } = require('./outreach-rate-limiter');
 
 // Lazy singleton — workers share one connection pool
@@ -192,8 +193,8 @@ async function processPrepare(job) {
     trackingToken
   );
 
-  // Create outreach_message
-  const delayMs = calculateDelay(getRateConfig()) * 1000;
+  // Create outreach_message (calculateDelay retorna segundos)
+  const delaySeconds = calculateDelay(getRateConfig());
   const message = await prisma.outreachMessage.create({
     data: {
       contactId: contact.id,
@@ -202,11 +203,21 @@ async function processPrepare(job) {
       htmlBody: htmlWithPixel,
       status: 'SCHEDULED',
       generatedAt: new Date(),
-      scheduledFor: new Date(Date.now() + delayMs),
+      scheduledFor: new Date(Date.now() + delaySeconds * 1000),
       trackingToken,
       aiReasoningFacts: generated.reasoningFacts,
     },
   });
+
+  // Enfileira o envio respeitando o delay de rate-limit calculado
+  const { createQueue } = require('./outreach-queues');
+  const sendQueue = createQueue('outreach:message-send', {
+    redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
+  });
+  await sendQueue.add(
+    { messageId: message.id },
+    { delay: delaySeconds * 1000, attempts: 3, backoff: { type: 'exponential', delay: 60 * 1000 } }
+  );
 
   // Create outreach_event
   await prisma.outreachEvent.create({
@@ -291,9 +302,9 @@ async function processSend(job) {
     throw new Error('No recipient email found');
   }
 
-  // Build MIME and send
+  // Build MIME and send (provider-agnostic: gmail OAuth, SMTP ou Resend)
   const messageIdHeader = crypto.randomUUID();
-  const result = await sendEmail(prisma, message.contact.emailAccount_id, {
+  const result = await sendEmailForAccount(prisma, message.contact.emailAccount_id, {
     to: recipientEmail,
     subject: message.subject,
     body: message.body,
@@ -302,12 +313,14 @@ async function processSend(job) {
   });
 
   // Update message → SENT
+  // (colunas gmailMessageId/gmailThreadId são históricas: guardam os ids
+  // retornados pelo provider que enviou)
   await prisma.outreachMessage.update({
     where: { id: messageId },
     data: {
       status: 'SENT',
-      gmailMessageId: result.gmailMessageId,
-      gmailThreadId: result.gmailThreadId,
+      gmailMessageId: result.messageId,
+      gmailThreadId: result.threadId,
       messageHeaderId: messageIdHeader,
       sentAt: new Date(),
     },
@@ -330,7 +343,7 @@ async function processSend(job) {
         messageId,
         type: 'email_sent',
         status: 'sent',
-        details: { gmailMessageId: result.gmailMessageId, gmailThreadId: result.gmailThreadId },
+        details: { providerMessageId: result.messageId, providerThreadId: result.threadId },
       },
       {
         contactId: message.contactId,
@@ -344,8 +357,8 @@ async function processSend(job) {
   // Schedule follow-up if appropriate
   await _scheduleFollowup(prisma, message.contactId);
 
-  console.log(`[send] ✓ sent to ${recipientEmail} (gmail: ${result.gmailMessageId})`);
-  return { gmailMessageId: result.gmailMessageId, gmailThreadId: result.gmailThreadId };
+  console.log(`[send] ✓ sent to ${recipientEmail} (provider msg: ${result.messageId})`);
+  return { messageId: result.messageId, threadId: result.threadId };
 }
 
 // ─── QUEUE: outreach:gmail-sync ───────────────────────────────────
@@ -353,8 +366,10 @@ async function processSync(job) {
   const prisma = getPrisma();
   console.log('[gmail-sync] starting mailbox sync');
 
+  // Reply-sync só existe para provider gmail (History API); SMTP/Resend
+  // são send-only e são skipados aqui.
   const accounts = await prisma.emailAccount.findMany({
-    where: { status: 'connected' },
+    where: { status: 'connected', provider: 'gmail' },
   });
 
   let totalReplies = 0;
@@ -604,11 +619,24 @@ async function _cancelFollowups(prisma, contactId) {
 
 // ─── Worker registration ──────────────────────────────────────────
 function registerAllWorkers() {
-  const { registerProcessor } = require('./outreach-queues');
+  const { registerProcessor, createQueue } = require('./outreach-queues');
 
   registerProcessor('outreach:prepare', processPrepare, 2);
   registerProcessor('outreach:message-send', processSend, 1);
   registerProcessor('outreach:gmail-sync', processSync, 1);
+
+  // Reply-sync periódico (só provider gmail — SMTP/Resend são send-only).
+  // Job repetitivo com jobId fixo para não duplicar em restart.
+  try {
+    const redisUrl = process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379';
+    const syncQueue = createQueue('outreach:gmail-sync', { redis: redisUrl });
+    void syncQueue.add(
+      { periodic: true },
+      { repeat: { every: 5 * 60 * 1000 }, jobId: 'gmail-sync-periodic' }
+    );
+  } catch (err) {
+    console.error('[outreach] falha ao agendar gmail-sync periódico:', err.message);
+  }
 
   console.log('[outreach] ✓ all workers registered (3 processors)');
 }

@@ -171,17 +171,23 @@ model CnpjEnrichment {
 // COLD SALES AUTOMATICO — Outreach via Gmail
 // ============================================================================
 
-// Conta Gmail conectada ao cliente para envio de emails.
+// Conta de email conectada ao cliente para envio de outreach.
+// provider: "gmail" (OAuth API), "smtp" (ex.: Gmail com App Password), "resend" (API HTTP).
 model EmailAccount {
   id                      String   @id @default(cuid())
   tenantId                String                         // organization.id
   userId                  String                         // user.id (dono da conta)
-  provider                String    @default("gmail")     // gmail
-  email                   String
-  encryptedRefreshToken   String?
-  scopes                  Json      @default("[]")        // ["gmail.send", "gmail.metadata"]
-  status                  String    @default("connected") // connected, revoked, expired
-  lastHistoryId           String?                         // token da última consulta do history
+  provider                String    @default("gmail")     // gmail, smtp, resend
+  email                   String                         // endereço de envio (From)
+  encryptedRefreshToken   String?                         // gmail: refresh token OAuth
+  encryptedSecret         String?                         // smtp: password/app password · resend: api key
+  smtpHost                String?                         // smtp: ex.: smtp.gmail.com
+  smtpPort                Int?                           // smtp: ex.: 587 (STARTTLS) ou 465 (TLS)
+  smtpSecure              Boolean   @default(false)      // smtp: true quando porta 465
+  fromName                String?                         // nome amigável do remetente (opcional)
+  scopes                  Json      @default("[]")        // ["gmail.send", "gmail.metadata"] (provider gmail)
+  status                  String    @default("connected") // connected, revoked, expired, error
+  lastHistoryId           String?                         // token da última consulta do history (provider gmail)
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 

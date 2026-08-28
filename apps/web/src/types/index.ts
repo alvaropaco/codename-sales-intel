@@ -179,9 +179,12 @@ export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workf
 export interface EmailAccount {
   id: string;
   email: string;
-  provider: string;
-  status: string; // connected, revoked, expired
+  provider: string; // gmail (OAuth), smtp, resend
+  status: string; // connected, revoked, expired, error
   scopes: string[];
+  fromName?: string | null;
+  smtpHost?: string | null;
+  smtpPort?: number | null;
   lastHistoryId?: string | null;
   createdAt: string;
   updatedAt: string;

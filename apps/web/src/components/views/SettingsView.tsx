@@ -1,11 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, Clock3, Compass, Settings, Sparkles, Mail, ExternalLink, Inbox, Crown } from 'lucide-react';
+import { CheckCircle2, Clock3, Compass, Settings, Sparkles, Mail, ExternalLink, Inbox, Crown, KeyRound, Server } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { CommercialProfile, EmailAccount, PlanInfo } from '@/types';
 import { CommercialProfileForm } from '@/components/settings/CommercialProfileForm';
-import { fetchGmailAuthUrl, fetchGmailAccounts, disconnectGmailAccount, fetchPlan, upgradeToPremium } from '@/services/api';
+import {
+  fetchGmailAuthUrl,
+  fetchGmailAccounts,
+  disconnectGmailAccount,
+  connectEmailAccount,
+  fetchPlan,
+  upgradeToPremium,
+} from '@/services/api';
 
 export function SettingsView({
   profile,
@@ -26,6 +34,17 @@ export function SettingsView({
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
+
+  const [showOtherProviders, setShowOtherProviders] = useState(false);
+  const [connectingProvider, setConnectingProvider] = useState<'smtp' | 'resend' | null>(null);
+  const [smtpForm, setSmtpForm] = useState({
+    email: '',
+    password: '',
+    smtpHost: 'smtp.gmail.com',
+    smtpPort: '587',
+    fromName: '',
+  });
+  const [resendForm, setResendForm] = useState({ email: '', apiKey: '', fromName: '' });
 
   const loadPlan = async () => {
     try {
@@ -82,9 +101,59 @@ export function SettingsView({
   };
 
   const handleDisconnect = async (id: string) => {
-    if (!confirm('Desconectar esta conta do Gmail?')) return;
+    if (!confirm('Desconectar esta conta de email?')) return;
     await disconnectGmailAccount(id);
     await loadAccounts();
+  };
+
+  const handleConnectSmtp = async () => {
+    setConnectingProvider('smtp');
+    setGmailNotice(null);
+    try {
+      const port = Number(smtpForm.smtpPort) || 587;
+      const acct = await connectEmailAccount({
+        provider: 'smtp',
+        email: smtpForm.email.trim(),
+        password: smtpForm.password,
+        smtpHost: smtpForm.smtpHost.trim() || 'smtp.gmail.com',
+        smtpPort: port,
+        smtpSecure: port === 465,
+        fromName: smtpForm.fromName.trim() || undefined,
+      });
+      setGmailNotice(`Conta SMTP conectada: ${acct.email}`);
+      setSmtpForm({ ...smtpForm, password: '' });
+      await loadAccounts();
+    } catch (err) {
+      setGmailNotice(err instanceof Error ? err.message : 'Erro ao conectar a conta SMTP');
+    } finally {
+      setConnectingProvider(null);
+    }
+  };
+
+  const handleConnectResend = async () => {
+    setConnectingProvider('resend');
+    setGmailNotice(null);
+    try {
+      const acct = await connectEmailAccount({
+        provider: 'resend',
+        email: resendForm.email.trim(),
+        apiKey: resendForm.apiKey.trim() || undefined,
+        fromName: resendForm.fromName.trim() || undefined,
+      });
+      setGmailNotice(`Conta Resend conectada: ${acct.email}`);
+      setResendForm({ ...resendForm, apiKey: '' });
+      await loadAccounts();
+    } catch (err) {
+      setGmailNotice(err instanceof Error ? err.message : 'Erro ao conectar a conta Resend');
+    } finally {
+      setConnectingProvider(null);
+    }
+  };
+
+  const providerLabel = (acct: EmailAccount) => {
+    if (acct.provider === 'gmail') return 'Gmail OAuth';
+    if (acct.provider === 'resend') return 'Resend (API)';
+    return acct.smtpHost ? `SMTP · ${acct.smtpHost}` : 'SMTP';
   };
 
   return (
@@ -206,7 +275,7 @@ export function SettingsView({
         </Card>
       </section>
 
-      {/* Gmail connection */}
+      {/* Email sending accounts (Gmail OAuth · SMTP · Resend) */}
       <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -215,13 +284,18 @@ export function SettingsView({
                 <Mail className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className="text-base font-bold">Envio de outreach (Gmail)</CardTitle>
+                <CardTitle className="text-base font-bold">Envio de outreach (e-mail)</CardTitle>
                 <CardDescription>Conecte a conta que enviará as campanhas de e-mail</CardDescription>
               </div>
             </div>
-            <Button variant="gradient" size="sm" onClick={handleConnectGmail} disabled={connecting} className="gap-2">
-              <ExternalLink className="h-4 w-4" /> {connectedAccounts.length > 0 ? 'Conectar outra conta' : 'Conectar Gmail'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowOtherProviders((v) => !v)}>
+                <Server className="mr-1.5 h-4 w-4" /> SMTP / Resend
+              </Button>
+              <Button variant="gradient" size="sm" onClick={handleConnectGmail} disabled={connecting} className="gap-2">
+                <ExternalLink className="h-4 w-4" /> {connectedAccounts.length > 0 ? 'Conectar outra conta' : 'Conectar Gmail'}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -230,10 +304,111 @@ export function SettingsView({
               {gmailNotice}
             </div>
           )}
+
+          {showOtherProviders && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {/* SMTP (ex.: Gmail com App Password) */}
+              <div className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-white/10">
+                <div className="flex items-center gap-2">
+                  <Server className="h-4 w-4 text-slate-500" />
+                  <p className="text-sm font-bold text-slate-950 dark:text-white">SMTP (Gmail com App Password)</p>
+                </div>
+                <p className="text-xs leading-5 text-slate-500">
+                  Não depende de aprovação do Google. Para Gmail: ative a verificação em 2 etapas e gere uma App Password
+                  em <span className="font-mono">myaccount.google.com/apppasswords</span>.
+                </p>
+                <div className="space-y-2">
+                  <Input
+                    type="email"
+                    placeholder="seu@gmail.com"
+                    value={smtpForm.email}
+                    onChange={(e) => setSmtpForm({ ...smtpForm, email: e.target.value })}
+                  />
+                  <Input
+                    type="password"
+                    placeholder="App Password (16 caracteres)"
+                    value={smtpForm.password}
+                    onChange={(e) => setSmtpForm({ ...smtpForm, password: e.target.value })}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      placeholder="Servidor (smtp.gmail.com)"
+                      value={smtpForm.smtpHost}
+                      onChange={(e) => setSmtpForm({ ...smtpForm, smtpHost: e.target.value })}
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Porta (587)"
+                      value={smtpForm.smtpPort}
+                      onChange={(e) => setSmtpForm({ ...smtpForm, smtpPort: e.target.value })}
+                    />
+                  </div>
+                  <Input
+                    placeholder="Nome de exibição (opcional)"
+                    value={smtpForm.fromName}
+                    onChange={(e) => setSmtpForm({ ...smtpForm, fromName: e.target.value })}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={handleConnectSmtp}
+                  disabled={connectingProvider === 'smtp' || !smtpForm.email || !smtpForm.password}
+                >
+                  {connectingProvider === 'smtp' ? 'Validando credenciais…' : 'Conectar via SMTP'}
+                </Button>
+              </div>
+
+              {/* Resend (API) */}
+              <div className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-white/10">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="h-4 w-4 text-slate-500" />
+                  <p className="text-sm font-bold text-slate-950 dark:text-white">Resend (API)</p>
+                </div>
+                <p className="text-xs leading-5 text-slate-500">
+                  Envia pela API do Resend com entregabilidade gerenciada. O domínio do endereço abaixo precisa estar
+                  verificado no painel do Resend (SPF/DKIM).
+                </p>
+                <div className="space-y-2">
+                  <Input
+                    type="email"
+                    placeholder="voce@seudominio.com.br"
+                    value={resendForm.email}
+                    onChange={(e) => setResendForm({ ...resendForm, email: e.target.value })}
+                  />
+                  <Input
+                    type="password"
+                    placeholder="API key (re_…)"
+                    value={resendForm.apiKey}
+                    onChange={(e) => setResendForm({ ...resendForm, apiKey: e.target.value })}
+                  />
+                  <Input
+                    placeholder="Nome de exibição (opcional)"
+                    value={resendForm.fromName}
+                    onChange={(e) => setResendForm({ ...resendForm, fromName: e.target.value })}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={handleConnectResend}
+                  disabled={connectingProvider === 'resend' || !resendForm.email}
+                >
+                  {connectingProvider === 'resend' ? 'Validando API key…' : 'Conectar via Resend'}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {connectedAccounts.length === 0 ? (
             <div className="flex items-start gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-500 dark:bg-white/[0.03] dark:text-slate-400">
               <Inbox className="mt-0.5 h-5 w-5 shrink-0" />
-              <p>Nenhuma conta conectada. Conecte o Gmail para habilitar as campanhas de outreach em "Outreach".</p>
+              <p>
+                Nenhuma conta conectada. Conecte o Gmail (OAuth), um SMTP com App Password ou o Resend para habilitar as
+                campanhas de outreach em "Outreach".
+              </p>
             </div>
           ) : (
             connectedAccounts.map((acct) => (
@@ -244,7 +419,9 @@ export function SettingsView({
                   </div>
                   <div>
                     <p className="text-sm font-bold text-slate-950 dark:text-white">{acct.email}</p>
-                    <p className="text-xs text-slate-500">Status: {acct.status}</p>
+                    <p className="text-xs text-slate-500">
+                      {providerLabel(acct)} · Status: {acct.status}
+                    </p>
                   </div>
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => handleDisconnect(acct.id)} className="text-red-500">

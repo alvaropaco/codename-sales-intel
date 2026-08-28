@@ -34,6 +34,7 @@
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "nats": "^2.29.3",
+    "nodemailer": "^9.0.6",
     "pg": "^8.23.0",
     "prisma": "^5.22.0"
   }
