@@ -558,6 +558,30 @@ export async function updateOutreachCampaign(
   return json.data;
 }
 
+export interface CampaignTestPayload {
+  channel: 'email' | 'whatsapp';
+  emailAccountId?: string;
+  subject?: string;
+  body?: string;
+  whatsappAccountId?: string;
+  message?: string;
+  toPhone?: string;
+}
+
+/** Envia mensagem de TESTE com o template renderizado (email → própria conta; WhatsApp → número informado) */
+export async function sendCampaignTest(payload: CampaignTestPayload): Promise<string> {
+  const res = await fetch(`${API_BASE}/outreach/campaigns/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao enviar teste');
+  }
+  return json.message || 'Teste enviado';
+}
+
 export async function startOutreachCampaign(
   campaignId: string,
   prospectIds: string[],

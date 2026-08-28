@@ -2536,6 +2536,99 @@ app.patch('/api/outreach/campaigns/:id', async (req, res) => {
   }
 });
 
+// POST /api/outreach/campaigns/test — envia mensagem de TESTE com o template
+// da suíte (renderizado com dados de exemplo): email vai para a própria conta
+// conectada; WhatsApp para um número informado (não é possível enviar para o
+// próprio número conectado).
+app.post('/api/outreach/campaigns/test', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const { channel, emailAccountId, subject, body, whatsappAccountId, message, toPhone } = req.body || {};
+    const { renderTemplate, normalizePhone, toChatId } = require('./whatsapp-utils');
+
+    // Dados de exemplo — mesmos exibidos no preview da UI
+    const SAMPLE = {
+      firstName: 'Mariana',
+      companyName: 'Transportes Alfa Ltda',
+      jobTitle: 'Sócia-Administradora',
+      city: 'Curitiba',
+      industry: 'Transporte rodoviário de carga',
+    };
+
+    if (channel === 'email') {
+      if (!emailAccountId || !subject || !body) {
+        return res.status(400).json({ success: false, error: 'Preencha conta, assunto e mensagem antes de testar.' });
+      }
+      const account = await prisma.emailAccount.findFirst({
+        where: { id: emailAccountId, tenantId: user.orgId, status: 'connected' },
+      });
+      if (!account) {
+        return res.status(400).json({ success: false, error: 'Conta de email não encontrada ou não conectada.' });
+      }
+
+      const renderedBody = renderTemplate(body, SAMPLE);
+      const crypto = require('crypto');
+      await emailProvider.sendEmailForAccount(prisma, account.id, {
+        to: account.email,
+        subject: `[TESTE] ${renderTemplate(subject, SAMPLE)}`,
+        body: renderedBody,
+        htmlBody: `<p>${renderedBody
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/\n{2,}/g, '</p><p>')
+          .replace(/\n/g, '<br/>')}</p>`,
+        messageId: `teste-${crypto.randomUUID()}`,
+      });
+
+      console.log(`[suite-test] email de teste enviado para ${account.email}`);
+      return res.json({
+        success: true,
+        message: `Email de teste enviado para ${account.email} — confira a caixa de entrada.`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (channel === 'whatsapp') {
+      if (!whatsappAccountId || !message) {
+        return res.status(400).json({ success: false, error: 'Selecione a conta e escreva a mensagem antes de testar.' });
+      }
+      const phone = normalizePhone(toPhone);
+      const chatId = toChatId(toPhone);
+      if (!phone || phone.length < 10) {
+        return res.status(400).json({ success: false, error: 'Informe um número válido com DDD (ex.: 11 99999-8888).' });
+      }
+      const account = await prisma.whatsAppAccount.findFirst({
+        where: { id: whatsappAccountId, orgId: user.orgId, status: 'CONNECTED' },
+      });
+      if (!account) {
+        return res.status(400).json({ success: false, error: 'Conta WhatsApp não encontrada ou não conectada.' });
+      }
+
+      const wahaProvider = require('./waha-provider');
+      const result = await wahaProvider.sendText(account.sessionName, chatId, renderTemplate(message, SAMPLE));
+      if (!result?.providerMessageId) {
+        return res.status(500).json({ success: false, error: 'O WAHA não confirmou o envio — verifique se a sessão está conectada.' });
+      }
+
+      console.log(`[suite-test] whatsapp de teste enviado (${phone})`);
+      return res.json({
+        success: true,
+        message: 'Mensagem de teste enviada — confira o WhatsApp do número informado.',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return res.status(400).json({ success: false, error: 'channel deve ser "email" ou "whatsapp".' });
+  } catch (err) {
+    console.error('[suite-test] erro:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/outreach/campaigns/:id/start — start outreach on selected prospects
 app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
   try {

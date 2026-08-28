@@ -27,6 +27,7 @@ import {
   fetchOutreachCampaigns,
   createOutreachCampaign,
   updateOutreachCampaign,
+  sendCampaignTest,
   startOutreachCampaign,
   fetchSuppressionList,
   addToSuppressionList,
@@ -63,6 +64,8 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   const [suiteBody, setSuiteBody] = useState('');
   const [suiteWaAccount, setSuiteWaAccount] = useState('');
   const [suiteWaMessage, setSuiteWaMessage] = useState('');
+  const [testPhone, setTestPhone] = useState('');
+  const [testing, setTesting] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -164,6 +167,34 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
       setError(err instanceof Error ? err.message : 'Erro ao criar campanha');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleSendTest = async (channel: 'email' | 'whatsapp') => {
+    setTesting(channel);
+    setError(null);
+    setNotice(null);
+    try {
+      const message = await sendCampaignTest(
+        channel === 'email'
+          ? {
+              channel,
+              emailAccountId: suiteEmailAccount,
+              subject: suiteSubject.trim(),
+              body: suiteBody.trim(),
+            }
+          : {
+              channel,
+              whatsappAccountId: suiteWaAccount,
+              message: suiteWaMessage.trim(),
+              toPhone: testPhone.trim(),
+            }
+      );
+      setNotice(message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao enviar teste');
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -451,6 +482,26 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                       rows={5}
                       className="w-full rounded-lg border border-border/80 bg-secondary/40 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/60"
                     />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-2 text-xs"
+                      onClick={() => handleSendTest('email')}
+                      disabled={
+                        testing === 'email' ||
+                        !suiteEmailAccount ||
+                        !suiteSubject.trim() ||
+                        !suiteBody.trim()
+                      }
+                    >
+                      {testing === 'email' ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Enviar teste para a minha caixa de entrada
+                    </Button>
                   </div>
                 )}
               </div>
@@ -498,6 +549,30 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                       rows={5}
                       className="w-full rounded-lg border border-border/80 bg-secondary/40 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/60"
                     />
+                    <div className="flex gap-2">
+                      <Input
+                        type="tel"
+                        placeholder="Nº p/ teste — 11 99999-8888"
+                        value={testPhone}
+                        onChange={(e) => setTestPhone(e.target.value)}
+                        className="bg-secondary/40 text-xs"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 gap-2 text-xs"
+                        onClick={() => handleSendTest('whatsapp')}
+                        disabled={testing === 'whatsapp' || !suiteWaAccount || !suiteWaMessage.trim() || !testPhone.trim()}
+                      >
+                        {testing === 'whatsapp' ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        Testar
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
