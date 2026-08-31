@@ -19,6 +19,7 @@ import {
   OutreachEvent,
   SuppressionEntry,
   StartCampaignResult,
+  DispatchHistoryResult,
   WhatsAppAccount,
   WhatsAppCampaign,
   WhatsAppConversation,
@@ -580,6 +581,35 @@ export async function sendCampaignTest(payload: CampaignTestPayload): Promise<st
     throw new Error(json.error || 'Erro ao enviar teste');
   }
   return json.message || 'Teste enviado';
+}
+
+export interface DispatchHistoryFilters {
+  channel?: 'email' | 'whatsapp';
+  campaignId?: string;
+  status?: 'sent' | 'pending' | 'failed';
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Histórico unificado de disparos (email + WhatsApp) do org. */
+export async function fetchDispatchHistory(
+  filters: DispatchHistoryFilters = {}
+): Promise<DispatchHistoryResult> {
+  const params = new URLSearchParams();
+  if (filters.channel) params.set('channel', filters.channel);
+  if (filters.campaignId) params.set('campaignId', filters.campaignId);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.q?.trim()) params.set('q', filters.q.trim());
+  if (filters.limit) params.set('limit', String(filters.limit));
+  if (filters.offset) params.set('offset', String(filters.offset));
+
+  const res = await fetch(`${API_BASE}/outreach/dispatches?${params.toString()}`);
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar histórico de disparos');
+  }
+  return json.data;
 }
 
 export async function startOutreachCampaign(

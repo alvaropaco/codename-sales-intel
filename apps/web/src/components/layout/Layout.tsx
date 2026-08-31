@@ -43,6 +43,7 @@ export const Layout: React.FC<LayoutProps> = ({
     { id: 'enrichment', label: 'Inteligência comercial' },
     { id: 'outreach', label: 'Outreach' },
     { id: 'whatsapp', label: 'WhatsApp' },
+    { id: 'history', label: 'Histórico' },
   ];
 
   return (

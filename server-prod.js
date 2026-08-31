@@ -2689,6 +2689,197 @@ app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
   }
 });
 
+// GET /api/outreach/dispatches — histórico unificado de disparos (email +
+// WhatsApp) do org, mais recentes primeiro.
+//   ?channel=email|whatsapp  ?campaignId=  ?status=sent|pending|failed
+//   ?q=<busca>  ?limit=50  ?offset=0
+// Fontes: OutreachMessage (email de campanha/suíte) e WhatsAppMessage
+// direction=OUTBOUND (campanha e conversa 1:1). As duas fontes são mescladas
+// em memória (volume por org é pequeno) para poder ordenar/paginar unificado.
+app.get('/api/outreach/dispatches', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const channel = req.query.channel === 'email' || req.query.channel === 'whatsapp'
+      ? String(req.query.channel)
+      : null;
+    const campaignId = req.query.campaignId ? String(req.query.campaignId) : null;
+    const statusFilter = ['sent', 'pending', 'failed'].includes(String(req.query.status))
+      ? String(req.query.status)
+      : null;
+    const q = String(req.query.q || '').toLowerCase().trim();
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const bucketForEmail = (msg) => {
+      if (msg.status === 'SENT') return 'sent';
+      if (msg.error || ['FAILED', 'BOUNCED'].includes(msg.status)) return 'failed';
+      return 'pending'; // GENERATING, SCHEDULED, SENDING
+    };
+    const bucketForWhatsApp = (msg) => {
+      if (['SENT', 'DELIVERED', 'READ'].includes(msg.status)) return 'sent';
+      if (msg.status === 'FAILED' || msg.error) return 'failed';
+      return 'pending'; // PENDING
+    };
+
+    // Últimos 500 por canal bastam para o histórico paginado de um org.
+    const FETCH_CAP = 500;
+    const [emailMessages, waMessages] = await Promise.all([
+      channel === 'whatsapp'
+        ? []
+        : prisma.outreachMessage.findMany({
+            where: {
+              contact: {
+                campaign: {
+                  tenantId: user.orgId,
+                  ...(campaignId ? { id: campaignId } : {}),
+                },
+              },
+            },
+            include: { contact: { include: { campaign: true } } },
+            orderBy: { createdAt: 'desc' },
+            take: FETCH_CAP,
+          }),
+      channel === 'email'
+        ? []
+        : prisma.whatsAppMessage.findMany({
+            where: {
+              orgId: user.orgId,
+              direction: 'OUTBOUND',
+              ...(campaignId ? { campaignContactId: { not: null } } : {}),
+            },
+            include: { conversation: true },
+            orderBy: { createdAt: 'desc' },
+            take: FETCH_CAP,
+          }),
+    ]);
+
+    // WhatsAppMessage não tem relation com WhatsAppCampaignContact (só o FK
+    // campaignContactId) — resolve campanhas em query separada.
+    const waContactIds = Array.from(
+      new Set(waMessages.map((m) => m.campaignContactId).filter(Boolean))
+    );
+    const waContacts = waContactIds.length
+      ? await prisma.whatsAppCampaignContact.findMany({
+          where: { id: { in: waContactIds } },
+          include: { campaign: { select: { id: true, name: true } } },
+        })
+      : [];
+    const waContactById = new Map(waContacts.map((c) => [c.id, c]));
+
+    // Dados do lead em uma única query (OutreachContact não tem relation
+    // com Prospect — o vínculo é por prospectId).
+    const prospectIds = new Set([
+      ...emailMessages.map((m) => m.contact?.prospectId).filter(Boolean),
+      ...waMessages.map((m) => m.conversation?.prospectId).filter(Boolean),
+    ]);
+    const prospects = prospectIds.size
+      ? await prisma.prospect.findMany({
+          where: { id: { in: Array.from(prospectIds) }, orgId: user.orgId },
+          select: { id: true, companyName: true, cnpj: true, cnpjEmail: true },
+        })
+      : [];
+    const prospectById = new Map(prospects.map((p) => [p.id, p]));
+
+    const dispatches = [
+      ...emailMessages.map((m) => {
+        const prospect = prospectById.get(m.contact?.prospectId);
+        return {
+          id: `email:${m.id}`,
+          channel: 'email',
+          prospectId: m.contact?.prospectId || null,
+          companyName: prospect?.companyName || null,
+          cnpj: prospect?.cnpj || null,
+          destination: prospect?.cnpjEmail || null,
+          campaignId: m.contact?.campaignId || null,
+          campaignName: m.contact?.campaign?.name || null,
+          origin: m.contact?.campaign?.trigger === 'on_enrichment' ? 'auto' : 'manual',
+          preview: m.subject,
+          status: m.status,
+          bucket: bucketForEmail(m),
+          error: m.error || null,
+          sentAt: m.sentAt?.toISOString() || null,
+          createdAt: m.createdAt.toISOString(),
+        };
+      }),
+      ...waMessages
+        .map((m) => {
+          const prospect = prospectById.get(m.conversation?.prospectId);
+          const contact = m.campaignContactId ? waContactById.get(m.campaignContactId) : null;
+          return {
+            id: `wa:${m.id}`,
+            channel: 'whatsapp',
+            prospectId: m.conversation?.prospectId || null,
+            companyName: prospect?.companyName || null,
+            cnpj: prospect?.cnpj || null,
+            destination: m.conversation?.phoneNumber || null,
+            campaignId: contact?.campaignId || null,
+            campaignName: contact?.campaign?.name || null,
+            origin: contact ? 'manual' : 'conversation',
+            preview: (m.content || '').replace(/\s+/g, ' ').slice(0, 120) || null,
+            status: m.status,
+            bucket: bucketForWhatsApp(m),
+            error: m.error || null,
+            sentAt: m.sentAt?.toISOString() || null,
+            createdAt: m.createdAt.toISOString(),
+          };
+        })
+        .filter((d) => !campaignId || d.campaignId === campaignId),
+    ];
+
+    // Campanhas presentes no histórico (para o dropdown de filtro da UI).
+    const campaignOptions = [];
+    const seenCampaigns = new Set();
+    for (const d of dispatches) {
+      if (d.campaignId && !seenCampaigns.has(d.campaignId)) {
+        seenCampaigns.add(d.campaignId);
+        campaignOptions.push({ id: d.campaignId, name: d.campaignName, channel: d.channel });
+      }
+    }
+
+    const filtered = dispatches.filter((d) => {
+      if (statusFilter && d.bucket !== statusFilter) return false;
+      if (q) {
+        const haystack = [d.companyName, d.destination, d.preview, d.campaignName, d.cnpj]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+
+    filtered.sort((a, b) => {
+      const ta = new Date(a.sentAt || a.createdAt).getTime();
+      const tb = new Date(b.sentAt || b.createdAt).getTime();
+      return tb - ta;
+    });
+
+    const counts = {
+      sent: filtered.filter((d) => d.bucket === 'sent').length,
+      pending: filtered.filter((d) => d.bucket === 'pending').length,
+      failed: filtered.filter((d) => d.bucket === 'failed').length,
+    };
+
+    res.json({
+      success: true,
+      data: {
+        items: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+        hasMore: offset + limit < filtered.length,
+        counts,
+        campaigns: campaignOptions,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[dispatches] erro:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─── Timeline ──────────────────────────────────────────────────────
 
 // GET /api/prospects/:id/outreach-timeline — outreach events for a lead

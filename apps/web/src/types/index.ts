@@ -178,7 +178,41 @@ export interface EnrichedCnpjContact {
   dataRestricted?: boolean;
 }
 
-export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'outreach' | 'whatsapp' | 'settings';
+export type ActiveTab = 'dashboard' | 'prospects' | 'pipeline' | 'risk' | 'workflows' | 'enrichment' | 'outreach' | 'whatsapp' | 'history' | 'settings';
+
+// --- Histórico de disparos (email + WhatsApp) ---------------------------------
+
+export interface DispatchHistoryItem {
+  id: string; // "email:<cuid>" | "wa:<cuid>"
+  channel: 'email' | 'whatsapp';
+  prospectId: string | null;
+  companyName: string | null;
+  cnpj: string | null;
+  destination: string | null; // email do lead ou telefone
+  campaignId: string | null;
+  campaignName: string | null;
+  origin: 'auto' | 'manual' | 'conversation'; // suíte automática, campanha manual, conversa 1:1
+  preview: string | null; // assunto (email) ou início da mensagem (WhatsApp)
+  status: string; // status bruto do canal
+  bucket: 'sent' | 'pending' | 'failed';
+  error: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+export interface DispatchHistoryCampaignOption {
+  id: string;
+  name: string | null;
+  channel: 'email' | 'whatsapp';
+}
+
+export interface DispatchHistoryResult {
+  items: DispatchHistoryItem[];
+  total: number;
+  hasMore: boolean;
+  counts: { sent: number; pending: number; failed: number };
+  campaigns: DispatchHistoryCampaignOption[];
+}
 
 // --- Outreach / Cold sales via Gmail ----------------------------------------
 

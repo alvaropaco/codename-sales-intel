@@ -58,6 +58,10 @@ const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
     title: 'WhatsApp',
     subtitle: 'Conexão, campanhas de prospecção e conversas em atendimento.',
   },
+  history: {
+    title: 'Histórico de disparos',
+    subtitle: 'Auditoria de envios de email e WhatsApp com status, erros e destino.',
+  },
   settings: {
     title: 'Preferências',
     subtitle: 'Ajustes da organização, segmentos de interesse e preferências comerciais.',

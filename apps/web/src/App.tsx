@@ -7,6 +7,7 @@ import { CreditRiskView } from '@/components/views/CreditRiskView';
 import { WorkflowsView } from '@/components/views/WorkflowsView';
 import { CnpjEnrichmentView } from '@/components/views/CnpjEnrichmentView';
 import { OutreachView } from '@/components/views/OutreachView';
+import { DispatchHistoryView } from '@/components/views/DispatchHistoryView';
 import { WhatsAppView } from '@/components/views/WhatsAppView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
@@ -34,6 +35,7 @@ const TAB_FROM_PATH: Record<string, ActiveTab> = {
   '/enrichment': 'enrichment',
   '/outreach': 'outreach',
   '/whatsapp': 'whatsapp',
+  '/history': 'history',
   '/settings': 'settings',
 };
 
@@ -106,6 +108,10 @@ export function App() {
     whatsapp: {
       title: 'Prospecção via WhatsApp',
       description: 'Conecte seu WhatsApp, crie campanhas de prospecção e atenda conversas em um só lugar.',
+    },
+    history: {
+      title: 'Histórico de disparos',
+      description: 'Auditoria de todos os envios de email e WhatsApp das campanhas e suítes de outreach.',
     },
     settings: {
       title: 'Configurações',
@@ -319,6 +325,8 @@ export function App() {
       {activeTab === 'outreach' && <OutreachView prospects={prospects} />}
 
       {activeTab === 'whatsapp' && <WhatsAppView prospects={prospects} />}
+
+      {activeTab === 'history' && <DispatchHistoryView />}
 
       {activeTab === 'settings' && <SettingsView profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />}
 

@@ -3,6 +3,7 @@ import {
   Building2,
   ChevronDown,
   CreditCard,
+  History,
   Kanban,
   LayoutDashboard,
   MessageCircle,
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'enrichment' as ActiveTab, label: 'Inteligência comercial', icon: Network, badge: null },
     { id: 'outreach' as ActiveTab, label: 'Outreach', icon: Send, badge: null },
     { id: 'whatsapp' as ActiveTab, label: 'WhatsApp', icon: MessageCircle, badge: null },
+    { id: 'history' as ActiveTab, label: 'Histórico de disparos', icon: History, badge: null },
   ];
 
   const appItems = [
