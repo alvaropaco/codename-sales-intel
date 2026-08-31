@@ -52,14 +52,28 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return json.data;
 }
 
-export async function upgradeToPremium(): Promise<PlanInfo> {
-  const res = await fetch(`${API_BASE}/plan/upgrade`, {
+/** Cria Checkout Session de assinatura do Premium e devolve a URL do Stripe. */
+export async function createBillingCheckout(): Promise<{ url: string; sessionId: string }> {
+  const res = await fetch(`${API_BASE}/billing/checkout-session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
   const json = await res.json();
   if (!res.ok || !json.success) {
-    throw new Error(json.error || 'Erro ao fazer upgrade do plano');
+    throw new Error(json.error || 'Erro ao iniciar o checkout');
+  }
+  return json.data;
+}
+
+/** Cria sessão do Customer Portal (cartão, cancelamento, faturas). */
+export async function createBillingPortal(): Promise<{ url: string }> {
+  const res = await fetch(`${API_BASE}/billing/portal-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao abrir o portal de assinatura');
   }
   return json.data;
 }

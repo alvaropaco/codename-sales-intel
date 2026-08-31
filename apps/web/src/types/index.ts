@@ -2,6 +2,12 @@ export type ProspectStatus = 'qualified' | 'prospect' | 'lead' | 'contacted' | '
 
 export type PlanType = 'trial' | 'premium';
 
+export interface PlanBillingInfo {
+  configured: boolean; // servidor com STRIPE_SECRET_KEY/STRIPE_PRICE_ID
+  hasSubscription: boolean;
+  subscriptionStatus: string | null; // active, trialing, past_due, canceled…
+}
+
 export interface PlanInfo {
   plan: PlanType;
   canExport: boolean;
@@ -9,6 +15,7 @@ export interface PlanInfo {
   leadCount: number;
   leadsRemaining: number | null;
   atLeadLimit: boolean;
+  billing?: PlanBillingInfo;
 }
 
 export interface EnrichmentSummary {

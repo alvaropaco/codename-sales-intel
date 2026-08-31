@@ -16,6 +16,12 @@ model Organization {
   name      String
   cnpj      String?    @unique
   plan      String     @default("trial") // trial | premium
+  // ── Billing Stripe (assinatura do plano premium) ──
+  // O plano acompanha o ciclo de vida da assinatura via webhook
+  // (stripe-billing.js): active/trialing/past_due = premium.
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?  @unique
+  stripePlanStatus     String?  // active, trialing, past_due, canceled…
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   

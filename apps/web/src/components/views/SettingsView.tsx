@@ -12,7 +12,8 @@ import {
   disconnectGmailAccount,
   connectEmailAccount,
   fetchPlan,
-  upgradeToPremium,
+  createBillingCheckout,
+  createBillingPortal,
 } from '@/services/api';
 
 export function SettingsView({
@@ -34,6 +35,8 @@ export function SettingsView({
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
+  const [checkoutStarting, setCheckoutStarting] = useState(false);
+  const [portalStarting, setPortalStarting] = useState(false);
 
   const [showOtherProviders, setShowOtherProviders] = useState(false);
   const [connectingProvider, setConnectingProvider] = useState<'smtp' | 'resend' | null>(null);
@@ -68,21 +71,43 @@ export function SettingsView({
       setGmailNotice(`Gmail conectado: ${params.get('gmail_connected')}`);
     } else if (params.get('gmail_error')) {
       setGmailNotice('Não foi possível conectar a conta do Gmail.');
+    } else if (params.get('checkout') === 'success') {
+      // O plano é ativado pelo webhook do Stripe, que pode chegar alguns
+      // segundos depois do redirect — reconsulta o plano com um pequeno atraso.
+      setPlanNotice('Pagamento confirmado! Ativando o plano Premium…');
+      setTimeout(() => void loadPlan(), 3000);
+      setTimeout(() => void loadPlan(), 10000);
+    } else if (params.get('checkout') === 'cancel') {
+      setPlanNotice('Checkout cancelado — você continua no plano Trial.');
     } else if (params.get('plan') === 'upgrade') {
       setPlanNotice('Faça o upgrade para liberar leads ilimitados e exportação de dados.');
     }
+    if (params.get('checkout')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, []);
 
-  const handleUpgrade = async () => {
-    setPlanLoading(true);
+  const handleSubscribe = async () => {
+    setCheckoutStarting(true);
     setPlanNotice(null);
     try {
-      setPlan(await upgradeToPremium());
-      setPlanNotice('Plano Premium ativado! Leads ilimitados e exportação liberados.');
+      const { url } = await createBillingCheckout();
+      window.location.href = url;
     } catch (err) {
-      setPlanNotice(err instanceof Error ? err.message : 'Erro ao fazer upgrade');
-    } finally {
-      setPlanLoading(false);
+      setPlanNotice(err instanceof Error ? err.message : 'Erro ao iniciar o checkout');
+      setCheckoutStarting(false);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    setPortalStarting(true);
+    setPlanNotice(null);
+    try {
+      const { url } = await createBillingPortal();
+      window.location.href = url;
+    } catch (err) {
+      setPlanNotice(err instanceof Error ? err.message : 'Erro ao abrir o portal de assinatura');
+      setPortalStarting(false);
     }
   };
 
@@ -232,10 +257,28 @@ export function SettingsView({
           {!planLoading && plan && plan.plan === 'trial' && (
             <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/20 dark:bg-amber-500/10 sm:flex-row sm:items-center">
               <p className="text-sm text-amber-800 dark:text-amber-200">
-                No plano Trial você pode captar até {plan.leadLimit} leads e não pode exportar dados. Faça o upgrade para liberar tudo.
+                No plano Trial você pode captar até {plan.leadLimit} leads e não pode exportar dados. Assine o Premium para liberar tudo.
               </p>
-              <Button variant="gradient" size="sm" onClick={handleUpgrade} disabled={planLoading} className="gap-2">
-                <Crown className="h-4 w-4" /> Fazer upgrade
+              {plan.billing?.configured === false ? (
+                <p className="shrink-0 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                  Pagamentos em breve
+                </p>
+              ) : (
+                <Button variant="gradient" size="sm" onClick={handleSubscribe} disabled={checkoutStarting} className="gap-2">
+                  <Crown className="h-4 w-4" /> {checkoutStarting ? 'Redirecionando…' : 'Assinar Premium'}
+                </Button>
+              )}
+            </div>
+          )}
+
+          {!planLoading && plan && plan.plan === 'premium' && plan.billing?.hasSubscription && (
+            <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/5 sm:flex-row sm:items-center">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Assinatura Stripe {plan.billing.subscriptionStatus ? `· status: ${plan.billing.subscriptionStatus}` : ''}
+                {plan.billing.subscriptionStatus === 'past_due' && ' — atualize o cartão para evitar o cancelamento.'}
+              </p>
+              <Button variant="outline" size="sm" onClick={handleManageSubscription} disabled={portalStarting} className="gap-2 shrink-0">
+                {portalStarting ? 'Abrindo…' : 'Gerenciar assinatura'}
               </Button>
             </div>
           )}

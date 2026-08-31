@@ -76,7 +76,9 @@ const { closeWhatsAppQueues, getWhatsAppQueues } = require('./whatsapp-queues');
 // Self-hosted Firebase Auth callback endpoints. Registered before the body
 // parsers so raw OAuth POSTs to /__/auth/* can be forwarded untouched.
 app.use('/__/auth', firebaseAuth.createFirebaseAuthHandlerProxy());
-app.use(express.json());
+// verify captura o body bruto: a verificação de assinatura do webhook do
+// Stripe (stripe-billing) precisa do payload exato como foi enviado.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(firebaseAuth.cookieParserMiddleware);
 
 // Global error handling middleware
@@ -97,6 +99,38 @@ app.use(express.static('public'));
 // /api/auth/* é público (login/logout/resolver sessão); todo o restante de /api
 // exige um cookie de sessão válido emitido após a verificação do Firebase ID token.
 app.use('/api/auth', firebaseAuth.createAuthRouter(prisma));
+// Webhook do Stripe: PÚBLICO — autenticado por assinatura HMAC própria, não
+// por sessão. Precisa ser registrado antes do guard global de /api abaixo.
+app.post('/api/webhooks/stripe', async (req, res) => {
+  try {
+    const stripeBilling = require('./stripe-billing');
+    const secret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!secret) {
+      // Sem segredo configurado o endpoint não pode validar nada — falha
+      // fechada, nunca aceita evento não verificado.
+      console.error('[billing] STRIPE_WEBHOOK_SECRET não configurado — webhook rejeitado');
+      return res.status(503).json({ success: false, error: 'Webhook não configurado.' });
+    }
+
+    const signature = req.headers['stripe-signature'];
+    const stripe = stripeBilling.getStripe();
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.rawBody, signature, secret);
+    } catch (err) {
+      console.warn(`[billing] assinatura de webhook inválida: ${err.message}`);
+      return res.status(400).json({ success: false, error: 'Assinatura de webhook inválida.' });
+    }
+
+    const result = await stripeBilling.handleStripeWebhookEvent(prisma, event);
+    if (!result.handled) console.log(`[billing] evento ${event.type}: ${result.reason}`);
+    res.json({ received: true });
+  } catch (err) {
+    console.error('[billing] webhook error:', err.message);
+    // 500 faz o Stripe reentregar com backoff — correto para falha transitória.
+    res.status(500).json({ error: 'Webhook handler failed' });
+  }
+});
 app.use('/api', firebaseAuth.createRequireAuth(prisma));
 
 // Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
@@ -804,6 +838,10 @@ app.get('/api/plan', async (req, res) => {
     const plan = await getOrgPlan(orgId);
     const { canExport, leadLimit } = planLimits(plan);
     const leadCount = await countOrgLeads(orgId);
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { stripeCustomerId: true, stripeSubscriptionId: true, stripePlanStatus: true },
+    });
     res.json({
       success: true,
       data: {
@@ -813,6 +851,11 @@ app.get('/api/plan', async (req, res) => {
         leadCount,
         leadsRemaining: leadLimit === null ? null : Math.max(0, leadLimit - leadCount),
         atLeadLimit: leadLimit !== null && leadCount >= leadLimit,
+        billing: {
+          configured: require('./stripe-billing').isBillingConfigured(),
+          hasSubscription: Boolean(org?.stripeSubscriptionId),
+          subscriptionStatus: org?.stripePlanStatus || null,
+        },
       },
       timestamp: new Date().toISOString(),
     });
@@ -821,25 +864,57 @@ app.get('/api/plan', async (req, res) => {
   }
 });
 
-// POST /api/plan/upgrade - promove a Organization para "premium".
-// (Placeholder de pagamento: em produção integrar com um PSP/checkout real.)
-app.post('/api/plan/upgrade', async (req, res) => {
+// ─── Billing Stripe (assinatura do plano premium) ───────────────────────────
+// O upgrade passa por Checkout Session (mode=subscription) e o plano só
+// muda via webhook — a fonte de verdade é o ciclo de vida da assinatura.
+
+// Origem do frontend para success_url/cancel_url do checkout e do portal.
+function resolveAppBaseUrl(req) {
+  return process.env.APP_URL || req.headers.origin || `${req.protocol}://${req.get('host')}`;
+}
+
+// POST /api/billing/checkout-session — cria Checkout Session de assinatura
+// do plano premium e devolve a URL para redirecionar o usuário.
+app.post('/api/billing/checkout-session', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
-    await prisma.organization.update({
-      where: { id: orgId },
-      data: { plan: 'premium' },
-    });
-    const leadCount = await countOrgLeads(orgId);
-    res.json({
-      success: true,
-      data: { plan: 'premium', canExport: true, leadLimit: null, leadCount, leadsRemaining: null, atLeadLimit: false },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    res.status(error.status || 500).json({ success: false, error: error.message });
+    const stripeBilling = require('./stripe-billing');
+    if (!stripeBilling.isBillingConfigured()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Billing não configurado no servidor (STRIPE_SECRET_KEY/STRIPE_PRICE_ID).',
+      });
+    }
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
+    if (!org) return res.status(404).json({ success: false, error: 'Organization not found' });
+
+    const session = await stripeBilling.createPremiumCheckoutSession(prisma, org, resolveAppBaseUrl(req));
+    console.log(`[billing] checkout session criada para org ${orgId}: ${session.id}`);
+    res.json({ success: true, data: { url: session.url, sessionId: session.id }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[billing] checkout-session error:', err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
+
+// POST /api/billing/portal-session — Customer Portal (cartão, cancelar, faturas).
+app.post('/api/billing/portal-session', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const stripeBilling = require('./stripe-billing');
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
+    if (!org) return res.status(404).json({ success: false, error: 'Organization not found' });
+
+    const session = await stripeBilling.createBillingPortalSession(prisma, org, resolveAppBaseUrl(req));
+    res.json({ success: true, data: { url: session.url }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[billing] portal-session error:', err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/webhooks/stripe — definido no topo do arquivo (antes do guard
+// global de auth em /api), pois é endpoint público autenticado por HMAC.
 
 // GET /api/prospects/export - CSV dos prospects (somente plano premium).
 app.get('/api/prospects/export', async (req, res) => {
