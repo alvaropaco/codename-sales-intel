@@ -10,13 +10,14 @@ import {
   Clock,
   XCircle,
   Zap,
+  RotateCcw,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { DispatchHistoryItem, DispatchHistoryResult } from '@/types';
-import { fetchDispatchHistory, DispatchHistoryFilters } from '@/services/api';
+import { fetchDispatchHistory, DispatchHistoryFilters, retryDispatches } from '@/services/api';
 
 const CHANNEL_LABEL: Record<string, string> = {
   email: 'Email',
@@ -75,6 +76,9 @@ export const DispatchHistoryView: React.FC = () => {
   const [campaignId, setCampaignId] = useState('');
   const [search, setSearch] = useState('');
 
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryingAll, setRetryingAll] = useState(false);
+
   // Debounce da busca livre para não bater na API a cada tecla.
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -132,6 +136,32 @@ export const DispatchHistoryView: React.FC = () => {
     }
   };
 
+  const handleRetry = async (id: string) => {
+    setRetryingId(id);
+    setError(null);
+    try {
+      await retryDispatches({ ids: [id] });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao reprocessar disparo');
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const handleRetryAll = async () => {
+    setRetryingAll(true);
+    setError(null);
+    try {
+      await retryDispatches({ allFailed: true });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao reprocessar falhas');
+    } finally {
+      setRetryingAll(false);
+    }
+  };
+
   const counters = [
     { label: 'Total no filtro', value: data?.total ?? 0, icon: <History className="h-4 w-4" /> },
     { label: 'Enviados', value: data?.counts.sent ?? 0, icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" /> },
@@ -148,9 +178,21 @@ export const DispatchHistoryView: React.FC = () => {
             Todos os envios de email e WhatsApp disparados pelas suítes e campanhas, com status e erros.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} className="gap-2">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRetryAll}
+            disabled={retryingAll || (data?.counts.failed ?? 0) === 0}
+            className="gap-2"
+          >
+            {retryingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+            Reprocessar falhas
+          </Button>
+          <Button variant="outline" size="sm" onClick={load} className="gap-2">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -284,10 +326,24 @@ export const DispatchHistoryView: React.FC = () => {
                             </p>
                             {d.error && <p className="max-w-64 truncate text-[10px] font-semibold text-red-500">{d.error}</p>}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2.5">
-                            <Badge variant={bucket.variant} className="gap-1">
-                              {bucket.icon} {STATUS_LABEL[d.status] || bucket.label}
-                            </Badge>
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={bucket.variant} className="gap-1 whitespace-nowrap">
+                                {bucket.icon} {STATUS_LABEL[d.status] || bucket.label}
+                              </Badge>
+                              {d.bucket === 'failed' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRetry(d.id)}
+                                  disabled={retryingId === d.id}
+                                  className="h-6 gap-1 px-2 text-[11px]"
+                                >
+                                  {retryingId === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                                  Reenviar
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -321,6 +377,18 @@ export const DispatchHistoryView: React.FC = () => {
                       )}
                       <p className="line-clamp-2 text-muted-foreground">{d.preview || '—'}</p>
                       {d.error && <p className="text-[10px] font-semibold text-red-500">{d.error}</p>}
+                      {d.bucket === 'failed' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRetry(d.id)}
+                          disabled={retryingId === d.id}
+                          className="h-7 gap-1 px-2 text-[11px]"
+                        >
+                          {retryingId === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                          Reenviar
+                        </Button>
+                      )}
                     </div>
                   );
                 })}

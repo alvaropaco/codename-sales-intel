@@ -626,6 +626,31 @@ export async function fetchDispatchHistory(
   return json.data;
 }
 
+export interface RetryDispatchesPayload {
+  ids?: string[];
+  allFailed?: boolean;
+}
+
+export interface RetryDispatchesResult {
+  emailRetried: number;
+  whatsappRetried: number;
+  retried: number;
+}
+
+/** Re-enfileira disparos que falharam (email e/ou WhatsApp). */
+export async function retryDispatches(payload: RetryDispatchesPayload): Promise<RetryDispatchesResult> {
+  const res = await fetch(`${API_BASE}/outreach/dispatches/retry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao reprocessar disparos');
+  }
+  return json.data;
+}
+
 export async function startOutreachCampaign(
   campaignId: string,
   prospectIds: string[],

@@ -285,6 +285,11 @@ async function processSend(job) {
     return { cancelled: true, reason: message.contact.status };
   }
 
+  // Idempotência: evita reenvio duplicado se o job for entregue mais de uma vez.
+  if (message.status === 'SENT') {
+    return { already_sent: true };
+  }
+
   // Check rate limit
   if (!message.contact.emailAccount_id) {
     throw new Error(`No email account configured for contact ${message.contactId}`);
@@ -327,13 +332,39 @@ async function processSend(job) {
 
   // Build MIME and send (provider-agnostic: gmail OAuth, SMTP ou Resend)
   const messageIdHeader = crypto.randomUUID();
-  const result = await sendEmailForAccount(prisma, message.contact.emailAccount_id, {
-    to: recipientEmail,
-    subject: message.subject,
-    body: message.body,
-    htmlBody: message.htmlBody,
-    messageId: messageIdHeader,
-  });
+  let result;
+  try {
+    result = await sendEmailForAccount(prisma, message.contact.emailAccount_id, {
+      to: recipientEmail,
+      subject: message.subject,
+      body: message.body,
+      htmlBody: message.htmlBody,
+      messageId: messageIdHeader,
+    });
+  } catch (err) {
+    const errorMsg = String(err?.message || err);
+    console.error(`[send] ✗ failed to ${recipientEmail}:`, errorMsg);
+    // Marca a mensagem/contacto como falha para ficar visível no histórico e
+    // permitir retry manual. O job re-lança o erro para o Bull re-tentar com backoff.
+    await prisma.outreachMessage.update({
+      where: { id: messageId },
+      data: { status: 'FAILED', error: errorMsg },
+    }).catch(() => {});
+    await prisma.outreachContact.update({
+      where: { id: message.contactId },
+      data: { status: 'FAILED' },
+    }).catch(() => {});
+    await prisma.outreachEvent.create({
+      data: {
+        contactId: message.contactId,
+        messageId,
+        type: 'email_failed',
+        status: 'failed',
+        details: { error: errorMsg },
+      },
+    }).catch(() => {});
+    throw err;
+  }
 
   // Update message → SENT
   // (colunas gmailMessageId/gmailThreadId são históricas: guardam os ids

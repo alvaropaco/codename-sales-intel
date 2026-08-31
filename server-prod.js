@@ -2955,6 +2955,96 @@ app.get('/api/outreach/dispatches', async (req, res) => {
   }
 });
 
+// POST /api/outreach/dispatches/retry — reprocessa disparos que falharam.
+//   body: { ids?: ["email:<cuid>"|"wa:<cuid>"], allFailed?: boolean }
+// Re-enfileira o envio (email → outreach:message-send, whatsapp → whatsapp:send)
+// resetando o status para SCHEDULED/PENDING e limpando o erro.
+app.post('/api/outreach/dispatches/retry', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const { ids, allFailed } = req.body || {};
+    const emailIds = [];
+    const waIds = [];
+    for (const raw of (Array.isArray(ids) ? ids : [])) {
+      const s = String(raw);
+      if (s.startsWith('email:')) emailIds.push(s.slice('email:'.length));
+      else if (s.startsWith('wa:')) waIds.push(s.slice('wa:'.length));
+    }
+
+    const sendQueue = getQueues().send;
+    const waSendQueue = getWhatsAppQueues().send;
+    let emailRetried = 0;
+    let whatsappRetried = 0;
+
+    // ── Email ──
+    if (emailIds.length || allFailed) {
+      const failedEmails = await prisma.outreachMessage.findMany({
+        where: {
+          contact: { campaign: { tenantId: user.orgId } },
+          ...(allFailed ? {} : { id: { in: emailIds } }),
+          status: 'FAILED',
+        },
+        include: { contact: true },
+      });
+
+      for (const m of failedEmails) {
+        await prisma.outreachMessage.update({
+          where: { id: m.id },
+          data: { status: 'SCHEDULED', error: null },
+        });
+        // Só "ressuscita" contactos em estado FAILED (não mexe em terminais).
+        await prisma.outreachContact.updateMany({
+          where: { id: m.contactId, status: 'FAILED' },
+          data: { status: 'SCHEDULED', cancelReason: null },
+        });
+        await sendQueue.add(
+          { messageId: m.id },
+          { attempts: 3, backoff: { type: 'exponential', delay: 60 * 1000 } }
+        );
+        emailRetried++;
+      }
+    }
+
+    // ── WhatsApp ──
+    if (waIds.length || allFailed) {
+      const failedWa = await prisma.whatsAppMessage.findMany({
+        where: {
+          orgId: user.orgId,
+          direction: 'OUTBOUND',
+          ...(allFailed ? {} : { id: { in: waIds } }),
+          status: 'FAILED',
+        },
+      });
+
+      for (const m of failedWa) {
+        await prisma.whatsAppMessage.update({
+          where: { id: m.id },
+          data: { status: 'PENDING', error: null, failedAt: null },
+        });
+        await waSendQueue.add(
+          { messageId: m.id },
+          { attempts: 5, backoff: { type: 'exponential', delay: 5000 } }
+        );
+        whatsappRetried++;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: { emailRetried, whatsappRetried, retried: emailRetried + whatsappRetried },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[dispatches] retry erro:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─── Timeline ──────────────────────────────────────────────────────
 
 // GET /api/prospects/:id/outreach-timeline — outreach events for a lead
