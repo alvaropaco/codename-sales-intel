@@ -26,6 +26,7 @@ const {
   ACCOUNT_STATUS,
 } = require('./whatsapp-engine');
 const whatsappNats = require('./whatsapp-nats');
+const metrics = require('./metrics');
 
 let _prisma = null;
 function getPrisma() {
@@ -241,6 +242,7 @@ async function processSend(job) {
         error: null,
       },
     });
+    metrics.incWhatsAppSent();
 
     await prisma.whatsAppConversation.update({
       where: { id: message.conversationId },
@@ -270,6 +272,7 @@ async function processSend(job) {
 
     return { providerMessageId: result.providerMessageId };
   } catch (err) {
+    metrics.incWhatsAppFailed();
     await prisma.whatsAppMessage.update({
       where: { id: message.id },
       data: { status: 'FAILED', error: err.message, failedAt: new Date() },

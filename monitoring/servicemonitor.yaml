@@ -1,0 +1,63 @@
+# Service + Endpoints (manual) + ServiceMonitor para o endpoint /metrics do B2Base.
+#
+# O app expõe /metrics em METRICS_PORT (default 9090), separado do app (3001).
+# Como o B2Base roda como container (Coolify/Docker) e não como Deployment k8s
+# com pods, seguimos o mesmo padrão manual do b2base-ingress.yaml: Service sem
+# selector + Endpoints apontando para o IP do host docker (172.19.0.1).
+#
+# Ajuste antes de aplicar:
+#   1. O `ip` do Endpoints para o IP do seu host/container (ver `b2base-ingress.yaml`).
+#   2. O `port` se METRICS_PORT for diferente de 9090.
+#   3. O label `release` do ServiceMonitor para o seletor do seu Prometheus
+#      (kube-prometheus-stack costuma usar `release: kube-prometheus-stack`).
+#
+# Pré-requisito: instalar a dependência no app (`pnpm add prom-client`) e
+# publicar a porta 9090 do container no host.
+apiVersion: v1
+kind: Service
+metadata:
+  name: b2base-metrics
+  namespace: kube-system
+  labels:
+    app: b2base
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: b2base-metrics
+  namespace: kube-system
+subsets:
+  - addresses:
+      - ip: 172.19.0.1
+    ports:
+      - name: metrics
+        port: 9090
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: b2base-metrics
+  namespace: kube-system
+  labels:
+    app: b2base
+    release: kube-prometheus-stack # <- ajuste para o label do seu Prometheus Operator
+spec:
+  selector:
+    matchLabels:
+      app: b2base
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 20s

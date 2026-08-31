@@ -13,6 +13,7 @@
 #                      schema keeps B2Base tables isolated and lets migrate
 #                      deploy run cleanly.
 #   PORT               3001
+#   METRICS_PORT       9090  (endpoint Prometheus /metrics, separado do app)
 #   NODE_ENV           production
 #   CNPJ_MCP_URL       https://mcps.0xcloud.net/mcp
 #   CNPJ_MCP_TOKEN     <token>
@@ -114,6 +115,7 @@ COPY public ./public
 COPY prisma ./prisma
 
 EXPOSE 3001
+EXPOSE 9090
 
 # Apply DB migrations, then boot the server.
 CMD ["sh", "-c", "npx prisma migrate deploy && node server-prod.js"]

@@ -18,6 +18,7 @@ const { createWorker, registerWorker } = require('./outreach-queues');
 const { listHistory } = require('./gmail-api');
 const { sendEmailForAccount } = require('./email-provider');
 const { checkLimit, calculateDelay, getConfig: getRateConfig } = require('./outreach-rate-limiter');
+const metrics = require('./metrics');
 
 // Lazy singleton — workers share one connection pool
 let _prisma = null;
@@ -303,6 +304,7 @@ async function processSend(job) {
 
   if (!rateLimit.allowed) {
     console.log(`[send] ⊘ rate limited, retrying in ${rateLimit.retryIn}ms`);
+    metrics.incEmailRateLimited();
     const { createQueue } = require('./outreach-queues');
     const sendQueue = createQueue('outreach:message-send', {
       redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
@@ -323,6 +325,7 @@ async function processSend(job) {
     message.body.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)?.[0];
 
   if (!recipientEmail) {
+    metrics.incEmailFailed();
     await prisma.outreachMessage.update({
       where: { id: messageId },
       data: { status: 'FAILED', error: 'No recipient email found' },
@@ -344,6 +347,7 @@ async function processSend(job) {
   } catch (err) {
     const errorMsg = String(err?.message || err);
     console.error(`[send] ✗ failed to ${recipientEmail}:`, errorMsg);
+    metrics.incEmailFailed();
     // Marca a mensagem/contacto como falha para ficar visível no histórico e
     // permitir retry manual. O job re-lança o erro para o Bull re-tentar com backoff.
     await prisma.outreachMessage.update({
@@ -379,6 +383,7 @@ async function processSend(job) {
       sentAt: new Date(),
     },
   });
+  metrics.incEmailSent();
 
   // Update contact → SENT
   await prisma.outreachContact.update({

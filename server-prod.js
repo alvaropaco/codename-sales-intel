@@ -71,6 +71,7 @@ const whatsappWorkers = require('./whatsapp-workers');
 const whatsappNats = require('./whatsapp-nats');
 const whatsappUtils = require('./whatsapp-utils');
 const { closeWhatsAppQueues, getWhatsAppQueues } = require('./whatsapp-queues');
+const metrics = require('./metrics');
 
 // Middleware
 // Self-hosted Firebase Auth callback endpoints. Registered before the body
@@ -3844,6 +3845,9 @@ async function start() {
     } catch (err) {
       console.error('[whatsapp] falha ao retomar sessões:', err.message);
     }
+
+    // Endpoint de métricas Prometheus (METRICS_PORT, default 9090).
+    metrics.startMetricsServer(prisma);
 
     app.listen(PORT, () => {
       console.log('');

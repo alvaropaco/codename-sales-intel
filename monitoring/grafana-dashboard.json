@@ -1,0 +1,211 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Email (Outreach)",
+      "id": 100,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Emails enviados (taxa)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(b2base_outreach_emails_sent_total[5m])", "legendFormat": "enviados/s" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Emails falhados (taxa)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(b2base_outreach_emails_failed_total[5m])", "legendFormat": "falhas/s" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Adiados por rate limit (taxa)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(b2base_outreach_emails_rate_limited_total[5m])", "legendFormat": "rate-limit/s" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Mensagens de email por status (total)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "b2base_outreach_messages", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Filas Bull (profundidade)",
+      "id": 101,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Jobs aguardando (waiting)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "b2base_queue_jobs{state=\"waiting\"}", "legendFormat": "{{queue}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Jobs agendados/atrasados (delayed)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "b2base_queue_jobs{state=\"delayed\"}", "legendFormat": "{{queue}}" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Jobs falhados (failed)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "b2base_queue_jobs{state=\"failed\"}", "legendFormat": "{{queue}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "WhatsApp",
+      "id": 102,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "collapsed": false
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "WhatsApp enviado (taxa)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(b2base_whatsapp_messages_sent_total[5m])", "legendFormat": "enviadas/s" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "WhatsApp falhou (taxa)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(b2base_whatsapp_messages_failed_total[5m])", "legendFormat": "falhas/s" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Mensagens WhatsApp por status (total)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "b2base_whatsapp_messages", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Saúde do processo",
+      "id": 103,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Event loop lag",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "nodejs_eventloop_lag_seconds", "legendFormat": "lag (s)" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Memória residente",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "process_resident_memory_bytes", "legendFormat": "RSS" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "CPU (user)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(process_cpu_user_seconds_total[5m])", "legendFormat": "cpu/s" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["b2base", "outreach", "campaigns"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "label": "Prometheus datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "typeId": "prometheus"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "B2Base — Outreach & Disparos",
+  "uid": "b2base-outreach",
+  "version": 1,
+  "weekStart": ""
+}
