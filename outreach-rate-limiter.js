@@ -43,13 +43,48 @@ function getConfig() {
 }
 
 /**
- * Check if the current time is within allowed hours.
+ * Retorna a hora/minuto atuais no fuso configurado (ex.: America/Sao_Paulo).
+ * Usa Intl.DateTimeFormat (nativo no Node) e cai no relógio do servidor se o
+ * timezone for inválido.
+ */
+function wallClockInTimezone(timezone) {
+  const fallback = new Date();
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      hourCycle: 'h23',
+      minute: '2-digit',
+    }).formatToParts(fallback);
+    const get = (t) => parseInt(parts.find((p) => p.type === t)?.value || '0', 10);
+    return { hour: get('hour') % 24, minute: get('minute') };
+  } catch {
+    return { hour: fallback.getHours(), minute: fallback.getMinutes() };
+  }
+}
+
+/**
+ * Check if the current time is within allowed hours (no fuso configurado).
  */
 function isWithinAllowedHours(cfg) {
-  const now = new Date();
-  // Simple UTC check — in prod use a timezone library like `timezone-date`.
-  const hour = now.getHours();
+  const { hour } = wallClockInTimezone(cfg.timezone);
   return hour >= cfg.allowedHoursStart && hour < cfg.allowedHoursEnd;
+}
+
+/**
+ * Milissegundos até a próxima janela permitida (início do próximo período
+ * allowedHoursStart). Usado para reagendar o job sem travar.
+ */
+function msUntilNextAllowedWindow(cfg) {
+  const { hour, minute } = wallClockInTimezone(cfg.timezone);
+  const currentMinutes = hour * 60 + minute;
+  const startMinutes = cfg.allowedHoursStart * 60;
+  const minutesInDay = 24 * 60;
+  const untilStart =
+    currentMinutes < startMinutes
+      ? startMinutes - currentMinutes
+      : minutesInDay - currentMinutes + startMinutes;
+  return untilStart * 60 * 1000;
 }
 
 /**
@@ -123,7 +158,7 @@ async function checkLimit(prisma, emailAccount_id, cfg) {
   }
 
   if (!isWithinAllowedHours(cfg)) {
-    return { allowed: false, retryIn: (cfg.allowedHoursStart * 60 * 60 * 1000) - now.getTime() + (86400000) };
+    return { allowed: false, retryIn: msUntilNextAllowedWindow(cfg) };
   }
 
   return { allowed: true };
@@ -143,4 +178,6 @@ module.exports = {
   calculateDelay,
   getConfig,
   isWithinAllowedHours,
+  msUntilNextAllowedWindow,
+  wallClockInTimezone,
 };
