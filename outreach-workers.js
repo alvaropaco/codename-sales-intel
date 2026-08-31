@@ -307,8 +307,14 @@ async function processSend(job) {
   }
 
   // Determine recipient
+  // `prospect` não é uma relation de OutreachContact no schema; buscamos o
+  // email de contato do lead diretamente pelo prospectId do contact.
+  const prospect = await prisma.prospect.findUnique({
+    where: { id: message.contact.prospectId },
+    select: { cnpjEmail: true },
+  });
   const recipientEmail =
-    (message.contact.prospect?.cnpjEmail) ||
+    prospect?.cnpjEmail ||
     message.body.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)?.[0];
 
   if (!recipientEmail) {
@@ -501,7 +507,6 @@ async function _handleReply(prisma, msgData, emailAccountId) {
         { messages: { some: { status: 'SENT' } } },
       ],
     },
-    include: { prospect: true },
   });
 
   if (!contact) return 0;
@@ -560,7 +565,7 @@ async function _handleReply(prisma, msgData, emailAccountId) {
 async function _scheduleFollowup(prisma, contactId) {
   const contact = await prisma.outreachContact.findUnique({
     where: { id: contactId },
-    include: { campaign: true, prospect: true },
+    include: { campaign: true },
   });
 
   if (!contact) return;
