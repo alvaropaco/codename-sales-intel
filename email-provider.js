@@ -321,11 +321,22 @@ async function connectEmailAccount(
     select: { id: true },
   });
 
+  // tenantId deve ser o org do dono (o schema documenta organization.id).
+  // Resolvemos aqui para não depender de cada caller passar o valor certo.
+  const owner = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { orgId: true },
+  });
+  const tenantId = owner?.orgId || userId; // fallback defensivo
+
   if (existing) {
-    return prisma.emailAccount.update({ where: { id: existing.id }, data });
+    return prisma.emailAccount.update({
+      where: { id: existing.id },
+      data: { ...data, tenantId },
+    });
   }
   return prisma.emailAccount.create({
-    data: { ...data, userId, tenantId: userId },
+    data: { ...data, userId, tenantId },
   });
 }
 

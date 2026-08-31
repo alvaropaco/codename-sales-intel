@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Send,
   Plus,
@@ -76,6 +76,15 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // O alerta renderiza no topo da página; sem este scroll o usuário que
+  // acabou de clicar num botão do fim do formulário não vê o feedback.
+  const alertRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error || notice) {
+      alertRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [error, notice]);
+
   const [loading, setLoading] = useState(true);
 
   const loadAll = async () => {
@@ -122,7 +131,10 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   const handleCreateSuite = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setError('Dê um nome para a suíte antes de criar (campo "Nome da suíte", no topo do formulário).');
+      return;
+    }
     const channels = Array.from(suiteChannels);
     if (channels.length === 0) {
       setError('Selecione ao menos um canal (email ou WhatsApp).');
@@ -299,6 +311,7 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
 
       {(notice || error) && (
         <div
+          ref={alertRef}
           className={
             error
               ? 'rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300'

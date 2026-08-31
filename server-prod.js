@@ -2564,17 +2564,27 @@ app.post('/api/outreach/campaigns/test', async (req, res) => {
       if (!emailAccountId || !subject || !body) {
         return res.status(400).json({ success: false, error: 'Preencha conta, assunto e mensagem antes de testar.' });
       }
+      // EmailAccount é escopada por userId (mesmo critério de GET/DELETE
+      // /api/gmail/accounts). O tenantId gravado na criação nem sempre é o
+      // orgId do dono (contas antigas/Gmail usam userId), então filtrar por
+      // orgId aqui fazia a conta "não ser encontrada" e o teste nunca sair.
       const account = await prisma.emailAccount.findFirst({
-        where: { id: emailAccountId, tenantId: user.orgId, status: 'connected' },
+        where: { id: emailAccountId, userId, status: 'connected' },
       });
       if (!account) {
         return res.status(400).json({ success: false, error: 'Conta de email não encontrada ou não conectada.' });
       }
 
+      // Destino do teste: a caixa de entrada do usuário logado. Para Resend,
+      // account.email é o endereço "from" (nem sempre é uma caixa legível);
+      // login email pode ser sintético em login por telefone → cai no from.
+      const loginEmail = String(req.user?.email || '').toLowerCase();
+      const to = loginEmail && !loginEmail.endsWith('@b2base.local') ? loginEmail : account.email;
+
       const renderedBody = renderTemplate(body, SAMPLE);
       const crypto = require('crypto');
       await emailProvider.sendEmailForAccount(prisma, account.id, {
-        to: account.email,
+        to,
         subject: `[TESTE] ${renderTemplate(subject, SAMPLE)}`,
         body: renderedBody,
         htmlBody: `<p>${renderedBody
@@ -2584,10 +2594,10 @@ app.post('/api/outreach/campaigns/test', async (req, res) => {
         messageId: `teste-${crypto.randomUUID()}`,
       });
 
-      console.log(`[suite-test] email de teste enviado para ${account.email}`);
+      console.log(`[suite-test] email de teste enviado para ${to}`);
       return res.json({
         success: true,
-        message: `Email de teste enviado para ${account.email} — confira a caixa de entrada.`,
+        message: `Email de teste enviado para ${to} — confira a caixa de entrada (e o spam).`,
         timestamp: new Date().toISOString(),
       });
     }

@@ -85,11 +85,21 @@ async function exchangeCodeForTokens(prisma, code, userId) {
 
   const scopes = tokens.scope ? tokens.scope.split(' ') : config.scopes;
 
+  // tenantId = org do dono (o userId era só um fallback que quebrava lookups
+  // escopados por organization.id). No update também normaliza contas
+  // antigas que foram gravadas com o fallback errado.
+  const owner = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { orgId: true },
+  });
+  const tenantId = owner?.orgId || userId;
+
   if (account) {
     account = await prisma.emailAccount.update({
       where: { id: account.id },
       data: {
         provider: 'gmail',
+        tenantId,
         email: googleUser.email,
         encryptedRefreshToken,
         encryptedSecret: null,
@@ -101,7 +111,7 @@ async function exchangeCodeForTokens(prisma, code, userId) {
     account = await prisma.emailAccount.create({
       data: {
         userId,
-        tenantId: userId, // fallback: use userId as tenantId
+        tenantId,
         email: googleUser.email,
         encryptedRefreshToken,
         scopes,
