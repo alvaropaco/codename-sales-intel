@@ -232,10 +232,7 @@ async function processPrepare(job) {
   const sendQueue = createQueue('outreach:message-send', {
     redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
   });
-  await sendQueue.add(
-    { messageId: message.id },
-    { delay: delaySeconds * 1000, attempts: 3, backoff: { type: 'exponential', delay: 60 * 1000 } }
-  );
+  await _enqueueSend(sendQueue, message.id, delaySeconds * 1000);
 
   // Create outreach_event
   await prisma.outreachEvent.create({
@@ -257,6 +254,73 @@ async function processPrepare(job) {
 }
 
 // ─── QUEUE: outreach:message-send ─────────────────────────────────
+
+/**
+ * Enfileira envio com jobId = messageId (dedupe natural: se já existe job
+ * vivo para a mensagem, add() devolve o existente em vez de duplicar). Jobs
+ * mortos (failed/completed) com o mesmo id são removidos antes — sem isso o
+ * add() é ignorado e a mensagem ficaria presa para sempre.
+ */
+async function _enqueueSend(sendQueue, messageId, delayMs = 0) {
+  const existing = await sendQueue.getJob(messageId).catch(() => null);
+  if (existing) {
+    const state = await existing.getState().catch(() => null);
+    if (['delayed', 'waiting', 'active', 'waiting-children', 'prioritized'].includes(state)) {
+      return existing; // já está na fila — não duplica
+    }
+    await existing.remove().catch(() => {});
+  }
+  return sendQueue.add(
+    { messageId },
+    {
+      jobId: messageId,
+      delay: delayMs,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60 * 1000 },
+    }
+  );
+}
+
+/**
+ * Revitalização de mensagens órfãs no boot: SCHEDULED com scheduledFor já
+ * vencido e sem job vivo na fila Bull. Acontece quando os workers ficam fora
+ * do ar entre o agendamento e a hora do envio (ex.: CrashLoop de deploy) ou
+ * quando o job esgota as tentativas — sem isto a linha fica "aguardando"
+ * para sempre no histórico.
+ */
+async function requeueStuckScheduledMessages() {
+  try {
+    const prisma = getPrisma();
+    const { createQueue } = require('./outreach-queues');
+    const sendQueue = createQueue('outreach:message-send', {
+      redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
+    });
+
+    const stuck = await prisma.outreachMessage.findMany({
+      where: {
+        status: 'SCHEDULED',
+        scheduledFor: { lt: new Date(Date.now() - 60 * 1000) },
+      },
+      select: { id: true },
+      take: 500,
+    });
+
+    let requeued = 0;
+    for (const m of stuck) {
+      await _enqueueSend(sendQueue, m.id, 0);
+      requeued += 1;
+    }
+
+    if (stuck.length > 0) {
+      console.log(`[outreach] requeue: ${requeued}/${stuck.length} mensagem(ns) SCHEDULED vencida(s) reenfileirada(s) no boot`);
+    }
+    return requeued;
+  } catch (err) {
+    console.error('[outreach] requeue de SCHEDULED vencidas falhou:', err.message);
+    return 0;
+  }
+}
+
 async function processSend(job) {
   const { messageId } = job.data;
 
@@ -309,7 +373,7 @@ async function processSend(job) {
     const sendQueue = createQueue('outreach:message-send', {
       redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
     });
-    await sendQueue.add({ messageId }, { delay: rateLimit.retryIn });
+    await _enqueueSend(sendQueue, messageId, rateLimit.retryIn);
     return { retried: true, retryIn: rateLimit.retryIn };
   }
 
@@ -693,6 +757,11 @@ function registerAllWorkers() {
   registerProcessor('outreach:message-send', processSend, 1);
   registerProcessor('outreach:gmail-sync', processSync, 1);
 
+  // Revitaliza mensagens SCHEDULED vencidas cujo job morreu (workers fora do
+  // ar no horário agendado, tentativas esgotadas) — sem isto ficam
+  // "aguardando" para sempre no histórico.
+  void requeueStuckScheduledMessages();
+
   // Reply-sync periódico (só provider gmail — SMTP/Resend são send-only).
   // Job repetitivo com jobId fixo para não duplicar em restart.
   try {
@@ -751,6 +820,7 @@ module.exports = {
   processSend,
   processSync,
   registerAllWorkers,
+  requeueStuckScheduledMessages,
   startOutreachCampaign,
   generateOutreachMessage,
   getPrisma,
