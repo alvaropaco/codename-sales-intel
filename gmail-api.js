@@ -195,16 +195,23 @@ async function sendEmail(prisma, emailAccount_id, { to, subject, body, htmlBody,
   const oauth2Client = await getValidOAuth2Client(prisma, emailAccount_id);
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
+  // Message-ID RFC 5322 (<local@dominio>) — id sem domínio é header inválido
+  // e o Gmail rejeita na entrega. Helper compartilhado do email-provider
+  // (require lazy para não criar ciclo com o módulo que já importa este).
+  const senderEmail = await _getSenderEmail(prisma, emailAccount_id);
+  const { formatMessageId } = require('./email-provider');
+  const midHeader = formatMessageId(messageId, senderEmail);
+
   // Build MIME message
   const boundary = `_boundary_${Date.now()}`;
   let mimeMessage;
 
   if (htmlBody) {
     mimeMessage = [
-      `From: ${await _getSenderEmail(prisma, emailAccount_id)}`,
+      `From: ${senderEmail}`,
       `To: ${to}`,
       `Subject: ${subject}`,
-      messageId ? `Message-ID: <${messageId}>` : '',
+      midHeader ? `Message-ID: ${midHeader}` : '',
       'MIME-Version: 1.0',
       `Content-Type: multipart/alternative; boundary="${boundary}"`,
       '',
@@ -225,10 +232,10 @@ async function sendEmail(prisma, emailAccount_id, { to, subject, body, htmlBody,
     ].join('\r\n');
   } else {
     mimeMessage = [
-      `From: ${await _getSenderEmail(prisma, emailAccount_id)}`,
+      `From: ${senderEmail}`,
       `To: ${to}`,
       `Subject: ${subject}`,
-      messageId ? `Message-ID: <${messageId}>` : '',
+      midHeader ? `Message-ID: ${midHeader}` : '',
       'Content-Type: text/plain; charset=UTF-8',
       'Content-Transfer-Encoding: 7bit',
       '',

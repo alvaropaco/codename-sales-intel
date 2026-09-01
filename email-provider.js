@@ -49,6 +49,26 @@ function _isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ''));
 }
 
+/**
+ * Message-ID RFC 5322 no formato <local@dominio>. Os ids gerados internamente
+ * (UUID do worker, "teste-<uuid>") não têm domínio — encapsular como <uuid>
+ * produz um header INVÁLIDO, e o Gmail rejeita com 550 5.7.1 "Messages
+ * missing a valid Message-ID header" (um header malformado conta como
+ * ausente; o Postfix/Mailcow de camada intermediária não regenera porque o
+ * header existe). Completa com o domínio da conta de envio.
+ *
+ * undefined/'' → undefined (o provider gera um id válido por conta própria).
+ */
+function formatMessageId(messageId, fromEmail) {
+  let id = String(messageId || '').trim().replace(/^<+|>+$/g, '');
+  if (!id) return undefined;
+  if (!id.includes('@')) {
+    const domain = String(fromEmail || '').split('@')[1]?.toLowerCase() || 'b2base.local';
+    id = `${id}@${domain}`;
+  }
+  return `<${id}>`;
+}
+
 // ─── Provider: Gmail (OAuth API) ────────────────────────────────────
 // Adapter fino sobre o gmail-api.js existente, para o dispatcher ter
 // um contrato uniforme. Reply-sync continua lá.
@@ -100,7 +120,8 @@ function SMTPEmailProvider(account) {
         html: htmlBody || undefined,
         // Fixa o Message-ID header para permitir casar replies por
         // In-Reply-To quando houver leitura de caixa (IMAP) no futuro.
-        messageId: messageId ? `<${messageId}>` : undefined,
+        // Sem id, o próprio nodemailer gera um válido.
+        messageId: formatMessageId(messageId, account.email),
       });
 
       return { messageId: info.messageId, threadId: null };
@@ -159,6 +180,7 @@ function ResendEmailProvider(account) {
     capabilities: { replySync: false },
 
     async send({ to, subject, body, htmlBody, messageId }) {
+      const mid = formatMessageId(messageId, account.email);
       const res = await fetch(`${RESEND_API_BASE}/emails`, {
         method: 'POST',
         headers: {
@@ -171,7 +193,7 @@ function ResendEmailProvider(account) {
           subject,
           text: body,
           html: htmlBody || undefined,
-          headers: messageId ? { 'Message-ID': `<${messageId}>` } : undefined,
+          headers: mid ? { 'Message-ID': mid } : undefined,
         }),
       });
 
@@ -348,4 +370,5 @@ module.exports = {
   connectEmailAccount,
   verifySMTPCredentials,
   verifyResendApiKey,
+  formatMessageId,
 };
