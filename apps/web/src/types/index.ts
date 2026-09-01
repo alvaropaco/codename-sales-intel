@@ -150,6 +150,7 @@ export interface DiscoveredCompany {
 
 export interface DiscoveryCriteria {
   segments: string[];
+  cnaeCodes?: string[];
   locations: string[];
   activeOnly: boolean;
   usedProfile: boolean;

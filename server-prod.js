@@ -1879,34 +1879,46 @@ app.get('/api/discovery/candidates', async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.max(1, Math.min(parseInt(req.query.pageSize, 10) || Number(req.query.limit) || 12, 25));
     const seed = req.query.seed ? String(req.query.seed).slice(0, 64) : 'default';
-    const explicitCnae = req.query.cnae ? String(req.query.cnae) : null;
+    // CNAEs vindo da UI (multi-valor: ?cnaes=6201501,6209100) ou valor único
+    // (?cnae=). Normalizamos para dígitos puros — o formato IBGE de 7 dígitos
+    // (Subclasse) é o mesmo que a taxonomia do onboarding armazena e o único
+    // que o MCP-CNPJ indexa ("6201501" retorna; "6201-5/01" não).
+    const parseCnaeCodes = (raw) =>
+      String(raw || '')
+        .split(',')
+        .map((c) => c.trim().replace(/\D/g, ''))
+        .filter((c) => c.length >= 4);
+    // `cnaes=` presente porém vazio = escolha EXPLÍCITA de busca livre (sem
+    // filtro por CNAE); parâmetro ausente = usa os CNAEs do perfil.
+    const hasExplicitCnaes = req.query.cnaes !== undefined || req.query.cnae !== undefined;
+    const explicitCnaes = parseCnaeCodes(req.query.cnaes !== undefined ? req.query.cnaes : req.query.cnae);
     const explicitSegment = req.query.segment ? String(req.query.segment) : null;
     const explicitLocation = req.query.location ? String(req.query.location) : null;
     const explicitCnpj = req.query.cnpj ? String(req.query.cnpj).replace(/\D/g, '') : null;
 
-    let segments = [];
-    let locations = [];
-    let activeOnly = false;
-    let usedProfile = false;
+    // Perfil comercial: os CNAEs/localizações do onboarding COMBINAM com os
+    // filtros explícitos da tela (antes, digitar qualquer busca descartava
+    // silenciosamente os targetCnaes do perfil — o filtro nunca chegava ao MCP).
+    const org = await prisma.organization.findUnique({ where: { id: orgId } });
+    const settings = org ? await prisma.commercialSettings.findUnique({ where: { orgId: org.id } }) : null;
+    const profileCnaes = parseCnaeCodes((Array.isArray(settings && settings.targetCnaes) ? settings.targetCnaes : []).join(','));
+    const profileSegments = (Array.isArray(settings && settings.targetSegments) ? settings.targetSegments : [])
+      .filter((s) => typeof s === 'string' && s.trim());
+    const profileLocations = (Array.isArray(settings && settings.targetLocations) ? settings.targetLocations : [])
+      .filter((s) => typeof s === 'string' && s.trim());
 
-    if (!explicitCnae && !explicitSegment && !explicitLocation) {
-      // Fall back to the onboarding profile as the discovery criteria.
-      const org = await prisma.organization.findUnique({ where: { id: orgId } });
-      if (org) {
-        const settings = await prisma.commercialSettings.findUnique({ where: { orgId: org.id } });
-        if (settings) {
-          segments = Array.isArray(settings.targetCnaes) ? settings.targetCnaes : [];
-          if (!segments.length) segments = Array.isArray(settings.targetSegments) ? settings.targetSegments : [];
-          locations = Array.isArray(settings.targetLocations) ? settings.targetLocations : [];
-          activeOnly = !Array.isArray(settings.companyStatuses) || settings.companyStatuses.includes('active');
-          usedProfile = true;
-        }
-      }
-    } else {
-      if (explicitCnae) segments.push(explicitCnae);
-      if (explicitSegment) segments.push(explicitSegment);
-      if (explicitLocation) locations.push(explicitLocation);
-    }
+    const cnaeCodes = hasExplicitCnaes ? explicitCnaes : profileCnaes;
+    const hasExplicitFilters = Boolean(explicitCnaes.length || explicitSegment || explicitLocation || explicitCnpj);
+    // Busca semântica usa o texto digitado; sem texto, um segmento do perfil —
+    // apenas quando NÃO há CNAEs (os CNAEs já restringem estruturadamente).
+    const segments = explicitSegment ? [explicitSegment] : (cnaeCodes.length ? [] : profileSegments);
+    const locations = explicitLocation ? [explicitLocation] : profileLocations;
+    const activeOnly = settings
+      ? !Array.isArray(settings.companyStatuses) || settings.companyStatuses.includes('active')
+      : false;
+    const usedProfile = Boolean(
+      settings && (!hasExplicitFilters || profileCnaes.length || profileLocations.length || profileSegments.length)
+    );
 
     // Se o servidor MCP-CNPJ não estiver configurado (token ausente), não há
     // como descobrir empresas. Respondemos de forma limpa (200) com uma mensagem
@@ -1921,7 +1933,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
         totalPages: 0,
         hasMore: false,
         source: [],
-        criteria: { segments, locations, activeOnly, usedProfile },
+        criteria: { segments, cnaeCodes, locations, activeOnly, usedProfile },
         mcpError: 'MCP-CNPJ não configurado',
         message:
           'A descoberta de leads está indisponível: o servidor MCP-CNPJ não está configurado (defina CNPJ_MCP_TOKEN no ambiente).',
@@ -1933,7 +1945,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
     const { state: parsedState, city } = parseLocation(locations[0] || '');
     const effectiveState = state || parsedState;
 
-    if (!segments.length && !effectiveState && !city && !explicitCnpj) {
+    if (!cnaeCodes.length && !segments.length && !effectiveState && !city && !explicitCnpj) {
       return res.json({
         success: true,
         data: [],
@@ -1943,7 +1955,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
         totalPages: 0,
         hasMore: false,
         source: [],
-        criteria: { segments, locations, activeOnly, usedProfile },
+        criteria: { segments, cnaeCodes, locations, activeOnly, usedProfile },
         message: 'Configure segmentos, CNAEs ou localização no onboarding para descobrir leads.',
         timestamp: new Date().toISOString(),
       });
@@ -1951,7 +1963,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
 
     // Cache key: same criteria + seed reuses the fetched MCP window (10 min TTL),
     // so paging between pages does not call the external server again.
-    const cacheKey = [orgId, segments.join('|'), locations.join('|'), activeOnly ? '1' : '0', explicitCnpj || '', seed].join('::');
+    const cacheKey = [orgId, cnaeCodes.join('|'), segments.join('|'), locations.join('|'), activeOnly ? '1' : '0', explicitCnpj || '', seed].join('::');
     let unique = null;
     const cached = discoveryPoolCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -1961,8 +1973,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
 
       // 1) Structured CNAE filter when we have codes. Fetch a wide pool (up to the
       //    MCP ceiling of 100) so pagination can show different leads per page.
-      for (const code of segments.slice(0, 6)) {
-        if (!/^\d+$/.test(code)) continue;
+      for (const code of cnaeCodes.slice(0, 6)) {
         const filtered = await filterCompanies({
           cnae: code,
           state: effectiveState,
@@ -1974,15 +1985,30 @@ app.get('/api/discovery/candidates', async (req, res) => {
       }
 
       // 2) Semantic search for segment/natural-language criteria (MCP caps at 40).
+      //    Com CNAEs selecionados, a busca semântica TAMBÉM filtra por CNAE — o
+      //    search_companies do MCP aceita `cnae` junto com a `query`.
       const query = explicitSegment || segments[0] || '';
       if (query && !/^\d+$/.test(query)) {
-        const found = await searchCompanies({
-          query,
-          state: effectiveState,
-          city,
-          limit: 50,
-        });
-        found.forEach((company) => candidates.push(company));
+        if (cnaeCodes.length) {
+          for (const code of cnaeCodes.slice(0, 3)) {
+            const found = await searchCompanies({
+              query,
+              cnae: code,
+              state: effectiveState,
+              city,
+              limit: 30,
+            });
+            found.forEach((company) => candidates.push(company));
+          }
+        } else {
+          const found = await searchCompanies({
+            query,
+            state: effectiveState,
+            city,
+            limit: 50,
+          });
+          found.forEach((company) => candidates.push(company));
+        }
       }
 
       // 3) Exact CNPJ lookup when the user filters by CNPJ.
@@ -2043,7 +2069,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
       totalPages,
       hasMore: page < totalPages,
       source: ['mcp.cnpj'],
-      criteria: { segments, locations, activeOnly, usedProfile },
+      criteria: { segments, cnaeCodes, locations, activeOnly, usedProfile },
       message: !total
         ? 'Nenhum lead novo encontrado para os critérios atuais. Ajuste o nicho ou a localização.'
         : undefined,
@@ -2063,7 +2089,7 @@ app.get('/api/discovery/candidates', async (req, res) => {
       totalPages: 0,
       hasMore: false,
       source: [],
-      criteria: { segments, locations, activeOnly, usedProfile },
+      criteria: { segments, cnaeCodes, locations, activeOnly, usedProfile },
       mcpError: 'MCP-CNPJ indisponível',
       message:
         'Não foi possível buscar leads agora: o servidor de dados empresariais (MCP-CNPJ) não respondeu. ' +
@@ -2694,8 +2720,8 @@ app.post('/api/outreach/campaigns/test', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Conta WhatsApp não encontrada ou não conectada.' });
       }
 
-      const wahaProvider = require('./waha-provider');
-      const result = await wahaProvider.sendText(account.sessionName, chatId, renderTemplate(message, SAMPLE));
+      const wahaProviderModule = require('./waha-provider');
+      const result = await wahaProviderModule.WAHAWhatsAppProvider.sendText(account.sessionName, chatId, renderTemplate(message, SAMPLE));
       if (!result?.providerMessageId) {
         return res.status(500).json({ success: false, error: 'O WAHA não confirmou o envio — verifique se a sessão está conectada.' });
       }
@@ -3397,6 +3423,30 @@ app.get('/api/whatsapp/accounts/:id', async (req, res) => {
   }
 });
 
+// Aguarda o WhatsApp gerar um QR utilizável. O engine NOWEB demora alguns
+// segundos após o start/restart para chegar a SCAN_QR_CODE, e o endpoint
+// /auth/qr do WAHA só responde 200 nesse estado (antes devolve 422 após ~10s
+// de espera interna). Sondamos o status da sessão e só então buscamos o QR.
+async function waitForWhatsAppQr(provider, sessionName, timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let status = null;
+    try {
+      status = (await provider.getSessionStatus(sessionName))?.status;
+    } catch (_e) { /* sessão pode ainda não existir no WAHA */ }
+
+    if (status === 'WORKING' || status === 'CONNECTED') {
+      return { connected: true, qr: null };
+    }
+    if (status === 'SCAN_QR_CODE' || status === 'QRCODE') {
+      const qr = await provider.getQRCode(sessionName);
+      if (qr && qr.qrCode) return { connected: false, qr };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return { connected: false, qr: null };
+}
+
 // POST /api/whatsapp/accounts/:id/connect — inicia sessão e devolve o QR Code.
 app.post('/api/whatsapp/accounts/:id/connect', async (req, res) => {
   try {
@@ -3406,16 +3456,35 @@ app.post('/api/whatsapp/accounts/:id/connect', async (req, res) => {
 
     const provider = wahaProvider.WAHAWhatsAppProvider;
     try { await provider.createSession(account.sessionName); } catch (_e) { /* idempotente */ }
-    await provider.startSession(account.sessionName);
+
+    // Sessão travada (FAILED) nunca sai do lugar com um simples start — o WAHA
+    // responde "Session is already running" e não faz nada. Nesse caso (ou em
+    // estados parados) reiniciamos/arrancamos de verdade a sessão.
+    let currentStatus = null;
+    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (_e) { /* sessão inexistente */ }
+    if (currentStatus === 'FAILED') {
+      try {
+        await provider.restartSession(account.sessionName);
+        console.log(`[whatsapp] sessão FAILED reiniciada: ${account.sessionName}`);
+      } catch (e) {
+        console.error(`[whatsapp] falha ao reiniciar sessão FAILED ${account.sessionName}:`, e.message);
+      }
+    } else if (!currentStatus || ['STOPPED', 'DISCONNECTED'].includes(currentStatus)) {
+      await provider.startSession(account.sessionName);
+    }
 
     await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'STARTING' } });
 
-    const qr = await provider.getQRCode(account.sessionName);
+    const { connected, qr } = await waitForWhatsAppQr(provider, account.sessionName, 45000);
+    if (connected) {
+      await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'CONNECTED' } });
+      return res.json({ success: true, data: { accountId: account.id, status: 'CONNECTED', qr: null }, timestamp: new Date().toISOString() });
+    }
     if (qr && qr.qrCode) {
       await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'QR_REQUIRED' } });
     }
 
-    res.json({ success: true, data: { accountId: account.id, status: qr.qrCode ? 'QR_REQUIRED' : 'STARTING', qr }, timestamp: new Date().toISOString() });
+    res.json({ success: true, data: { accountId: account.id, status: qr && qr.qrCode ? 'QR_REQUIRED' : 'STARTING', qr }, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
   }
@@ -3428,8 +3497,20 @@ app.get('/api/whatsapp/accounts/:id/qr', async (req, res) => {
     const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
     if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
 
-    const qr = await wahaProvider.WAHAWhatsAppProvider.getQRCode(account.sessionName);
-    res.json({ success: true, data: { accountId: account.id, qr }, timestamp: new Date().toISOString() });
+    // Se a sessão ainda está subindo (ou travou em FAILED), arruma e espera o QR
+    // por um tempo curto antes de responder — evita "Mostrar QR" virar no-op.
+    const provider = wahaProvider.WAHAWhatsAppProvider;
+    let currentStatus = null;
+    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (_e) { /* sessão inexistente */ }
+    if (currentStatus === 'FAILED') {
+      try { await provider.restartSession(account.sessionName); } catch (_e) { /* ignora */ }
+    }
+
+    const { connected, qr } = await waitForWhatsAppQr(provider, account.sessionName, 20000);
+    if (connected) {
+      await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'CONNECTED' } }).catch(() => {});
+    }
+    res.json({ success: true, data: { accountId: account.id, qr, connected }, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
   }
@@ -3458,10 +3539,22 @@ app.post('/api/whatsapp/accounts/:id/reconnect', async (req, res) => {
     const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
     if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
 
-    await wahaProvider.WAHAWhatsAppProvider.startSession(account.sessionName);
+    const provider = wahaProvider.WAHAWhatsAppProvider;
+    let currentStatus = null;
+    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (_e) { /* sessão inexistente */ }
+    if (currentStatus === 'FAILED') {
+      await provider.restartSession(account.sessionName);
+    } else {
+      await provider.startSession(account.sessionName);
+    }
     await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'STARTING' } });
 
-    res.json({ success: true, data: { accountId: account.id, status: 'STARTING' }, timestamp: new Date().toISOString() });
+    const { qr } = await waitForWhatsAppQr(provider, account.sessionName, 30000);
+    if (qr && qr.qrCode) {
+      await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'QR_REQUIRED' } });
+    }
+
+    res.json({ success: true, data: { accountId: account.id, status: qr && qr.qrCode ? 'QR_REQUIRED' : 'STARTING', qr }, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
   }

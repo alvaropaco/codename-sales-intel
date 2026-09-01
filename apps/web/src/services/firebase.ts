@@ -34,7 +34,10 @@ const DEFAULT_FIREBASE_CONFIG = {
 };
 
 function pick(name: string, fallback: string): string {
-  const value = env[name]?.trim();
+  // Robustez contra env/secrets gravados como "CHAVE=valor" (nome da variável
+  // colado na frente do valor) — classe de erro que já derrubou o auth de todo
+  // o production build. Nenhum valor legítimo de config Firebase contém "=".
+  const value = env[name]?.trim().replace(/^[A-Z][A-Z0-9_]+\s*=\s*/, '');
   if (!value || value.startsWith('REPLACE') || value.startsWith('YOUR_')) {
     return fallback;
   }

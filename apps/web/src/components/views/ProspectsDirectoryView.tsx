@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { CommercialProfile, DiscoveredCompany, DiscoveryPage, Prospect } from '@/types';
 import { formatCNPJ } from '@/lib/utils';
 import { usePlan } from '@/hooks/usePlan';
+import { cnaeLabel } from '@/data/cnaeTaxonomy';
 import {
   fetchDiscoveryCandidates,
   importDiscoveredCompany,
@@ -99,9 +100,12 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [selectedSize, setSelectedSize] = useState('all');
   const [selectedAge, setSelectedAge] = useState('all');
   const [cnpjFilter, setCnpjFilter] = useState('');
+  // CNAEs aplicados à descoberta. `null` = ainda não inicializado (usa os do
+  // perfil assim que ele chega); array vazio = busca livre, sem filtro de CNAE.
+  const [selectedCnaes, setSelectedCnaes] = useState<string[] | null>(null);
 
   const [discovered, setDiscovered] = useState<DiscoveredCompany[]>([]);
-  const [discoveryCriteria, setDiscoveryCriteria] = useState<{ segments: string[]; locations: string[]; activeOnly: boolean; usedProfile: boolean }>({ segments: [], locations: [], activeOnly: false, usedProfile: false });
+  const [discoveryCriteria, setDiscoveryCriteria] = useState<{ segments: string[]; cnaeCodes?: string[]; locations: string[]; activeOnly: boolean; usedProfile: boolean }>({ segments: [], cnaeCodes: [], locations: [], activeOnly: false, usedProfile: false });
   const [discoveryPage, setDiscoveryPage] = useState(1);
   const [discoveryPageInfo, setDiscoveryPageInfo] = useState<DiscoveryPage>({ page: 1, pageSize: 12, total: 0, totalPages: 0, hasMore: false });
   const [discoverySeed, setDiscoverySeed] = useState(() => newDiscoverySeed());
@@ -111,13 +115,33 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [isImporting, setIsImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState('');
 
+  // CNAEs do perfil comercial (código IBGE de 7 dígitos, como a taxonomia salva).
+  const profileCnaeCodes = useMemo(
+    () => (commercialProfile?.targetCnaes || []).map((c) => String(c).replace(/\D/g, '')).filter(Boolean),
+    [commercialProfile],
+  );
+  // Assim que o perfil chega, os chips começam todos selecionados.
+  useEffect(() => {
+    if (profileCnaeCodes.length && selectedCnaes === null) {
+      setSelectedCnaes(profileCnaeCodes);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileCnaeCodes]);
+
+  const toggleCnae = (code: string) => {
+    setSelectedCnaes((prev) => {
+      const current = prev ?? profileCnaeCodes;
+      return current.includes(code) ? current.filter((c) => c !== code) : [...current, code];
+    });
+  };
+
   const loadDiscovery = async (page = 1, seed = discoverySeed) => {
     setIsLoadingDiscovery(true);
     setImportError('');
     const segment = searchQuery.trim() || undefined;
     const location = selectedLocation.trim() || undefined;
     const cnpj = cnpjFilter.replace(/\D/g, '').trim() || undefined;
-    const result = await fetchDiscoveryCandidates({ segment, location, cnpj, page, pageSize: DISCOVERY_PAGE_SIZE, seed });
+    const result = await fetchDiscoveryCandidates({ segment, cnaes: selectedCnaes ?? undefined, location, cnpj, page, pageSize: DISCOVERY_PAGE_SIZE, seed });
     setDiscovered(result.companies);
     setDiscoveryCriteria(result.criteria);
     setDiscoveryMessage(result.message || '');
@@ -132,17 +156,21 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
     setIsLoadingDiscovery(false);
   };
 
+  // Chave estável dos CNAEs do perfil para o efeito de reload (evita loop de
+  // identidade quando o objeto do perfil é recriado no parent).
+  const profileCnaeKey = profileCnaeCodes.join(',');
   useEffect(() => {
     // Load discovered leads on mount, and when the seller changes the searched
-    // niche, location or CNPJ. A fresh seed rotates the pool so each search reveals a
-    // different order; pagination is stable within the same seed.
+    // niche, location, CNPJ or the selected CNAE filters. A fresh seed rotates
+    // the pool so each search reveals a different order; pagination is stable
+    // within the same seed.
     const freshSeed = newDiscoverySeed();
     setDiscoverySeed(freshSeed);
     setDiscoveryPage(1);
     const timer = setTimeout(() => loadDiscovery(1, freshSeed), 400);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, selectedLocation, cnpjFilter]);
+  }, [searchQuery, selectedLocation, cnpjFilter, selectedCnaes, profileCnaeKey]);
 
   const handlePageChange = (page: number) => {
     if (page === discoveryPage || page < 1 || page > discoveryPageInfo.totalPages) return;
@@ -372,9 +400,15 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
 
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
             {discoveryCriteria.usedProfile
-              ? `Sugestões reais a partir do perfil do onboarding (${discoveryCriteria.segments.join(', ') || 'segmentos'}).`
-              : discoveryCriteria.segments.length
-              ? `Buscando por "${discoveryCriteria.segments.join(', ')}"${discoveryCriteria.locations[0] ? ` em ${discoveryCriteria.locations[0]}` : ''}.`
+              ? `Sugestões reais a partir do perfil do onboarding (${[
+                  ...(discoveryCriteria.cnaeCodes || []).map((c) => cnaeLabel(c)),
+                  ...discoveryCriteria.segments,
+                ].join(', ') || 'segmentos'}).`
+              : discoveryCriteria.segments.length || (discoveryCriteria.cnaeCodes || []).length
+              ? `Buscando por "${[
+                  ...(discoveryCriteria.cnaeCodes || []).map((c) => cnaeLabel(c)),
+                  ...discoveryCriteria.segments,
+                ].join(', ')}"${discoveryCriteria.locations[0] ? ` em ${discoveryCriteria.locations[0]}` : ''}.`
               : 'Digite um nicho acima ou finalize o onboarding para ver leads reais com potencial.'}
           </p>
 
@@ -572,6 +606,33 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
               <option value="inactive">Baixadas ou inativas</option>
             </select>
           </div>
+
+          {profileCnaeCodes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-xs font-bold text-slate-600 dark:text-muted-foreground">CNAEs:</span>
+              {profileCnaeCodes.map((code) => {
+                const active = (selectedCnaes ?? profileCnaeCodes).includes(code);
+                return (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => toggleCnae(code)}
+                    title={cnaeLabel(code)}
+                    className={`max-w-[260px] truncate rounded-full px-3 py-1 text-xs font-bold transition-all ${
+                      active
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-secondary/60 dark:text-muted-foreground dark:hover:bg-secondary'
+                    }`}
+                  >
+                    {cnaeLabel(code)}
+                  </button>
+                );
+              })}
+              {selectedCnaes && selectedCnaes.length === 0 && (
+                <span className="text-xs italic text-slate-400">Nenhum CNAE selecionado — busca livre por nicho</span>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-slate-600 dark:text-muted-foreground mr-1">Momento comercial:</span>

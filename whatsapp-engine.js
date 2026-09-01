@@ -493,18 +493,30 @@ async function reconcileSessionStatus(prisma, wahaProvider, account) {
 }
 
 /**
- * Reativa as sessões de contas CONNECTED/STARTING no boot para manter a conexão
- * durável após reinício do servidor. O `startSession` do WAHA é idempotente.
+ * Reativa as sessões de contas CONNECTED/STARTING/QR_REQUIRED no boot para
+ * manter a conexão durável após reinício do servidor. O `startSession` do WAHA
+ * é idempotente — mas é um no-op quando a sessão está travada em FAILED
+ * ("Session is already running"), então nesse caso reiniciamos de verdade.
  */
 async function resumeSessions(prisma, wahaProvider) {
   const accounts = await prisma.whatsAppAccount.findMany({
-    where: { status: { in: [ACCOUNT_STATUS.CONNECTED, ACCOUNT_STATUS.STARTING] } },
+    where: { status: { in: [ACCOUNT_STATUS.CONNECTED, ACCOUNT_STATUS.STARTING, ACCOUNT_STATUS.QR_REQUIRED] } },
   });
 
   for (const account of accounts) {
     try {
-      await wahaProvider.startSession(account.sessionName);
-      console.log(`[whatsapp] sessão retomada: ${account.sessionName}`);
+      let wahaStatus = null;
+      try {
+        wahaStatus = (await wahaProvider.getSessionStatus(account.sessionName))?.status;
+      } catch (_e) { /* sessão pode não existir mais no WAHA */ }
+
+      if (wahaStatus === 'FAILED') {
+        await wahaProvider.restartSession(account.sessionName);
+        console.log(`[whatsapp] sessão FAILED reiniciada no boot: ${account.sessionName}`);
+      } else {
+        await wahaProvider.startSession(account.sessionName);
+        console.log(`[whatsapp] sessão retomada: ${account.sessionName}`);
+      }
     } catch (err) {
       console.error(`[whatsapp] falha ao retomar ${account.sessionName}: ${err.message}`);
       await prisma.whatsAppAccount.update({

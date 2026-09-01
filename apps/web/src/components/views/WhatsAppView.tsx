@@ -120,7 +120,6 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
   useEffect(() => {
     if (!qrAccountId) return;
     const id = setInterval(async () => {
-      await loadAccounts();
       const acc = (await fetchWhatsAppAccounts()).find((a) => a.id === qrAccountId);
       if (acc && acc.status === 'CONNECTED') {
         setQr(null);
@@ -129,7 +128,18 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
         await loadAll();
       }
     }, 4000);
-    return () => clearInterval(id);
+    // O QR do WhatsApp expira em ~20s; renovamos periodicamente enquanto o
+    // usuário não escaneia, para a imagem nunca ficar velha.
+    const qrRefreshId = setInterval(async () => {
+      try {
+        const fresh = await fetchWhatsAppQr(qrAccountId);
+        if (fresh && fresh.qrCode) setQr(fresh);
+      } catch (_e) { /* backend ainda esperando a sessão subir */ }
+    }, 15000);
+    return () => {
+      clearInterval(id);
+      clearInterval(qrRefreshId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qrAccountId]);
 
@@ -141,14 +151,19 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
       if (!account) {
         account = await createWhatsAppAccount();
       }
-      const result = await connectWhatsAppAccount(account.id);
       setQrAccountId(account.id);
+      setNotice('Abrindo conexão com o WhatsApp… pode levar até um minuto na primeira vez.');
+      const result = await connectWhatsAppAccount(account.id);
       setQr(result.qr || null);
       await loadAccounts();
-      if (result.qr && result.qr.qrCode) {
+      if (result.status === 'CONNECTED') {
+        setQr(null);
+        setQrAccountId(null);
+        setNotice('WhatsApp conectado com sucesso!');
+      } else if (result.qr && result.qr.qrCode) {
         setNotice('Escaneie o QR Code com o seu WhatsApp para conectar.');
       } else {
-        setNotice('Abrindo conexão… aguarde o QR Code.');
+        setNotice('Sessão iniciada, mas o QR ainda não foi gerado — clique em "Mostrar QR Code" em alguns segundos.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao conectar o WhatsApp');
@@ -157,9 +172,17 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
 
   const handleRefreshQr = async (accountId: string) => {
     setError(null);
-    const qr = await fetchWhatsAppQr(accountId);
-    setQr(qr);
     setQrAccountId(accountId);
+    setQr(null);
+    setNotice('Gerando um novo QR Code…');
+    try {
+      const qr = await fetchWhatsAppQr(accountId);
+      setQr(qr || null);
+      setNotice(qr && qr.qrCode ? 'Escaneie o QR Code com o seu WhatsApp para conectar.' : 'O QR ainda não está disponível — tente novamente em alguns segundos.');
+    } catch (err) {
+      setNotice(null);
+      setError(err instanceof Error ? err.message : 'Erro ao obter o QR Code');
+    }
   };
 
   const handleDisconnect = async (id: string) => {

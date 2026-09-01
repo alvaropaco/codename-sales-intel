@@ -341,10 +341,15 @@ export interface DiscoveryCandidatesResult {
 }
 
 export async function fetchDiscoveryCandidates(
-  options: { cnae?: string; segment?: string; location?: string; cnpj?: string; limit?: number; page?: number; pageSize?: number; seed?: string } = {}
+  options: { cnae?: string; cnaes?: string[]; segment?: string; location?: string; cnpj?: string; limit?: number; page?: number; pageSize?: number; seed?: string } = {}
 ): Promise<DiscoveryCandidatesResult> {
   const params = new URLSearchParams();
-  if (options.cnae) params.set('cnae', options.cnae);
+  const rawCnaes = options.cnaes ?? (options.cnae ? [options.cnae] : null);
+  if (rawCnaes) {
+    // Array passado (mesmo vazio) é escolha explícita da tela: enviamos o
+    // parâmetro para o backend NÃO recuar para os CNAEs do perfil.
+    params.set('cnaes', rawCnaes.map((c) => c.replace(/\D/g, '')).filter(Boolean).join(','));
+  }
   if (options.segment) params.set('segment', options.segment);
   if (options.location) params.set('location', options.location);
   if (options.cnpj) params.set('cnpj', options.cnpj);

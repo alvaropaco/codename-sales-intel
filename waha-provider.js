@@ -108,36 +108,41 @@ const WAHAWhatsAppProvider = {
 
   /**
    * Obtém o QR Code da sessão.
-   * @returns {Promise<{ qrCode: string|null, raw: string|null }>}
+   * @returns {Promise<{ qrCode: string|null, raw: string|null, error?: string }>}
    *   `qrCode` é um data-url PNG (pronto para <img>); `raw` é o valor bruto.
+   *
+   * Nota: o WAHA só devolve QR quando a sessão está em SCAN_QR_CODE — antes
+   * disso responde 422 depois de ~10s esperando internamente. Quem chama deve
+   * aguardar o status (ver `waitForWhatsAppQr` em server-prod.js).
    */
   async getQRCode(sessionName) {
     // Tenta primeiro o formato binário PNG (mais simples de exibir).
     try {
-      const res = await fetch(`${BASE_URL}/api/${encodeURIComponent(sessionName)}/auth/qr`, {
-        headers: _headers({ Accept: 'image/png' }),
-      });
+      const res = await fetch(
+        `${BASE_URL}/api/${encodeURIComponent(sessionName)}/auth/qr?format=image`,
+        { headers: _headers({ Accept: 'image/png' }) },
+      );
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('image')) {
         const buf = Buffer.from(await res.arrayBuffer());
         return { qrCode: `data:image/png;base64,${buf.toString('base64')}`, raw: null };
       }
-      // Fallback: JSON com base64 ou valor bruto.
+      // Fallback: JSON com data-url/URL ou valor bruto do QR.
       const text = await res.text();
       let json = null;
       try { json = JSON.parse(text); } catch (_e) { /* ignora */ }
-      if (json && json.qrCode) {
+      if (json && typeof json.qrCode === 'string') {
         if (json.qrCode.startsWith('data:') || json.qrCode.startsWith('http')) {
           return { qrCode: json.qrCode, raw: json.raw || null };
         }
-        return { qrCode: `data:image/png;base64,${json.qrCode}`, raw: json.raw || null };
+        // Valor bruto ("2@..."): devolver em `raw` — embrulhar como base64 PNG
+        // produziria uma imagem quebrada.
+        return { qrCode: null, raw: json.qrCode };
       }
-      if (json && typeof json.qrCode === 'string') {
-        return { qrCode: json.qrCode, raw: json.raw || null };
-      }
-      return { qrCode: null, raw: null };
+      const message = (json && (json.message || json.error)) || `WAHA HTTP ${res.status}`;
+      return { qrCode: null, raw: null, error: message };
     } catch (err) {
-      return { qrCode: null, raw: null };
+      return { qrCode: null, raw: null, error: String((err && err.message) || err) };
     }
   },
 
