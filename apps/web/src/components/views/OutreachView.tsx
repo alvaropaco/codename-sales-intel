@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Send,
   Plus,
@@ -251,7 +251,10 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
     setStarting(campaignId);
     try {
       const result = await startOutreachCampaign(campaignId, ids, accountId);
-      setNotice(`Campanha iniciada: ${result.jobsQueued} lead(s) na fila.`);
+      const skipped = result.skippedAlreadyEnrolled
+        ? ` ${result.skippedAlreadyEnrolled} já contatado(s) nesta campanha ficou(aram) de fora.`
+        : '';
+      setNotice(`Campanha iniciada: ${result.jobsQueued} lead(s) na fila.${skipped}`);
       setSelectedIds(new Set());
       await loadAll();
     } catch (err) {
@@ -269,6 +272,28 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
       return next;
     });
   };
+
+  // Leads já inscritos na campanha selecionada para lançamento — ficam FORA
+  // da lista: o primeiro toque de uma campanha nunca se repete pro mesmo
+  // lead (o backend também barra — isto aqui é UX, não segurança).
+  const enrolledInStartCampaign = useMemo(() => {
+    if (!startCampaignId) return new Set<string>();
+    return new Set(campaigns.find((c) => c.id === startCampaignId)?.contactedProspectIds || []);
+  }, [campaigns, startCampaignId]);
+
+  const launchableProspects = useMemo(
+    () => prospects.filter((p) => !enrolledInStartCampaign.has(p.id)),
+    [prospects, enrolledInStartCampaign],
+  );
+
+  // Trocou de campanha (ou a lista de inscritos mudou) → seleção antiga não
+  // pode conter leads que saíram da lista.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => launchableProspects.some((p) => p.id === id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [launchableProspects]);
 
   const handleDisconnect = async (id: string) => {
     if (!confirm('Desconectar esta conta do Gmail?')) return;
@@ -754,16 +779,26 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
             </div>
 
             <div className="rounded-xl border border-border/80 bg-background/40 p-3">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-foreground">
                   Leads selecionados para esta campanha
                 </span>
-                <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="text-xs">
-                  Limpar
-                </Button>
+                <div className="flex items-center gap-2">
+                  {enrolledInStartCampaign.size > 0 && (
+                    <span
+                      title="Leads que já receberam esta campanha ficam de fora — nunca reenviar o primeiro toque na mesma campanha."
+                      className="text-[10px] font-semibold text-muted-foreground"
+                    >
+                      {enrolledInStartCampaign.size} já contatado(s) oculto(s)
+                    </span>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="text-xs">
+                    Limpar
+                  </Button>
+                </div>
               </div>
               <div className="grid max-h-64 grid-cols-1 gap-2 overflow-y-auto md:grid-cols-2">
-                {prospects.map((prospect) => {
+                {launchableProspects.map((prospect) => {
                   const checked = selectedIds.has(prospect.id);
                   return (
                     <button
@@ -791,6 +826,12 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                   );
                 })}
               </div>
+              {launchableProspects.length === 0 && prospects.length > 0 && (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  Todos os leads já foram contatados nesta campanha — o primeiro toque não se repete.
+                  Use outra campanha ou adicione leads novos em "Descobrir leads".
+                </p>
+              )}
               {prospects.length === 0 && (
                 <p className="py-4 text-center text-xs text-muted-foreground">
                   Nenhum lead cadastrado. Adicione leads em "Descobrir leads" primeiro.

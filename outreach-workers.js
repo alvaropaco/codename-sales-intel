@@ -133,6 +133,25 @@ function _templateFallback(lead, valueProp) {
 }
 
 // ─── QUEUE: outreach:prepare ──────────────────────────────────────
+
+/**
+ * Decide se um job prepare deve ser ignorado:
+ * - Lançamento (primeiro toque) com contato prévio nesta campanha → NUNCA
+ *   reenrola. Antes o upsert resetava SENT/REPLIED para SCHEDULED e o check
+ *   pós-upsert lia o status já sobrescrito (código morto) — relançar a
+ *   campanha reenviava a mensagem pro mesmo lead. Falha tem retry próprio
+ *   (/api/outreach/dispatches/retry reusa a própria mensagem).
+ * - Follow-up cujo contato virou terminal DURANTE o delay (ex.: lead
+ *   respondeu no intervalo) → cancela (o upsert clobberia REPLIED→SCHEDULED).
+ * Retorna null para prosseguir, ou o motivo do skip.
+ */
+function _prepareSkipReason(existing, isFollowup) {
+  if (!existing) return null;
+  if (!isFollowup) return 'already_enrolled';
+  if (['REPLIED', 'UNSUBSCRIBED', 'CANCELLED'].includes(existing.status)) return 'terminal_status';
+  return null;
+}
+
 async function processPrepare(job) {
   const { prospectId, campaignId, emailAccountId, tenantId, _isFollowup, followupSequence } = job.data;
 
@@ -153,12 +172,22 @@ async function processPrepare(job) {
     where: {
       prospectId_campaignId: { prospectId, campaignId },
     },
-    select: { outreachSequence: true },
+    select: { outreachSequence: true, status: true },
   });
 
-  const nextSequence = Math.max(existing?.outreachSequence || 0, followupSequence || 1);
+  // Idempotência de lançamento/follow-up (ver _prepareSkipReason): o lead
+  // nunca recebe dois primeiros toques na mesma campanha, e follow-up de
+  // contato terminal é cancelado em vez de ressuscitar o status.
+  const skipReason = _prepareSkipReason(existing, Boolean(_isFollowup));
+  if (skipReason) {
+    console.log(`[prepare] prospect ${prospectId} em ${campaignId}: skip (${skipReason}, status ${existing.status})`);
+    return { skipped: true, reason: skipReason, status: existing.status };
+  }
 
-  // Upsert outreach_contact
+  // Upsert outreach_contact. Chegando aqui: ou o contato é novo, ou é
+  // follow-up de contato não-terminal (SENT → próxima sequência volta a
+  // SCHEDULED, o fluxo normal da sequência).
+  const nextSequence = Math.max(existing?.outreachSequence || 0, followupSequence || 1);
   let contact = await prisma.outreachContact.upsert({
     where: {
       prospectId_campaignId: { prospectId, campaignId },
@@ -177,12 +206,6 @@ async function processPrepare(job) {
       scheduledAt: new Date(Date.now() + 60 * 1000),
     },
   });
-
-  // Check if contact already sent → skip
-  if (contact.status === 'SENT' || contact.status === 'REPLIED') {
-    console.log(`[prepare] contact ${contact.id} already ${contact.status}, skipping`);
-    return { skipped: true, contactId: contact.id };
-  }
 
   // Conteúdo: template custom da campanha (suíte multicanal) quando
   // configurado; senão geração via IA com fallback de template.
@@ -790,13 +813,24 @@ async function startOutreachCampaign(prisma, campaignId, prospectIds, emailAccou
     if (!acct) throw new Error('Email account not found');
   }
 
+  // Idempotência: lead já inscrito nesta campanha não é reenfileirado — o
+  // lançamento é o PRIMEIRO toque (follow-ups têm fluxo próprio e falhas
+  // têm retry próprio em /api/outreach/dispatches/retry). O processPrepare
+  // barra de novo (backstop contra corrida entre lista e enfileiramento).
+  const enrolled = await prisma.outreachContact.findMany({
+    where: { campaignId, prospectId: { in: prospectIds } },
+    select: { prospectId: true },
+  });
+  const alreadyEnrolled = new Set(enrolled.map((c) => c.prospectId));
+  const freshProspectIds = prospectIds.filter((id) => !alreadyEnrolled.has(id));
+
   const queue = createQueue('outreach:prepare');
   const jobIds = [];
 
-  for (let i = 0; i < prospectIds.length; i++) {
+  for (let i = 0; i < freshProspectIds.length; i++) {
     const job = await queue.add(
       {
-        prospectId: prospectIds[i],
+        prospectId: freshProspectIds[i],
         campaignId,
         emailAccountId,
         tenantId: campaign.tenantId,
@@ -812,7 +846,11 @@ async function startOutreachCampaign(prisma, campaignId, prospectIds, emailAccou
     data: { status: 'active' },
   });
 
-  return { campaignId, jobsQueued: jobIds.length, jobIds };
+  if (alreadyEnrolled.size > 0) {
+    console.log(`[outreach] lançamento ${campaignId}: ${alreadyEnrolled.size} lead(s) já inscrito(s) ignorado(s)`);
+  }
+
+  return { campaignId, jobsQueued: jobIds.length, skippedAlreadyEnrolled: alreadyEnrolled.size, jobIds };
 }
 
 module.exports = {

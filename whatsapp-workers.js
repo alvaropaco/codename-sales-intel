@@ -341,11 +341,27 @@ async function startCampaign(prisma, { campaignId, prospectIds, orgId }) {
 
   const queue = getWhatsAppQueues();
   let queued = 0;
+  let skippedAlreadyEnrolled = 0;
 
   for (let i = 0; i < prospectIds.length; i++) {
     const prospectId = prospectIds[i];
     const prospect = ownedMap.get(prospectId);
     if (!prospect) continue;
+
+    // Idempotência: lead já inscrito nesta campanha não é reenfileirado — o
+    // upsert abaixo resetaria o contato para QUEUED/passos 0 e a sequência
+    // inteira re-executaria (mensagens duplicadas pro mesmo lead). Exceção:
+    // cancelado por 'no_phone' na época pode ser retentado quando o telefone
+    // chega depois (ex.: enriquecimento completou após o lançamento).
+    const prior = await prisma.whatsAppCampaignContact.findUnique({
+      where: { campaignId_prospectId: { campaignId, prospectId } },
+      select: { status: true, cancelReason: true },
+    });
+    const retryableNoPhone = prior?.status === 'CANCELLED' && prior.cancelReason === 'no_phone';
+    if (prior && !retryableNoPhone) {
+      skippedAlreadyEnrolled++;
+      continue;
+    }
 
     const phoneNumber = (Array.isArray(prospect.cnpjPhones) && prospect.cnpjPhones[0])
       ? normalizePhone(prospect.cnpjPhones[0])
@@ -403,7 +419,11 @@ async function startCampaign(prisma, { campaignId, prospectIds, orgId }) {
 
   await whatsappNats.publishEvent('whatsapp.campaigns.started', { campaignId, orgId, queued });
 
-  return { campaignId, jobsQueued: queued };
+  if (skippedAlreadyEnrolled > 0) {
+    console.log(`[whatsapp] lançamento ${campaignId}: ${skippedAlreadyEnrolled} lead(s) já inscrito(s) ignorado(s)`);
+  }
+
+  return { campaignId, jobsQueued: queued, skippedAlreadyEnrolled };
 }
 
 async function pauseCampaign(prisma, { campaignId, orgId }) {

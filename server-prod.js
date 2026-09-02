@@ -2603,9 +2603,26 @@ app.get('/api/outreach/campaigns', async (req, res) => {
       orderBy: { createdAt: 'desc' },
     });
 
+    // Leads já inscritos por campanha: a UI de "Lançar campanha em leads"
+    // exclui da lista quem já foi contatado — nunca reenviar o primeiro
+    // toque do mesmo lead na mesma campanha.
+    const contacts = await prisma.outreachContact.findMany({
+      where: { campaign: { tenantId: user.orgId } },
+      select: { campaignId: true, prospectId: true },
+    });
+    const enrolledByCampaign = new Map();
+    contacts.forEach((c) => {
+      const list = enrolledByCampaign.get(c.campaignId);
+      if (list) list.push(c.prospectId);
+      else enrolledByCampaign.set(c.campaignId, [c.prospectId]);
+    });
+
     res.json({
       success: true,
-      data: campaigns,
+      data: campaigns.map((c) => ({
+        ...c,
+        contactedProspectIds: enrolledByCampaign.get(c.id) || [],
+      })),
       count: campaigns.length,
       timestamp: new Date().toISOString(),
     });

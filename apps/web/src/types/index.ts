@@ -252,6 +252,9 @@ export interface OutreachCampaign {
   emailTemplateBody?: string | null;
   whatsappAccountId?: string | null;
   whatsappTemplate?: string | null;
+  // Leads já inscritos nesta campanha (OutreachContact) — a lista de
+  // lançamento os exclui: nunca reenviar o primeiro toque na mesma campanha.
+  contactedProspectIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -305,6 +308,7 @@ export interface SuppressionEntry {
 export interface StartCampaignResult {
   campaignId: string;
   jobsQueued: number;
+  skippedAlreadyEnrolled?: number;
   jobIds: string[];
 }
 
