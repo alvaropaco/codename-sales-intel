@@ -1814,6 +1814,16 @@ function parseLocation(location) {
   return { state, city };
 }
 
+// Remove diacríticos (ã→a, ç→c). O dataset do MCP-CNPJ normaliza os nomes de
+// cidade SEM acento ("SAO PAULO", "FLORIANOPOLIS") e o ILIKE do Postgres não
+// dobra acentos — filtrar por "São Paulo" (label acentuado que o autocomplete
+// do onboarding grava) retornava 0 empresas e zerava a descoberta inteira.
+function stripAccents(text) {
+  return String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
 // Deterministic helpers so the discovery listing can rotate results per "seed"
 // (a new seed on "Buscar novamente" reveals a different order) while keeping a
 // page stable within the same seed. The MCP-CNPJ source has no offset support,
@@ -1959,7 +1969,10 @@ app.get('/api/discovery/candidates', async (req, res) => {
     }
 
     const state = locations.length ? getStateFromLocation(locations[0]) : undefined;
-    const { state: parsedState, city } = parseLocation(locations[0] || '');
+    // Cidade vai ao MCP normalizada sem acentos (formato da coluna city_name
+    // no dataset) — com acento o ILIKE não casa nada e a descoberta zera.
+    const { state: parsedState, city: rawCity } = parseLocation(locations[0] || '');
+    const city = rawCity ? stripAccents(rawCity) : undefined;
     const effectiveState = state || parsedState;
 
     if (!cnaeCodes.length && !segments.length && !effectiveState && !city && !explicitCnpj) {

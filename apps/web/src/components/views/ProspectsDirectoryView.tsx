@@ -403,7 +403,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
               ? `Sugestões reais a partir do perfil do onboarding (${[
                   ...(discoveryCriteria.cnaeCodes || []).map((c) => cnaeLabel(c)),
                   ...discoveryCriteria.segments,
-                ].join(', ') || 'segmentos'}).`
+                ].join(', ') || 'segmentos'})${discoveryCriteria.locations[0] ? ` em ${discoveryCriteria.locations[0]}` : ''}.`
               : discoveryCriteria.segments.length || (discoveryCriteria.cnaeCodes || []).length
               ? `Buscando por "${[
                   ...(discoveryCriteria.cnaeCodes || []).map((c) => cnaeLabel(c)),
