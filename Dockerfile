@@ -75,6 +75,10 @@ FROM node:22-alpine AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production
+# Commit que originou a imagem — exposto pelo GET /api/version para conferir
+# remotamente qual build está rodando no cluster. "unknown" em builds locais.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 # Safe default: NATS OFF unless explicitly enabled via Coolify env.
 # (server-prod.js defaults NATS to ON when unset; in the container we
 #  default OFF so the app boots clean with the BrasilAPI fallback.)

@@ -132,6 +132,23 @@ app.post('/api/webhooks/stripe', async (req, res) => {
     res.status(500).json({ error: 'Webhook handler failed' });
   }
 });
+// GET /api/version — PÚBLICO. Identifica o build rodando no pod: GIT_SHA é
+// injetado como build-arg no Dockerfile pela CI. Sem ele não há como conferir
+// remotamente se um fix específico chegou ao cluster ("está no main mas
+// produção continua com o bug?") — precisa ficar antes do guard de /api.
+app.get('/api/version', (req, res) => {
+  const uptimeSeconds = Math.floor(process.uptime());
+  res.json({
+    success: true,
+    data: {
+      sha: process.env.GIT_SHA || null,
+      node: process.version,
+      startedAt: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
+      uptimeSeconds,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
 app.use('/api', firebaseAuth.createRequireAuth(prisma));
 
 // Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
@@ -3461,7 +3478,7 @@ app.post('/api/whatsapp/accounts/:id/connect', async (req, res) => {
     // responde "Session is already running" e não faz nada. Nesse caso (ou em
     // estados parados) reiniciamos/arrancamos de verdade a sessão.
     let currentStatus = null;
-    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (_e) { /* sessão inexistente */ }
+    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (e) { console.error(`[whatsapp] falha ao consultar status da sessão ${account.sessionName}:`, e.message); }
     if (currentStatus === 'FAILED') {
       try {
         await provider.restartSession(account.sessionName);
@@ -3501,9 +3518,9 @@ app.get('/api/whatsapp/accounts/:id/qr', async (req, res) => {
     // por um tempo curto antes de responder — evita "Mostrar QR" virar no-op.
     const provider = wahaProvider.WAHAWhatsAppProvider;
     let currentStatus = null;
-    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (_e) { /* sessão inexistente */ }
+    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (e) { console.error(`[whatsapp] falha ao consultar status da sessão ${account.sessionName}:`, e.message); }
     if (currentStatus === 'FAILED') {
-      try { await provider.restartSession(account.sessionName); } catch (_e) { /* ignora */ }
+      try { await provider.restartSession(account.sessionName); } catch (e) { console.error(`[whatsapp] falha ao reiniciar sessão ${account.sessionName}:`, e.message); }
     }
 
     const { connected, qr } = await waitForWhatsAppQr(provider, account.sessionName, 20000);
@@ -3523,7 +3540,11 @@ app.post('/api/whatsapp/accounts/:id/disconnect', async (req, res) => {
     const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
     if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
 
-    try { await wahaProvider.WAHAWhatsAppProvider.stopSession(account.sessionName); } catch (_e) { /* ignora */ }
+    try {
+      await wahaProvider.WAHAWhatsAppProvider.stopSession(account.sessionName);
+    } catch (e) {
+      console.error(`[whatsapp] falha ao parar sessão ${account.sessionName}:`, e.message);
+    }
     await prisma.whatsAppAccount.update({ where: { id: account.id }, data: { status: 'STOPPED' } });
 
     res.json({ success: true, data: { accountId: account.id, status: 'STOPPED' }, timestamp: new Date().toISOString() });
@@ -3541,7 +3562,7 @@ app.post('/api/whatsapp/accounts/:id/reconnect', async (req, res) => {
 
     const provider = wahaProvider.WAHAWhatsAppProvider;
     let currentStatus = null;
-    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (_e) { /* sessão inexistente */ }
+    try { currentStatus = (await provider.getSessionStatus(account.sessionName))?.status; } catch (e) { console.error(`[whatsapp] falha ao consultar status da sessão ${account.sessionName}:`, e.message); }
     if (currentStatus === 'FAILED') {
       await provider.restartSession(account.sessionName);
     } else {
@@ -3567,8 +3588,8 @@ app.delete('/api/whatsapp/accounts/:id', async (req, res) => {
     const account = await prisma.whatsAppAccount.findFirst({ where: { id: req.params.id, orgId } });
     if (!account) return res.status(404).json({ success: false, error: 'Conta não encontrada' });
 
-    try { await wahaProvider.WAHAWhatsAppProvider.logout(account.sessionName); } catch (_e) { /* ignora */ }
-    try { await wahaProvider.WAHAWhatsAppProvider.deleteSession(account.sessionName); } catch (_e) { /* ignora */ }
+    try { await wahaProvider.WAHAWhatsAppProvider.logout(account.sessionName); } catch (e) { console.error(`[whatsapp] falha ao deslogar sessão ${account.sessionName}:`, e.message); }
+    try { await wahaProvider.WAHAWhatsAppProvider.deleteSession(account.sessionName); } catch (e) { console.error(`[whatsapp] falha ao apagar sessão ${account.sessionName}:`, e.message); }
     await prisma.whatsAppAccount.delete({ where: { id: account.id } });
 
     res.json({ success: true, message: 'Conta removida', timestamp: new Date().toISOString() });

@@ -37,8 +37,11 @@ const PROVIDER_DAILY_CAPS = {
  * Formata o endereço From com nome amigável quando existir.
  */
 function _formatFrom(email, fromName) {
-  const addr = String(email || '').replace(/["<>]/g, '').trim();
-  const name = String(fromName || '').replace(/["<>]/g, '').trim();
+  // CR/LF em valor de header é injeção de header: corrompe a mensagem dali
+  // em diante e o Gmail pode rejeitar por RFC 5322 com headers "perdidos"
+  // (incluindo Message-ID). No nome, troca por espaço para não colar palavras.
+  const addr = String(email || '').replace(/["<>\r\n]/g, '').trim();
+  const name = String(fromName || '').replace(/["<>\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
   return name ? `"${name}" <${addr}>` : addr;
 }
 
@@ -57,16 +60,23 @@ function _isValidEmail(email) {
  * ausente; o Postfix/Mailcow de camada intermediária não regenera porque o
  * header existe). Completa com o domínio da conta de envio.
  *
- * undefined/'' → undefined (o provider gera um id válido por conta própria).
+ * msg-id = <dot-atom@dot-atom>: cada lado só aceita [A-Za-z0-9] e
+ * !#$%&'*+-/=?^_`{|}~. — qualquer coisa fora disso (espaço, CR/LF, não-ASCII,
+ * caracteres de sintaxe como parênteses ou vírgula) também torna o header
+ * inválido. Os dois lados são sanitizados; se não sobrar id utilizável,
+ * retorna undefined e o provider gera um id válido por conta própria.
  */
 function formatMessageId(messageId, fromEmail) {
-  let id = String(messageId || '').trim().replace(/^<+|>+$/g, '');
+  const atext = (s) => s.replace(/[^A-Za-z0-9!#$%&'*+\-/=?^_`{|}~.]/g, '');
+  const id = String(messageId || '').trim().replace(/^<+|>+$/g, '');
   if (!id) return undefined;
-  if (!id.includes('@')) {
-    const domain = String(fromEmail || '').split('@')[1]?.toLowerCase() || 'b2base.local';
-    id = `${id}@${domain}`;
-  }
-  return `<${id}>`;
+  const [rawLocal, ...rawDomain] = id.split('@');
+  const local = atext(rawLocal);
+  if (!local) return undefined;
+  const fallbackDomain =
+    atext(String(fromEmail || '').split('@')[1] || '').toLowerCase() || 'b2base.local';
+  const domain = rawDomain.length ? atext(rawDomain.join('@')) || fallbackDomain : fallbackDomain;
+  return `<${local}@${domain}>`;
 }
 
 // ─── Provider: Gmail (OAuth API) ────────────────────────────────────
