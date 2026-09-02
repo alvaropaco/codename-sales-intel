@@ -212,17 +212,33 @@ function normalizeStatusArg(value) {
   return v;
 }
 
+// Aceita string ou array e normaliza para o formato do MCP: string quando há
+// um único valor, array quando há vários (o servidor combina por OR). Vazio
+// → undefined (filtro ausente).
+function _listArg(value) {
+  const list = Array.isArray(value)
+    ? value.map((v) => String(v || '').trim()).filter(Boolean)
+    : value
+      ? [String(value).trim()]
+      : [];
+  if (!list.length) return undefined;
+  return list.length === 1 ? list[0] : list;
+}
+
 /**
  * Search companies semantically. Returns mapped company records.
+ * `state` e `city` aceitam string ou array (array = OR no servidor).
  */
 async function searchCompanies({ query, state, status, cnae, city, limit = 10 } = {}) {
   const args = {
     query,
     limit: clampLimit(limit, 1, 50),
   };
-  if (state) args.state = state;
+  const stateArg = _listArg(state);
+  const cityArg = _listArg(city);
+  if (stateArg) args.state = stateArg;
   if (cnae) args.cnae = cnae;
-  if (city) args.city = city;
+  if (cityArg) args.city = cityArg;
   const statusValue = normalizeStatusArg(status);
   if (statusValue) args.status = statusValue;
 
@@ -233,6 +249,7 @@ async function searchCompanies({ query, state, status, cnae, city, limit = 10 } 
 
 /**
  * Filter companies by structured attributes.
+ * `state` e `city` aceitam string ou array (array = OR no servidor).
  */
 async function filterCompanies({
   state,
@@ -244,8 +261,10 @@ async function filterCompanies({
   limit = 25,
 } = {}) {
   const args = { limit: clampLimit(limit, 1, 100) };
-  if (state) args.state = state;
-  if (city) args.city = city;
+  const stateArg = _listArg(state);
+  const cityArg = _listArg(city);
+  if (stateArg) args.state = stateArg;
+  if (cityArg) args.city = cityArg;
   const statusValue = normalizeStatusArg(status);
   if (statusValue) args.status = statusValue;
   if (cnae) args.cnae = cnae;

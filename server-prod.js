@@ -1771,14 +1771,6 @@ app.post('/api/enrichment/extract', async (req, res) => {
 // DISCOVERY (after onboarding) - fetch real companies by CNAE via MCP-CNPJ
 // ============================================================================
 
-function getStateFromLocation(location) {
-  const match = String(location || '').match(/\(([A-Za-z]{2})\)/);
-  if (match) return match[1].toUpperCase();
-  // Formato "Cidade, UF" (autocomplete IBGE): "São Paulo, SP"
-  const comma = String(location || '').match(/,\s*([A-Za-z]{2})\s*$/);
-  return comma ? comma[1].toUpperCase() : undefined;
-}
-
 // Extrai, de uma string de localização, o estado (UF) e a cidade. Aceita:
 //   "São Paulo (SP)"  -> { state: "SP", city: "São Paulo" }
 //   "São Paulo, SP"   -> { state: "SP", city: "São Paulo" }
@@ -1803,10 +1795,13 @@ function parseLocation(location) {
     }
   }
 
-  // Quando a string inteira é uma UF (ex.: "SP"), não há cidade.
+  // Uma UF sozinha (ex.: "SP") é filtro de estado, não de cidade — o guard
+  // antigo (`!withoutUf && ...`) nunca disparava para UF solta (nada era
+  // removido da string) e "SP" acabava filtrando city_name ILIKE '%SP%'.
   let city;
-  if (!withoutUf && /^[A-Za-z]{2}$/.test(raw)) {
+  if (/^[A-Za-z]{2}$/.test(raw)) {
     city = undefined;
+    if (!state) state = raw.toUpperCase();
   } else {
     city = withoutUf || undefined;
   }
@@ -1859,6 +1854,23 @@ function shuffleWithSeed(array, seed) {
     arr[j] = tmp;
   }
   return arr;
+}
+
+// Janela rotativa determinística: mesmos (arr, seed) → mesmos itens, seeds
+// diferentes exploram outras partes do array. Usada para distribuir as
+// consultas de descoberta entre TODOS os CNAEs do perfil a cada busca.
+function rotateBySeed(array, seed, count) {
+  if (!Array.isArray(array) || array.length <= count) return (array || []).slice();
+  const start = hashSeed(seed) % array.length;
+  const out = [];
+  for (let i = 0; i < count; i += 1) out.push(array[(start + i) % array.length]);
+  return out;
+}
+
+function chunk(array, size) {
+  const out = [];
+  for (let i = 0; i < array.length; i += size) out.push(array.slice(i, i + size));
+  return out;
 }
 
 // In-memory pool cache: same criteria + seed within TTL reuses the fetched MCP
@@ -1968,12 +1980,37 @@ app.get('/api/discovery/candidates', async (req, res) => {
       });
     }
 
-    const state = locations.length ? getStateFromLocation(locations[0]) : undefined;
-    // Cidade vai ao MCP normalizada sem acentos (formato da coluna city_name
-    // no dataset) — com acento o ILIKE não casa nada e a descoberta zera.
-    const { state: parsedState, city: rawCity } = parseLocation(locations[0] || '');
-    const city = rawCity ? stripAccents(rawCity) : undefined;
-    const effectiveState = state || parsedState;
+    // TODAS as localizações do perfil/tela combinam (OR no MCP) — antes só
+    // locations[0] era usada e as demais eram ignoradas em silêncio.
+    // "Cidade, UF" vira filtro de cidade (o nome do município já restringe o
+    // estado); localização só-UF vira filtro de UF. Precedência: havendo
+    // qualquer cidade, só as cidades vão ao filtro (UFs "soltas" junto de
+    // cidades não são expressáveis no MCP e seriam AND, zerando o OR).
+    // Cidades seguem sem acentos (formato da coluna city_name no dataset —
+    // com acento o ILIKE não casa nada).
+    const parsedLocations = locations
+      .map((l) => parseLocation(l))
+      .filter((p) => p.city || p.state);
+    const cityList = [...new Set(parsedLocations.filter((p) => p.city).map((p) => stripAccents(p.city)))];
+    const ufList = [...new Set(parsedLocations.filter((p) => !p.city && p.state).map((p) => p.state))];
+    let effectiveState;
+    let city;
+    if (cityList.length) {
+      const singleCityWithUf = cityList.length === 1
+        ? parsedLocations.find((p) => p.city && p.state)
+        : null;
+      if (singleCityWithUf) {
+        // Uma cidade só: mantém state+city (afina homônimos em outros estados).
+        city = cityList[0];
+        effectiveState = singleCityWithUf.state;
+      } else {
+        city = cityList; // array → OR no MCP
+      }
+    } else if (ufList.length === 1) {
+      effectiveState = ufList[0];
+    } else if (ufList.length > 1) {
+      effectiveState = ufList; // array → OR no MCP
+    }
 
     if (!cnaeCodes.length && !segments.length && !effectiveState && !city && !explicitCnpj) {
       return res.json({
@@ -2001,26 +2038,50 @@ app.get('/api/discovery/candidates', async (req, res) => {
     } else {
       const candidates = [];
 
-      // 1) Structured CNAE filter when we have codes. Fetch a wide pool (up to the
-      //    MCP ceiling of 100) so pagination can show different leads per page.
-      for (const code of cnaeCodes.slice(0, 6)) {
-        const filtered = await filterCompanies({
-          cnae: code,
-          state: effectiveState,
-          city,
-          isActive: activeOnly || undefined,
-          limit: 100,
-        });
-        filtered.forEach((company) => candidates.push(company));
+      // 1) Structured CNAE filter when we have codes. Consulta TODOS os
+      //    CNAEs (antes: só os 6 primeiros — num perfil de 40, 34 códigos
+      //    jamais eram pesquisados). O limite por código escala para manter
+      //    o pool total em ~400 (teto do dedupe abaixo) e o número de
+      //    chamadas ao MCP sob controle; acima de 60 códigos, uma janela
+      //    rotativa por seed decide QUAIS são consultados nessa busca.
+      //    Chamadas em lotes de 8 para não metralhar o MCP (réplica única).
+      const codesToQuery = rotateBySeed(cnaeCodes, seed, Math.min(cnaeCodes.length, 60));
+      const perCodeLimit = Math.max(3, Math.min(100, Math.ceil(400 / Math.max(1, codesToQuery.length))));
+      let codeCallsFailed = 0;
+      let lastCodeError = null;
+      for (const batch of chunk(codesToQuery, 8)) {
+        const results = await Promise.all(
+          batch.map((code) =>
+            filterCompanies({
+              cnae: code,
+              state: effectiveState,
+              city,
+              isActive: activeOnly || undefined,
+              limit: perCodeLimit,
+            }).catch((err) => {
+              // Falha pontual de um CNAE não derruba a descoberta — os
+              // demais seguem. Se TODAS falharem, o erro sobe (MCP caído).
+              codeCallsFailed += 1;
+              lastCodeError = err;
+              console.error(`[discovery/candidates] cnae ${code}:`, err.message);
+              return [];
+            }),
+          ),
+        );
+        results.forEach((filtered) => filtered.forEach((company) => candidates.push(company)));
+      }
+      if (codesToQuery.length && codeCallsFailed === codesToQuery.length) {
+        throw lastCodeError || new Error('MCP-CNPJ não retornou nada para nenhum CNAE');
       }
 
       // 2) Semantic search for segment/natural-language criteria (MCP caps at 40).
-      //    Com CNAEs selecionados, a busca semântica TAMBÉM filtra por CNAE — o
-      //    search_companies do MCP aceita `cnae` junto com a `query`.
+      //    Com CNAEs selecionados, o foco semântico fica em 3 códigos ROTACIONADOS
+      //    por seed — "Buscar novamente" explora CNAEs diferentes a cada busca, em
+      //    vez de martelar sempre os 3 primeiros. Cidades/UFs combinam por OR.
       const query = explicitSegment || segments[0] || '';
       if (query && !/^\d+$/.test(query)) {
         if (cnaeCodes.length) {
-          for (const code of cnaeCodes.slice(0, 3)) {
+          for (const code of rotateBySeed(cnaeCodes, seed, 3)) {
             const found = await searchCompanies({
               query,
               cnae: code,
