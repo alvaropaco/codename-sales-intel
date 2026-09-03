@@ -114,7 +114,7 @@ async function findProspectIdForPhone(prisma, orgId, phoneNumber) {
   return found ? found.id : null;
 }
 
-async function getOrCreateConversation(prisma, { orgId, whatsappAccountId, phoneNumber, prospectId }) {
+async function getOrCreateConversation(prisma, { orgId, whatsappAccountId, phoneNumber, prospectId, chatId }) {
   const normalized = normalizePhone(phoneNumber);
   if (!normalized) throw new Error('Telefone inválido');
 
@@ -123,10 +123,14 @@ async function getOrCreateConversation(prisma, { orgId, whatsappAccountId, phone
   });
 
   if (existing) {
-    if (prospectId && !existing.prospectId) {
+    if ((prospectId && !existing.prospectId) || (chatId && existing.chatId !== chatId)) {
       return prisma.whatsAppConversation.update({
         where: { id: existing.id },
-        data: { prospectId, whatsappAccountId: existing.whatsappAccountId || whatsappAccountId },
+        data: {
+          ...(prospectId && !existing.prospectId ? { prospectId } : {}),
+          ...(chatId && existing.chatId !== chatId ? { chatId } : {}),
+          whatsappAccountId: existing.whatsappAccountId || whatsappAccountId,
+        },
       });
     }
     return existing;
@@ -137,6 +141,7 @@ async function getOrCreateConversation(prisma, { orgId, whatsappAccountId, phone
       orgId,
       whatsappAccountId: whatsappAccountId || null,
       phoneNumber: normalized,
+      ...(chatId ? { chatId } : {}),
       prospectId: prospectId || null,
       status: CONVERSATION_STATUS.ACTIVE,
     },
@@ -365,6 +370,7 @@ async function handleMessageEvent(prisma, wahaProvider, event) {
     whatsappAccountId: account.id,
     phoneNumber,
     prospectId,
+    chatId,
   });
 
   const now = new Date();

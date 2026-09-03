@@ -27,6 +27,9 @@ function normalizePhone(input) {
 }
 
 function toChatId(phone) {
+  // JIDs completos (ex.: "850...@lid", "1203...@g.us") passam inalterados —
+  // reconstruir "<digits>@c.us" quebra chats LID/grupo.
+  if (String(phone || '').includes('@')) return String(phone);
   const normalized = normalizePhone(phone);
   return normalized ? `${normalized}@c.us` : null;
 }

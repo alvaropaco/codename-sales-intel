@@ -432,6 +432,10 @@ model WhatsAppConversation {
   whatsappAccount      WhatsAppAccount? @relation(fields: [whatsappAccountId], references: [id], onDelete: SetNull)
   prospectId           String?
   phoneNumber          String
+  // JID original do WhatsApp (ex.: "8508...@lid", "1203...@g.us"). O envio
+  // deve preferir este campo: reconstruir "<digits>@c.us" do phoneNumber
+  // falha silenciosamente para chats LID/grupo.
+  chatId               String?
   status               String   @default("ACTIVE") // ACTIVE, PAUSED, HUMAN_HANDOFF, CLOSED, OPTED_OUT
   lastMessageAt        DateTime?
   lastInboundMessageAt DateTime?

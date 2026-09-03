@@ -3786,7 +3786,9 @@ app.post('/api/whatsapp/conversations/:id/messages', async (req, res) => {
       }
     }
 
-    const chatId = whatsappUtils.toChatId(conversation.phoneNumber);
+    // Prefere o JID original da conversa (chats LID/grupo não entregam se o
+    // chatId for reconstruído como "<digits>@c.us").
+    const chatId = conversation.chatId || whatsappUtils.toChatId(conversation.phoneNumber);
     const result = await wahaProvider.WAHAWhatsAppProvider.sendText(account.sessionName, chatId, String(text).trim());
 
     const now = new Date();

@@ -237,7 +237,9 @@ async function processSend(job) {
     }
   }
 
-  const chatId = toChatId(message.conversation.phoneNumber);
+  // Prefere o JID original da conversa (chats LID/grupo não entregam se o
+  // chatId for reconstruído como "<digits>@c.us").
+  const chatId = message.conversation.chatId || toChatId(message.conversation.phoneNumber);
   try {
     const result = await wahaProvider.sendText(account.sessionName, chatId, message.content);
     const now = new Date();
