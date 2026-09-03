@@ -24,6 +24,7 @@ const {
   CONTACT_STATUS,
   CAMPAIGN_STATUS,
   ACCOUNT_STATUS,
+  reconcileSessionStatus,
 } = require('./whatsapp-engine');
 const whatsappNats = require('./whatsapp-nats');
 const metrics = require('./metrics');
@@ -209,9 +210,17 @@ async function processSend(job) {
     return { already_sent: true };
   }
 
-  const account = message.conversation.whatsappAccount;
-  if (!account || account.status !== ACCOUNT_STATUS.CONNECTED) {
-    throw new Error('Conta WhatsApp não conectada');
+  let account = message.conversation.whatsappAccount;
+  if (!account) throw new Error('Conta WhatsApp não conectada');
+
+  // Status no banco pode estar defasado (evento DISCONNECTED transitório do
+  // WAHA): reconcilia antes de falhar o envio.
+  if (account.status !== ACCOUNT_STATUS.CONNECTED) {
+    await reconcileSessionStatus(getPrisma(), wahaProvider, account);
+    account = await getPrisma().whatsAppAccount.findUnique({ where: { id: account.id } });
+    if (!account || account.status !== ACCOUNT_STATUS.CONNECTED) {
+      throw new Error('Conta WhatsApp não conectada');
+    }
   }
 
   // Se o contato entrou em estado terminal, cancela o envio.

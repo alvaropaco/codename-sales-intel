@@ -3772,9 +3772,18 @@ app.post('/api/whatsapp/conversations/:id/messages', async (req, res) => {
       return res.status(400).json({ success: false, error: 'text é obrigatório' });
     }
 
-    const account = conversation.whatsappAccount;
-    if (!account || account.status !== 'CONNECTED') {
-      return res.status(409).json({ success: false, error: 'Conta WhatsApp não conectada' });
+    let account = conversation.whatsappAccount;
+    if (!account) return res.status(409).json({ success: false, error: 'Conta WhatsApp não conectada' });
+
+    // O status no banco pode estar defasado (ex.: evento DISCONNECTED
+    // transitório durante restart do WAHA): reconcilia com o WAHA antes de
+    // rejeitar o envio.
+    if (account.status !== 'CONNECTED') {
+      await whatsappEngine.reconcileSessionStatus(prisma, wahaProvider.WAHAWhatsAppProvider, account);
+      account = await prisma.whatsAppAccount.findUnique({ where: { id: account.id } });
+      if (!account || account.status !== 'CONNECTED') {
+        return res.status(409).json({ success: false, error: 'Conta WhatsApp não conectada' });
+      }
     }
 
     const chatId = whatsappUtils.toChatId(conversation.phoneNumber);
