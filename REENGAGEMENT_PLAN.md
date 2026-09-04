@@ -372,6 +372,26 @@ novo QR) para resolver LID→telefone e vincular automaticamente; ou (b) ação 
 lead" no inbox para o operador associar a conversa ao Prospect. Enquanto isso, o modo atual
 funciona com qualidade um pouco menor para chats LID.
 
+### Store NOWEB habilitado + backfill LID→Prospect (2026-09-04, executado em produção)
+
+1. **Store habilitado via GitOps** (`k8s-infra/apps/b2base-waha`): envs `WAHA_NOWEB_STORE_ENABLED`
+   e `WAHA_NOWEB_STORE_FULL_SYNC` (⚠ o prefixo `WHATSAPP_NOWEB_*` é ignorado pela engine).
+   A config da sessão é persistida na criação: para ativar o store foi preciso **recriar a
+   sessão** (delete + create + novo QR — pareamento refeito em 2026-09-04).
+2. **Mapa LID→telefone**: mesmo com o endpoint `chats/overview` ainda bloqueado para a sessão
+   (config antiga), a engine grava `lid-mapping-*.json` em
+   `/app/.sessions/noweb/<sessão>/` — **nome do arquivo = telefone real (PN), conteúdo = LID**
+   (e os `_reverse` ao contrário). 2.546 mapeamentos já gravados.
+3. **Backfill executado**: 17 de 20 conversas LID resolvidas para telefone real; **6 vinculadas
+   ao Prospect** (via contatos de campanha, com variante com/sem o 9 do celular), incluindo as 5
+   conversas-alvo do reengajamento. As outras 10 (telefone resolvido, sem match de cadastro) e 3
+   LIDs ainda sem mapeamento usam o caminho relaxado (histórico como contexto).
+4. **Pendências**: (a) a API de consulta do store (`chats/overview`, `contacts/check-exists`)
+   só ativa em sessão criada JÁ com o store — nova recriação de sessão desbloquearia; (b)
+   automatizar o vínculo (job que lê os `lid-mapping-*.json` — requer volume compartilhado ou
+   endpoint exposto); (c) corrigir `phoneNumber` das conversas LID para o telefone real (hoje
+   só o `prospectId` foi vinculado; envio continua pelo `chatId` LID, que funciona).
+
 ### Risco assumido no dia 1 e mitigação
 
 Sem modo `suggest`, a IA envia sem aprovação humana. Mitigações: (a) iteração de prompt em shadow
