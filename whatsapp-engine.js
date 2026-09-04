@@ -415,6 +415,9 @@ async function handleMessageEvent(prisma, wahaProvider, event) {
     data: {
       lastMessageAt: now,
       lastInboundMessageAt: now,
+      // Reengajamento: resposta do lead recomeça o ciclo (nova rodada de
+      // tentativas só depois que esta conversa esfriar de novo).
+      ...(conversation.reengageAttempts > 0 ? { reengageAttempts: 0 } : {}),
       ...(nextStatus ? { status: nextStatus } : {}),
     },
   });

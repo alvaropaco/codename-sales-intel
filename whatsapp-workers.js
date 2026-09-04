@@ -182,6 +182,7 @@ async function processSequence(job) {
       type: 'TEXT',
       content,
       status: 'PENDING',
+      source: 'CAMPAIGN',
       stepIndex,
     },
   });

@@ -439,6 +439,12 @@ model WhatsAppConversation {
   status               String   @default("ACTIVE") // ACTIVE, PAUSED, HUMAN_HANDOFF, CLOSED, OPTED_OUT
   lastMessageAt        DateTime?
   lastInboundMessageAt DateTime?
+  // Reengajamento automático (agente de IA). Sem máquina de estados: o estado
+  // é derivado do histórico (última mensagem outbound sem resposta + cooldown).
+  reengageAttempts     Int      @default(0) // tentativas no ciclo atual (resposta do lead zera)
+  reengageTotal        Int      @default(0) // teto vitalício anti-insistência
+  lastReengageAt       DateTime?            // última decisão/envio do agente (gate de gap mínimo)
+  automationPausedAt   DateTime?            // kill switch manual por conversa
   assignedTo           String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -465,6 +471,7 @@ model WhatsAppMessage {
   mediaUrl          String?
   providerMessageId String?
   status            String   @default("PENDING")     // PENDING, SENT, DELIVERED, READ, FAILED
+  source            String   @default("MANUAL")      // MANUAL, CAMPAIGN, REENGAGEMENT
   stepIndex         Int?
   sentAt            DateTime?
   deliveredAt       DateTime?

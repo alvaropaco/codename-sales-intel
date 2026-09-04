@@ -111,6 +111,8 @@ COPY whatsapp-queues.js ./
 COPY whatsapp-nats.js ./
 COPY whatsapp-engine.js ./
 COPY whatsapp-workers.js ./
+COPY reengagement-agent.js ./
+COPY b2base-context.js ./
 COPY metrics.js ./
 COPY package.json ./
 

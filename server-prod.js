@@ -70,6 +70,7 @@ const whatsappEngine = require('./whatsapp-engine');
 const whatsappWorkers = require('./whatsapp-workers');
 const whatsappNats = require('./whatsapp-nats');
 const whatsappUtils = require('./whatsapp-utils');
+const reengagementAgent = require('./reengagement-agent');
 const { closeWhatsAppQueues, getWhatsAppQueues } = require('./whatsapp-queues');
 const metrics = require('./metrics');
 
@@ -4044,6 +4045,13 @@ async function start() {
     } catch (err) {
       console.error('[whatsapp] failed to initialize workers:', err.message);
       console.log('[whatsapp] continuing without WhatsApp workers');
+    }
+
+    // Agente de reengajamento de conversas frias (shadow|auto via REENGAGE_MODE).
+    try {
+      await reengagementAgent.startReengagement();
+    } catch (err) {
+      console.error('[reengage] failed to start:', err.message);
     }
 
     if (whatsappNats.isEnabled()) {
