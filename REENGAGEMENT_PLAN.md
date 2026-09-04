@@ -352,6 +352,26 @@ o botão **"Não contatar"** que já existe no WhatsAppView (`LeadChannelState` 
 2. `aiContext` (resumo incremental) e classificação de intenção no inbound ("me chama semana que vem" → agenda).
 3. Settings por org na `CommercialSettings`; A/B por estratégia (agregar por `strategy` nos eventos).
 
+### Descoberta em produção (2026-09-04): chats LID sem Prospect — agente relaxado
+
+Diagnóstico no banco de produção: 59 conversas = **21 grupos de WhatsApp** (JIDs `@g.us`,
+corretamente fora do escopo) + conversas reais. As conversas onde o lead respondeu e o humano
+já devolveu (o caso-alvo do agente) chegam como **JID LID** (identificador interno do WhatsApp,
+não o telefone real) → `prospectId = null`, porque `findProspectIdForPhone` não consegue casar
+LID com o telefone do cadastro. A WAHA não expõe o mapa LID→telefone (endpoints de
+contatos/chats exigem `noweb.store.enabled` + `full_sync`, que exigem recriar as sessões).
+
+**Adaptação implementada:** o agente agora trabalha sem Prospect — o scan exclui grupos
+(`chatId NOT LIKE '%@g.us'`, telefone ≤15 dígitos) em vez de exigir cadastro, e o prompt usa o
+**histórico da conversa como contexto** com regra explícita de NÃO inventar nome/empresa/segmento.
+Fallbacks sem nome também cobertos. Consequência: sem cadastro não há personalização por
+firmografia nem exemplos do CNPJ MCP (tentativa 2 fica genérica).
+
+**Caminho ideal (decisão pendente):** (a) habilitar o store da noweb na WAHA (recriar sessões,
+novo QR) para resolver LID→telefone e vincular automaticamente; ou (b) ação manual "vincular
+lead" no inbox para o operador associar a conversa ao Prospect. Enquanto isso, o modo atual
+funciona com qualidade um pouco menor para chats LID.
+
 ### Risco assumido no dia 1 e mitigação
 
 Sem modo `suggest`, a IA envia sem aprovação humana. Mitigações: (a) iteração de prompt em shadow

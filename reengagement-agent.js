@@ -127,7 +127,8 @@ async function findCandidates(prisma, limit) {
     LEFT JOIN "LeadChannelState" l
            ON l."prospectId" = c."prospectId" AND l.channel = 'whatsapp'
     WHERE c.status NOT IN ('OPTED_OUT', 'PAUSED')
-      AND c."prospectId" IS NOT NULL
+      AND (c."chatId" IS NULL OR c."chatId" NOT LIKE '%@g.us')
+      AND char_length(c."phoneNumber") <= 15
       AND c."automationPausedAt" IS NULL
       AND c."lastMessageAt" IS NOT NULL
       AND c."lastMessageAt" < ${cooldownCutoff}
@@ -214,7 +215,7 @@ async function reengagementGuard(prisma, conversation, attempt) {
   if (['OPTED_OUT', 'PAUSED'].includes(conversation.status)) {
     return { allowed: false, reason: `conversation_${conversation.status}` };
   }
-  if (!conversation.prospectId || !(await isContactable(prisma, { orgId: conversation.orgId, prospectId: conversation.prospectId }))) {
+  if (conversation.prospectId && !(await isContactable(prisma, { orgId: conversation.orgId, prospectId: conversation.prospectId }))) {
     return { allowed: false, reason: 'do_not_contact' };
   }
 
@@ -285,9 +286,25 @@ const STRATEGIES = Object.freeze({
 
 function buildPrompt({ prospect, settings, conversation, messages, attempt, examples }) {
   const strategy = STRATEGIES[attempt] || STRATEGIES[CONFIG.maxAttempts];
-  const contact = contactName(prospect);
-  const location = [prospect.city, prospect.state].filter(Boolean).join('/');
-  const partners = Array.isArray(prospect.cnpjPartners) ? prospect.cnpjPartners : [];
+  const contact = prospect ? contactName(prospect) : null;
+  const location = prospect ? [prospect.city, prospect.state].filter(Boolean).join('/') : '';
+  const partners = prospect && Array.isArray(prospect.cnpjPartners) ? prospect.cnpjPartners : [];
+
+  const leadBlock = prospect
+    ? [
+        '== LEAD ==',
+        `Contato: ${contact}`,
+        `Empresa: ${prospect.companyName}${prospect.tradeName ? ` (${prospect.tradeName})` : ''}`,
+        `Segmento: ${prospect.industry || 'N/A'}`,
+        `Cidade/UF: ${location || 'N/A'}`,
+        `Porte: ${prospect.employees ? `${prospect.employees} colaboradores` : 'N/A'}`,
+        partners.length ? `Sócios: ${partners.map((p) => p.name).filter(Boolean).join(', ')}` : '',
+      ]
+    : [
+        '== LEAD ==',
+        'Dados da empresa DESCONHECIDOS (contato de chat com JID interno, sem cadastro vinculado).',
+        'NÃO invente nem use nome do contato, empresa ou segmento — baseie-se apenas no histórico abaixo.',
+      ];
 
   const lines = [
     'Você é o agente comercial do B2Base no WhatsApp. Sua tarefa: decidir se devemos enviar uma',
@@ -302,13 +319,7 @@ function buildPrompt({ prospect, settings, conversation, messages, attempt, exam
     settings ? `Segmentos-alvo: ${JSON.stringify(settings.targetSegments || [])}` : '',
     settings ? `Regiões-alvo: ${JSON.stringify(settings.targetLocations || [])}` : '',
     '',
-    '== LEAD ==',
-    `Contato: ${contact}`,
-    `Empresa: ${prospect.companyName}${prospect.tradeName ? ` (${prospect.tradeName})` : ''}`,
-    `Segmento: ${prospect.industry || 'N/A'}`,
-    `Cidade/UF: ${location || 'N/A'}`,
-    `Porte: ${prospect.employees ? `${prospect.employees} colaboradores` : 'N/A'}`,
-    partners.length ? `Sócios: ${partners.map((p) => p.name).filter(Boolean).join(', ')}` : '',
+    ...leadBlock,
     '',
     '== HISTÓRICO DA CONVERSA (mais antiga → mais recente) ==',
     renderTranscript(messages),
@@ -325,7 +336,7 @@ function buildPrompt({ prospect, settings, conversation, messages, attempt, exam
     '== REGRAS ==',
     '- Português do Brasil, tom humano de WhatsApp, curto: MÁXIMO 500 caracteres.',
     '- No máximo UMA pergunta. Sem "Oi, viu minha mensagem?", sem formalismo de e-mail.',
-    '- Use o nome do contato e referencie algo REAL da conversa. Nunca invente fatos, preços, prazos ou promessas.',
+    '- Se o nome do contato estiver disponível, use-o. Referencie algo REAL da conversa. Nunca invente fatos, preços, prazos ou promessas.',
     '- Sem emoji em excesso (no máximo 1). Sem saudação longa. Não se apresente como "assistente virtual" ou "IA".',
     '',
     'Responda SOMENTE com JSON válido:',
@@ -399,7 +410,7 @@ async function contentGuard(prisma, conversation, messageText) {
 // ─── Exemplos do CNPJ MCP (tentativa 2, best-effort) ─────────────────────────
 
 async function fetchMcpExamples(prospect) {
-  if (!CONFIG.mcpExamples || !mcpCnpj.isMcpConfigured()) return null;
+  if (!prospect || !CONFIG.mcpExamples || !mcpCnpj.isMcpConfigured()) return null;
   try {
     const withTimeout = Promise.race([
       mcpCnpj.searchCompanies({
@@ -421,9 +432,10 @@ async function fetchMcpExamples(prospect) {
 // ─── Fallback (templates pré-aprovados, se a IA falhar/recusar) ──────────────
 
 function fallbackMessage(prospect, attempt, examples) {
-  const contact = contactName(prospect);
-  const segment = prospect.industry ? ` do setor de ${prospect.industry}` : '';
-  const city = prospect.city ? ` em ${prospect.city}` : '';
+  const contact = prospect ? contactName(prospect) : null;
+  const pre = contact ? `${contact}, ` : '';
+  const segment = prospect && prospect.industry ? ` do setor de ${prospect.industry}` : '';
+  const city = prospect && prospect.city ? ` em ${prospect.city}` : '';
   const examplesLine =
     examples && examples.length
       ? ` Dá até pra citar exemplo: ${examples
@@ -433,12 +445,19 @@ function fallbackMessage(prospect, attempt, examples) {
       : '';
 
   if (attempt <= 1) {
-    return `${contact}, conseguiu dar uma olhada no que te mandei? Qualquer dúvida é só me chamar por aqui que eu te explico rapidinho.`;
+    return contact
+      ? `${contact}, conseguiu dar uma olhada no que te mandei? Qualquer dúvida é só me chamar por aqui que eu te explico rapidinho.`
+      : 'Conseguiu dar uma olhada no que te mandei? Qualquer dúvida é só me chamar por aqui que eu te explico rapidinho.';
   }
   if (attempt === 2) {
-    return `${contact}, estava pensando aqui em como isso funciona na prática para empresas${segment}${city}. A ideia é filtrar empresas com o perfil que você procura e já trazer os contatos${examplesLine} Quer que eu te mostre um exemplo?`;
+    if (!prospect) {
+      return 'Estava pensando aqui em como isso funciona na prática: a ideia é filtrar empresas com o perfil que você procura e já trazer os contatos certos. Quer que eu te mostre um exemplo?';
+    }
+    return `${pre}estava pensando aqui em como isso funciona na prática para empresas${segment}${city}. A ideia é filtrar empresas com o perfil que você procura e já trazer os contatos${examplesLine} Quer que eu te mostre um exemplo?`;
   }
-  return `${contact}, talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se um dia quiser testar, é só me chamar. 😉`;
+  return contact
+    ? `${contact}, talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se um dia quiser testar, é só me chamar. 😉`
+    : 'Talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se um dia quiser testar, é só me chamar. 😉';
 }
 
 // ─── Processador: whatsapp:reengage ──────────────────────────────────────────
@@ -456,8 +475,12 @@ async function processReengage(job) {
     return { skipped: guard.reason };
   }
 
-  const prospect = await prisma.prospect.findUnique({ where: { id: conversation.prospectId } });
-  if (!prospect) return { skipped: 'prospect_not_found' };
+  // Prospect é opcional: conversas de leads que responderam por chats LID
+  // (JID interno do WhatsApp) não têm telefone real para casar com o cadastro.
+  // Nesse caso o agente trabalha só com o histórico da conversa.
+  const prospect = conversation.prospectId
+    ? await prisma.prospect.findUnique({ where: { id: conversation.prospectId } })
+    : null;
 
   const settings = await prisma.commercialSettings.findUnique({ where: { orgId: conversation.orgId } });
 
@@ -561,7 +584,7 @@ async function processReengage(job) {
     );
 
     await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.SENT, sentMessageId: message.id });
-    log(`enviado (origem=${origin}, tentativa=${attemptNum}) para ${prospect.companyName}: ${messageText.slice(0, 80)}...`);
+    log(`enviado (origem=${origin}, tentativa=${attemptNum}) para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
     return { sent: true, messageId: message.id, origin };
   }
 
@@ -570,10 +593,10 @@ async function processReengage(job) {
   await prisma.whatsAppConversation.update({ where: { id: conversationId }, data: { lastReengageAt: now } });
   await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.GENERATED });
   if (CONFIG.mode === 'suggest') {
-    log(`sugestão gerada [${strategyId}] para ${prospect.companyName}: ${messageText.slice(0, 80)}...`);
+    log(`sugestão gerada [${strategyId}] para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
     return { mode: 'suggest', origin, message: messageText };
   }
-  log(`SHADOW [${strategyId}] ${prospect.companyName}: ${messageText}`);
+  log(`SHADOW [${strategyId}] ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText}`);
   return { mode: 'shadow', origin, message: messageText };
 }
 
