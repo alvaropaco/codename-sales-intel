@@ -48,10 +48,16 @@ async function _request(method, path, body, extraHeaders) {
   }
 
   if (!res.ok) {
-    const message = (json && (json.error || json.message)) || `WAHA HTTP ${res.status}`;
+    const detail = (json && (json.error || json.message)) || text || '';
+    const message = `WAHA HTTP ${res.status} ${detail}`.trim();
     const err = new Error(message);
     err.status = res.status;
     err.details = json;
+    if (res.status === 401 || res.status === 403) {
+      console.error(
+        `[waha] AUTH_FAILURE em ${method} ${path}: ${message} — confira se WAHA_API_KEY bate entre o B2Base (Infisical /b2base) e o WAHA (Infisical /b2base-waha).`
+      );
+    }
     throw err;
   }
 

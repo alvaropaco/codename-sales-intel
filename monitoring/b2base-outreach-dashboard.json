@@ -1,0 +1,185 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "b2base-outreach",
+    "title": "B2Base — Outreach Queues",
+    "tags": ["b2base", "outreach"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "30s",
+    "editable": true,
+    "time": { "from": "now-24h", "to": "now" },
+    "templating": {
+      "list": [
+        {
+          "name": "queue",
+          "label": "Fila",
+          "type": "query",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "query": "label_values(b2base_queue_jobs, queue)",
+          "refresh": 2,
+          "includeAll": true,
+          "multi": true,
+          "current": { "selected": true, "text": "All", "value": "$__all" }
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Scrape / App",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "up{job=\"b2base-metrics\"}", "refId": "A" }],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "1": { "text": "UP", "color": "green" }, "0": { "text": "DOWN", "color": "red" } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 2,
+        "title": "Jobs em espera (waiting)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum(b2base_queue_jobs{state=\"waiting\",queue=~\"$queue\"})", "refId": "A" }],
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 50 }, { "color": "red", "value": 200 } ] } }, "overrides": [] }
+      },
+      {
+        "id": 3,
+        "title": "Jobs em execução (active)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum(b2base_queue_jobs{state=\"active\",queue=~\"$queue\"})", "refId": "A" }],
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] }
+      },
+      {
+        "id": 4,
+        "title": "Jobs agendados (delayed)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum(b2base_queue_jobs{state=\"delayed\",queue=~\"$queue\"})", "refId": "A" }],
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] }
+      },
+      {
+        "id": 5,
+        "title": "Novas falhas (última 1h)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum(increase(b2base_queue_jobs{state=\"failed\",queue=~\"$queue\"}[1h]))", "refId": "A" }],
+        "description": "Aumento do total de jobs failed na última hora — não é o total acumulado (jobs failed ficam no Redis até limpeza manual).",
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }
+      },
+      {
+        "id": 6,
+        "title": "Taxa de falha de envio (5m) — %",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          { "expr": "100 * sum(rate(b2base_outreach_emails_failed_total[5m])) / clamp_min(sum(rate(b2base_outreach_emails_sent_total[5m])) + sum(rate(b2base_outreach_emails_failed_total[5m])), 0.0001)", "refId": "A", "unit": "percent" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 15 } ] } }, "overrides": [] }
+      },
+      {
+        "id": 10,
+        "title": "Profundidade das filas (waiting/active/delayed)",
+        "type": "timeseries",
+        "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          { "expr": "sum by (queue, state) (b2base_queue_jobs{queue=~\"$queue\", state=~\"waiting|active|delayed\"})", "legendFormat": "{{queue}} · {{state}}", "refId": "A" }
+        ],
+        "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" } }, "overrides": [
+          { "matcher": { "id": "byName", "options": "outreach:message-send · waiting" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange", "type": "fixed" } } ] }
+        ] }
+      },
+      {
+        "id": 11,
+        "title": "Novas falhas por fila ( jobs failed/hora )",
+        "type": "timeseries",
+        "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          { "expr": "sum by (queue) (increase(b2base_queue_jobs{queue=~\"$queue\", state=\"failed\"}[1h]))", "legendFormat": "{{queue}}", "refId": "A" }
+        ],
+        "description": "Velocidade de novos jobs falhando — o total acumulado de failed fica no Redis até limpeza manual.",
+        "fieldConfig": { "defaults": { "custom": { "fillOpacity": 25, "lineWidth": 2, "showPoints": "never" }, "color": { "mode": "fixed", "fixedColor": "red" }, "min": 0 }, "overrides": [] }
+      },
+      {
+        "id": 20,
+        "title": "Emails — enviados / falhas / rate limit (por minuto)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          { "expr": "sum(rate(b2base_outreach_emails_sent_total[5m])) * 60", "legendFormat": "enviados/min", "refId": "A" },
+          { "expr": "sum(rate(b2base_outreach_emails_failed_total[5m])) * 60", "legendFormat": "falhas/min", "refId": "B" },
+          { "expr": "sum(rate(b2base_outreach_emails_rate_limited_total[5m])) * 60", "legendFormat": "rate-limited/min", "refId": "C" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [
+          { "matcher": { "id": "byName", "options": "falhas/min" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red", "type": "fixed" } } ] },
+          { "matcher": { "id": "byName", "options": "rate-limited/min" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange", "type": "fixed" } } ] }
+        ] }
+      },
+      {
+        "id": 21,
+        "title": "WhatsApp — enviadas / falhas (por minuto)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [
+          { "expr": "sum(rate(b2base_whatsapp_messages_sent_total[5m])) * 60", "legendFormat": "enviadas/min", "refId": "A" },
+          { "expr": "sum(rate(b2base_whatsapp_messages_failed_total[5m])) * 60", "legendFormat": "falhas/min", "refId": "B" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [
+          { "matcher": { "id": "byName", "options": "falhas/min" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red", "type": "fixed" } } ] }
+        ] }
+      },
+      {
+        "id": 30,
+        "title": "Estado atual das filas (tabela)",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum by (queue, state) (b2base_queue_jobs{queue=~\"$queue\"})", "format": "table", "instant": true, "refId": "A" }],
+        "transformations": [
+          { "id": "organize", "options": { "renameByName": { "queue": "Fila", "state": "Estado", "Value": "Jobs" } } }
+        ],
+        "options": { "showHeader": true }
+      },
+      {
+        "id": 31,
+        "title": "Outreach — mensagens no banco por status",
+        "type": "barchart",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum by (status) (b2base_outreach_messages)", "format": "time_series", "refId": "A" }],
+        "options": { "xField": "status", "orientation": "auto", "showValue": "auto" },
+        "fieldConfig": { "defaults": { "custom": {} }, "overrides": [] }
+      },
+      {
+        "id": 32,
+        "title": "WhatsApp — mensagens no banco por status",
+        "type": "barchart",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 29 },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "targets": [{ "expr": "sum by (status) (b2base_whatsapp_messages)", "format": "time_series", "refId": "A" }],
+        "options": { "xField": "status", "orientation": "auto", "showValue": "auto" },
+        "fieldConfig": { "defaults": { "custom": {} }, "overrides": [] }
+      }
+    ]
+  },
+  "overwrite": true,
+  "message": "Initial import — outreach queue monitoring"
+}

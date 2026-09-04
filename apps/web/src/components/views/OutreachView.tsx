@@ -792,6 +792,15 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                       {enrolledInStartCampaign.size} já contatado(s) oculto(s)
                     </span>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setSelectedIds(new Set(launchableProspects.map((p) => p.id)))}
+                    disabled={launchableProspects.length > 0 && selectedIds.size === launchableProspects.length}
+                  >
+                    Selecionar todos
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="text-xs">
                     Limpar
                   </Button>

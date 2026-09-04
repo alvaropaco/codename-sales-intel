@@ -69,6 +69,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated, initialEr
         onAuthenticated(user);
       }
     } catch (err) {
+      console.error('[login] Google sign-in falhou:', err);
       setError(getAuthErrorMessage(err, 'Falha inesperada durante o login.'));
       setLoading(null);
     }

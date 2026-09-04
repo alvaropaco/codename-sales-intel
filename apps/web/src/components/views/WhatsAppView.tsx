@@ -16,6 +16,9 @@ import {
   ShieldBan,
   ArrowLeft,
   Radio,
+  Bot,
+  BotOff,
+  Sparkles,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +30,8 @@ import {
   WhatsAppCampaign,
   WhatsAppConversation,
   WhatsAppMessage,
+  WhatsAppReengagementSuggestion,
+  WhatsAppAutomationConfig,
 } from '@/types';
 import {
   fetchWhatsAppAccounts,
@@ -47,6 +52,12 @@ import {
   resumeWhatsAppCampaign,
   cancelWhatsAppCampaign,
   markDoNotContact,
+  fetchWhatsAppAutomationConfig,
+  fetchWhatsAppSuggestions,
+  approveWhatsAppSuggestion,
+  discardWhatsAppSuggestion,
+  pauseWhatsAppAutomation,
+  resumeWhatsAppAutomation,
 } from '@/services/api';
 
 interface WhatsAppViewProps {
@@ -187,19 +198,42 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
 
   const handleDisconnect = async (id: string) => {
     if (!confirm('Desconectar este WhatsApp?')) return;
-    await disconnectWhatsAppAccount(id);
+    setError(null);
+    setNotice(null);
+    try {
+      await disconnectWhatsAppAccount(id);
+      setNotice('WhatsApp desconectado.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao desconectar');
+    }
     await loadAccounts();
   };
 
   const handleReconnect = async (id: string) => {
-    await reconnectWhatsAppAccount(id);
-    setQrAccountId(id);
+    setError(null);
+    setNotice('Reconectando… pode levar até um minuto.');
+    try {
+      await reconnectWhatsAppAccount(id);
+      setQrAccountId(id);
+    } catch (err) {
+      setNotice(null);
+      setError(err instanceof Error ? err.message : 'Erro ao reconectar');
+    }
     await loadAccounts();
   };
 
   const handleRemove = async (id: string) => {
     if (!confirm('Remover esta conexão? O histórico de conversas será mantido, mas a conexão será desfeita.')) return;
-    await removeWhatsAppAccount(id);
+    setError(null);
+    setNotice(null);
+    try {
+      await removeWhatsAppAccount(id);
+      setQr(null);
+      setQrAccountId(null);
+      setNotice('Conexão removida.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao remover conexão');
+    }
     await loadAccounts();
   };
 
@@ -636,6 +670,20 @@ function CampaignsTab(props: {
             <CardDescription>Selecione os leads que receberão a sequência.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs"
+                onClick={() => setSelected(new Set(prospects.map((p) => p.id)))}
+                disabled={prospects.length > 0 && selected.size === prospects.length}
+              >
+                Selecionar todos
+              </Button>
+              <Button variant="ghost" size="sm" className="text-xs" onClick={() => setSelected(new Set())} disabled={selected.size === 0}>
+                Limpar
+              </Button>
+            </div>
             <div className="grid max-h-64 grid-cols-1 gap-2 overflow-y-auto md:grid-cols-2">
               {prospects.map((p) => {
                 const checked = selected.has(p.id);
@@ -682,14 +730,75 @@ function InboxTab(props: {
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
+  const [suggestions, setSuggestions] = useState<WhatsAppReengagementSuggestion[]>([]);
+  const [autoConfig, setAutoConfig] = useState<WhatsAppAutomationConfig | null>(null);
+  const [editingSuggestionId, setEditingSuggestionId] = useState<string | null>(null);
+  const [editedText, setEditedText] = useState('');
+  const [actingSuggestionId, setActingSuggestionId] = useState<string | null>(null);
 
   const selected = conversations.find((c) => c.id === selectedId) || null;
+
+  const loadSuggestions = useCallback(async () => {
+    const config = await fetchWhatsAppAutomationConfig();
+    setAutoConfig(config);
+    if (config?.enabled && config.mode === 'suggest') {
+      setSuggestions(await fetchWhatsAppSuggestions());
+    } else {
+      setSuggestions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   useEffect(() => {
     if (selectedId) {
       fetchWhatsAppMessages(selectedId).then(setMessages);
     }
   }, [selectedId]);
+
+  const handleApproveSuggestion = async (s: WhatsAppReengagementSuggestion) => {
+    setActingSuggestionId(s.id);
+    try {
+      await approveWhatsAppSuggestion(s.id, editingSuggestionId === s.id ? editedText.trim() : undefined);
+      await loadSuggestions();
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao aprovar sugestão');
+      await loadSuggestions();
+    } finally {
+      setActingSuggestionId(null);
+      setEditingSuggestionId(null);
+    }
+  };
+
+  const handleDiscardSuggestion = async (s: WhatsAppReengagementSuggestion) => {
+    setActingSuggestionId(s.id);
+    try {
+      await discardWhatsAppSuggestion(s.id);
+      await loadSuggestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao descartar sugestão');
+    } finally {
+      setActingSuggestionId(null);
+      setEditingSuggestionId(null);
+    }
+  };
+
+  const handleToggleAutomation = async () => {
+    if (!selected) return;
+    try {
+      if (selected.automationPausedAt) {
+        await resumeWhatsAppAutomation(selected.id);
+      } else {
+        await pauseWhatsAppAutomation(selected.id);
+      }
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao alterar automação');
+    }
+  };
 
   const handleSend = async () => {
     if (!reply.trim() || !selected) return;
@@ -743,8 +852,24 @@ function InboxTab(props: {
                 <CardDescription>+{selected.phoneNumber}</CardDescription>
               </div>
               <Badge variant={meta.variant}>{meta.label}</Badge>
+              {autoConfig?.enabled && selected.reengageAttempts != null && selected.reengageAttempts > 0 && (
+                <Badge variant="outline" className="gap-1">
+                  <Bot className="h-3 w-3" /> {selected.reengageAttempts}/{autoConfig.maxAttempts}
+                </Badge>
+              )}
+              {selected.automationPausedAt && (
+                <Badge variant="secondary" className="gap-1">
+                  <BotOff className="h-3 w-3" /> Auto pausada
+                </Badge>
+              )}
             </div>
             <div className="flex items-center gap-2">
+              {autoConfig?.enabled && (
+                <Button variant="ghost" size="sm" onClick={handleToggleAutomation} className="gap-2" title={selected.automationPausedAt ? 'Reativar automação de reengajamento' : 'Pausar automação de reengajamento para esta conversa'}>
+                  {selected.automationPausedAt ? <Bot className="h-4 w-4" /> : <BotOff className="h-4 w-4" />}
+                  {selected.automationPausedAt ? 'Reativar auto' : 'Pausar auto'}
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={handleAssign} className="gap-2">
                 <UserCheck className="h-4 w-4" /> Assumir
               </Button>
@@ -796,6 +921,58 @@ function InboxTab(props: {
     );
   }
 
+  const renderSuggestions = () => {
+    if (suggestions.length === 0) return null;
+    return (
+      <div className="space-y-2">
+        <p className="flex items-center gap-2 pt-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-indigo-500" /> Sugestões de reengajamento ({suggestions.length})
+        </p>
+        {suggestions.map((sg) => (
+          <div key={sg.id} className="rounded-xl border border-indigo-200 bg-indigo-500/5 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-bold text-foreground">
+                {sg.prospect?.companyName || sg.conversation?.phoneNumber || 'Lead'}
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  tentativa {sg.attempt} · {sg.strategy ? sg.strategy.split('_').join(' ').toLowerCase() : ''} · {sg.origin === 'ai' ? 'IA' : 'template'}
+                </span>
+              </p>
+            </div>
+            {editingSuggestionId === sg.id ? (
+              <textarea
+                value={editedText}
+                onChange={(e) => setEditedText(e.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-border bg-secondary/40 p-2 text-sm"
+              />
+            ) : (
+              <p className="whitespace-pre-wrap rounded-lg bg-secondary/40 p-2 text-sm text-foreground">{sg.content}</p>
+            )}
+            {sg.reason && <p className="mt-1 text-[11px] text-muted-foreground">Por quê: {sg.reason}</p>}
+            <div className="mt-2 flex justify-end gap-2">
+              {editingSuggestionId === sg.id ? (
+                <Button variant="outline" size="sm" onClick={() => { setEditingSuggestionId(null); setEditedText(''); }}>
+                  Cancelar edição
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => { setEditingSuggestionId(sg.id); setEditedText(sg.content || ''); }}>
+                  Editar
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => handleDiscardSuggestion(sg)} disabled={actingSuggestionId === sg.id} className="text-red-500 hover:text-red-600">
+                {actingSuggestionId === sg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />} Descartar
+              </Button>
+              <Button variant="gradient" size="sm" onClick={() => handleApproveSuggestion(sg)} disabled={actingSuggestionId === sg.id} className="gap-2">
+                {actingSuggestionId === sg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {editingSuggestionId === sg.id ? 'Salvar e enviar' : 'Enviar'}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <Card className="glass-card">
       <CardHeader>
@@ -803,6 +980,7 @@ function InboxTab(props: {
         <CardDescription>Leads que iniciaram conversa ou responderam campanhas</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {renderSuggestions()}
         {conversations.length === 0 ? (
           <div className="flex items-start gap-3 rounded-xl bg-secondary/30 p-4 text-sm text-muted-foreground">
             <Inbox className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
@@ -825,10 +1003,27 @@ function InboxTab(props: {
                     <p className="text-sm font-bold text-foreground">{c.prospect?.companyName || `+${c.phoneNumber}`}</p>
                     <p className="text-xs text-muted-foreground">
                       {c._count?.messages ?? 0} mensagem(ns) · {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleDateString('pt-BR') : '—'}
+                      {c.automationPausedAt
+                        ? ' · auto pausada'
+                        : c.reengageAttempts != null && c.reengageAttempts > 0
+                          ? ` · reengajamento ${c.reengageAttempts}/${autoConfig?.maxAttempts ?? '?'}`
+                          : ''}
                     </p>
                   </div>
                 </div>
-                <Badge variant={meta.variant}>{meta.label}</Badge>
+                <div className="flex shrink-0 items-center gap-1">
+                  {c.automationPausedAt && (
+                    <Badge variant="secondary" className="gap-1">
+                      <BotOff className="h-3 w-3" />
+                    </Badge>
+                  )}
+                  {!c.automationPausedAt && c.reengageAttempts != null && c.reengageAttempts > 0 && (
+                    <Badge variant="outline" className="gap-1">
+                      <Bot className="h-3 w-3" /> {c.reengageAttempts}
+                    </Badge>
+                  )}
+                  <Badge variant={meta.variant}>{meta.label}</Badge>
+                </div>
               </button>
             );
           })
