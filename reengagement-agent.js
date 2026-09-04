@@ -47,7 +47,7 @@ function envInt(name, fallback) {
 
 const CONFIG = Object.freeze({
   enabled: process.env.REENGAGE_ENABLED === 'true',
-  mode: process.env.REENGAGE_MODE === 'auto' ? 'auto' : 'shadow',
+  mode: ['auto', 'suggest'].includes(process.env.REENGAGE_MODE) ? process.env.REENGAGE_MODE : 'shadow',
   maxAttempts: envInt('REENGAGE_MAX_ATTEMPTS', 3),
   maxTotal: envInt('REENGAGE_MAX_TOTAL', 6),
   cooldownHours: envInt('REENGAGE_COOLDOWN_HOURS', 48),
@@ -66,6 +66,39 @@ function getPrisma() {
 }
 
 const log = (...args) => console.log('[reengage]', ...args);
+
+const EVENT_STATUS = Object.freeze({
+  GENERATED: 'GENERATED',
+  SENT: 'SENT',
+  APPROVED: 'APPROVED',
+  DISCARDED: 'DISCARDED',
+  BLOCKED_GUARD: 'BLOCKED_GUARD',
+  REFUSED_IA: 'REFUSED_IA',
+  CANCELLED_INBOUND: 'CANCELLED_INBOUND',
+  FAILED: 'FAILED',
+});
+
+function strategyFor(attempt) {
+  return (STRATEGIES[attempt] || STRATEGIES[CONFIG.maxAttempts]).id;
+}
+
+async function recordEvent(prisma, { conversation, attempt, strategyId, reason, content, origin, mode, status, sentMessageId }) {
+  return prisma.whatsAppReengagementEvent.create({
+    data: {
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      prospectId: conversation.prospectId || null,
+      attempt,
+      strategy: strategyId || null,
+      reason: reason || null,
+      content: content || null,
+      origin: origin || null,
+      mode,
+      status,
+      sentMessageId: sentMessageId || null,
+    },
+  });
+}
 
 // ─── Detecção determinística de candidatos ───────────────────────────────────
 
@@ -104,6 +137,9 @@ async function findCandidates(prisma, limit) {
       AND (l.status IS NULL OR l.status = 'active')
       AND EXISTS (SELECT 1 FROM "WhatsAppMessage" m
                   WHERE m."conversationId" = c.id AND m.direction = 'INBOUND')
+      AND NOT EXISTS (SELECT 1 FROM "WhatsAppReengagementEvent" e
+                      WHERE e."conversationId" = c.id
+                        AND e.mode = 'suggest' AND e.status = 'GENERATED')
       AND (SELECT m.direction FROM "WhatsAppMessage" m
            WHERE m."conversationId" = c.id
            ORDER BY m."createdAt" DESC
@@ -441,11 +477,15 @@ async function processReengage(job) {
   // O que a IA decidiu/produziu. Em qualquer falha (LLM down, JSON inválido,
   // should_send=false sem motivo), cai no fallback pré-aprovado — exceto
   // recusa explícita, que é respeitada.
+  const strategyId = strategyFor(attemptNum);
   let messageText = null;
   let origin = 'fallback';
   let reason = null;
+  let refusedByAi = false;
+  let blockedAiMessage = null;
 
   if (decision && decision.should_send === false) {
+    refusedByAi = true;
     reason = decision.reason || 'ia_refused';
   } else if (decision && decision.message) {
     const contentGuardResult = await contentGuard(prisma, conversation, decision.message);
@@ -454,79 +494,238 @@ async function processReengage(job) {
       origin = 'ai';
       reason = decision.reason || null;
     } else {
+      blockedAiMessage = String(decision.message);
       reason = `guard_${contentGuardResult.reason}`;
     }
   } else {
     reason = 'llm_unavailable';
   }
 
-  if (!messageText && !(decision && decision.should_send === false)) {
+  if (!messageText && !refusedByAi) {
     messageText = fallbackMessage(prospect, attemptNum, examples);
     origin = 'fallback';
   }
 
   const now = new Date();
 
-  // Recusa explícita da IA: registra decisão e adia a próxima avaliação
-  // (lastReengageAt atua como gate de gap no scan). Não queima tentativa.
-  if (!messageText) {
-    await prisma.whatsAppConversation.update({
-      where: { id: conversationId },
-      data: { lastReengageAt: now },
-    });
+  if (refusedByAi) {
+    // Recusa explícita da IA: registra e adia a próxima avaliação
+    // (lastReengageAt atua como gate de gap no scan). Não queima tentativa.
+    await prisma.whatsAppConversation.update({ where: { id: conversationId }, data: { lastReengageAt: now } });
+    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, origin: 'ai', mode: CONFIG.mode, status: EVENT_STATUS.REFUSED_IA });
     log(`decisão: NÃO enviar ${conversationId} (${reason})`);
     return { decided: false, reason };
   }
 
-  if (CONFIG.mode !== 'auto') {
-    // SHADOW: não envia, não queima tentativa — só registra a decisão para
-    // auditoria/iteração de prompt (o gap via lastReengageAt evita re-LLM em loop).
-    await prisma.whatsAppConversation.update({
-      where: { id: conversationId },
-      data: { lastReengageAt: now },
-    });
-    log(`SHADOW [${STRATEGIES[attemptNum] ? STRATEGIES[attemptNum].id : attemptNum}] ${prospect.companyName}: ${messageText}`);
-    return { mode: 'shadow', origin, message: messageText };
+  if (blockedAiMessage) {
+    // Guard derrubou o conteúdo da IA: registra a mensagem vetada para
+    // auditoria/iteração de prompt (a mensagem do fallback segue abaixo).
+    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: blockedAiMessage, origin: 'ai', mode: CONFIG.mode, status: EVENT_STATUS.BLOCKED_GUARD });
   }
 
-  // AUTO: final check de concorrência — o lead pode ter respondido enquanto a
-  // IA gerava. Se respondeu, a conversa voltou a ser viva: cancela sem rastro.
+  if (CONFIG.mode === 'auto') {
+    // AUTO: final check de concorrência — o lead pode ter respondido enquanto a
+    // IA gerava. Se respondeu, a conversa voltou a ser viva: cancela sem rastro.
+    const last = await prisma.whatsAppMessage.findFirst({
+      where: { conversationId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!last || last.direction !== 'OUTBOUND') {
+      return { skipped: 'lead_responded_during_generation' };
+    }
+
+    const message = await prisma.whatsAppMessage.create({
+      data: {
+        conversationId,
+        orgId: conversation.orgId,
+        direction: 'OUTBOUND',
+        type: 'TEXT',
+        content: messageText,
+        status: 'PENDING',
+        source: 'REENGAGEMENT',
+      },
+    });
+
+    await prisma.whatsAppConversation.update({
+      where: { id: conversationId },
+      data: {
+        reengageAttempts: { increment: 1 },
+        reengageTotal: { increment: 1 },
+        lastReengageAt: now,
+      },
+    });
+
+    await getWhatsAppQueues().send.add(
+      { messageId: message.id },
+      { attempts: 5, backoff: { type: 'exponential', delay: 5000 } }
+    );
+
+    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.SENT, sentMessageId: message.id });
+    log(`enviado (origem=${origin}, tentativa=${attemptNum}) para ${prospect.companyName}: ${messageText.slice(0, 80)}...`);
+    return { sent: true, messageId: message.id, origin };
+  }
+
+  // SHADOW e SUGGEST: não enviam, não queimam tentativa — registram a
+  // sugestão/decisão (o gap via lastReengageAt evita re-LLM em loop).
+  await prisma.whatsAppConversation.update({ where: { id: conversationId }, data: { lastReengageAt: now } });
+  await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.GENERATED });
+  if (CONFIG.mode === 'suggest') {
+    log(`sugestão gerada [${strategyId}] para ${prospect.companyName}: ${messageText.slice(0, 80)}...`);
+    return { mode: 'suggest', origin, message: messageText };
+  }
+  log(`SHADOW [${strategyId}] ${prospect.companyName}: ${messageText}`);
+  return { mode: 'shadow', origin, message: messageText };
+}
+
+// ─── Sugestões (modo suggest) e controle por conversa ────────────────────────
+
+/**
+ * Sugestões pendentes de aprovação. O join com conversa/prospect é feito na
+ * rota (não há @relation entre o evento e os modelos de conversa).
+ */
+async function listSuggestions(prisma, orgId, limit = 50) {
+  return prisma.whatsAppReengagementEvent.findMany({
+    where: { orgId, mode: 'suggest', status: EVENT_STATUS.GENERATED },
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(Number(limit) || 50, 100),
+  });
+}
+
+/**
+ * Aprova uma sugestão: revalida guardas, roda o final check (o lead pode ter
+ * respondido desde a geração), cria a mensagem e a envia pela fila whatsapp:send.
+ * `content` permite o operador editar o texto antes de aprovar.
+ */
+async function approveSuggestion(prisma, { orgId, eventId, content } = {}) {
+  const event = await prisma.whatsAppReengagementEvent.findUnique({ where: { id: eventId } });
+  if (!event || event.orgId !== orgId) return { error: 'not_found' };
+  if (event.mode !== 'suggest' || event.status !== EVENT_STATUS.GENERATED) {
+    return { error: 'not_pending' };
+  }
+
+  const conversation = await prisma.whatsAppConversation.findUnique({ where: { id: event.conversationId } });
+  if (!conversation) return { error: 'not_found' };
+  if (conversation.automationPausedAt) return { error: 'paused' };
+  if (['OPTED_OUT', 'PAUSED'].includes(conversation.status)) return { error: `conversation_${conversation.status}` };
+  if (conversation.prospectId && !(await isContactable(prisma, { orgId, prospectId: conversation.prospectId }))) {
+    return { error: 'do_not_contact' };
+  }
+
+  // Final check: se o lead respondeu depois da sugestão ter sido gerada,
+  // a conversa voltou a ser viva — cancela a sugestão em vez de enviar.
   const last = await prisma.whatsAppMessage.findFirst({
-    where: { conversationId },
+    where: { conversationId: conversation.id },
     orderBy: { createdAt: 'desc' },
   });
   if (!last || last.direction !== 'OUTBOUND') {
-    return { skipped: 'lead_responded_during_generation' };
+    await prisma.whatsAppReengagementEvent.update({
+      where: { id: event.id },
+      data: { status: EVENT_STATUS.CANCELLED_INBOUND },
+    });
+    return { error: 'lead_responded' };
   }
 
+  const text = String(content || event.content || '').trim();
+  const guard = await contentGuard(prisma, conversation, text);
+  if (!guard.pass) return { error: `guard_${guard.reason}` };
+
+  const now = new Date();
   const message = await prisma.whatsAppMessage.create({
     data: {
-      conversationId,
-      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      orgId,
       direction: 'OUTBOUND',
       type: 'TEXT',
-      content: messageText,
+      content: guard.content,
       status: 'PENDING',
       source: 'REENGAGEMENT',
     },
   });
-
   await prisma.whatsAppConversation.update({
-    where: { id: conversationId },
+    where: { id: conversation.id },
     data: {
       reengageAttempts: { increment: 1 },
       reengageTotal: { increment: 1 },
       lastReengageAt: now,
     },
   });
-
+  await prisma.whatsAppReengagementEvent.update({
+    where: { id: event.id },
+    data: { status: EVENT_STATUS.SENT, sentMessageId: message.id },
+  });
   await getWhatsAppQueues().send.add(
     { messageId: message.id },
     { attempts: 5, backoff: { type: 'exponential', delay: 5000 } }
   );
 
-  log(`enviado (origem=${origin}, tentativa=${attemptNum}) para ${prospect.companyName}: ${messageText.slice(0, 80)}...`);
-  return { sent: true, messageId: message.id, origin };
+  log(`sugestão ${event.id} aprovada e enfileirada (mensagem ${message.id})`);
+  return { message };
+}
+
+async function discardSuggestion(prisma, { orgId, eventId, reason } = {}) {
+  const event = await prisma.whatsAppReengagementEvent.findUnique({ where: { id: eventId } });
+  if (!event || event.orgId !== orgId) return { error: 'not_found' };
+  if (event.status !== EVENT_STATUS.GENERATED) return { error: 'not_pending' };
+  await prisma.whatsAppReengagementEvent.update({
+    where: { id: event.id },
+    data: { status: EVENT_STATUS.DISCARDED, reason: reason || event.reason },
+  });
+  return { ok: true };
+}
+
+async function pauseConversationAutomation(prisma, { orgId, conversationId }) {
+  const conv = await prisma.whatsAppConversation.findFirst({ where: { id: conversationId, orgId } });
+  if (!conv) return { error: 'not_found' };
+  await prisma.whatsAppConversation.update({
+    where: { id: conv.id },
+    data: { automationPausedAt: new Date() },
+  });
+  return { ok: true, paused: true };
+}
+
+async function resumeConversationAutomation(prisma, { orgId, conversationId }) {
+  const conv = await prisma.whatsAppConversation.findFirst({ where: { id: conversationId, orgId } });
+  if (!conv) return { error: 'not_found' };
+  await prisma.whatsAppConversation.update({
+    where: { id: conv.id },
+    data: { automationPausedAt: null },
+  });
+  return { ok: true, paused: false };
+}
+
+/**
+ * Próxima data em que a conversa volta a ser elegível: o que vencer por último
+ * entre o cooldown desde a última mensagem e o gap desde a última decisão.
+ */
+function nextEligibleAt(conversation) {
+  const gates = [];
+  if (conversation.lastMessageAt) {
+    gates.push(new Date(new Date(conversation.lastMessageAt).getTime() + CONFIG.cooldownHours * 3600e3));
+  }
+  if (conversation.lastReengageAt) {
+    gates.push(new Date(new Date(conversation.lastReengageAt).getTime() + CONFIG.minGapHours * 3600e3));
+  }
+  if (!gates.length) return null;
+  return gates.reduce((a, b) => (a > b ? a : b));
+}
+
+async function getConversationAutomation(prisma, { orgId, conversationId }) {
+  const conv = await prisma.whatsAppConversation.findFirst({ where: { id: conversationId, orgId } });
+  if (!conv) return null;
+  const events = await prisma.whatsAppReengagementEvent.findMany({
+    where: { conversationId: conv.id },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+  });
+  return {
+    paused: Boolean(conv.automationPausedAt),
+    pausedAt: conv.automationPausedAt,
+    attempts: conv.reengageAttempts,
+    total: conv.reengageTotal,
+    lastReengageAt: conv.lastReengageAt,
+    nextEligibleAt: nextEligibleAt(conv),
+    events,
+  };
 }
 
 // ─── Registro/boot ───────────────────────────────────────────────────────────
@@ -553,6 +752,7 @@ async function startReengagement() {
 
 module.exports = {
   CONFIG,
+  EVENT_STATUS,
   processScan,
   processReengage,
   reengagementGuard,
@@ -561,4 +761,11 @@ module.exports = {
   fallbackMessage,
   buildPrompt,
   startReengagement,
+  listSuggestions,
+  approveSuggestion,
+  discardSuggestion,
+  pauseConversationAutomation,
+  resumeConversationAutomation,
+  getConversationAutomation,
+  nextEligibleAt,
 };

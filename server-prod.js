@@ -3835,6 +3835,126 @@ app.post('/api/whatsapp/conversations/:id/assign', async (req, res) => {
   }
 });
 
+// ─── Automação de reengajamento (agente de IA) ───────────────────────────────
+
+// GET /api/whatsapp/automation/config — configuração vigente do agente (leitura).
+app.get('/api/whatsapp/automation/config', async (req, res) => {
+  try {
+    await requireRequestOrgId(req);
+    const { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin } = reengagementAgent.CONFIG;
+    res.json({ success: true, data: { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin }, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/automation/suggestions — fila de aprovação (modo suggest).
+app.get('/api/whatsapp/automation/suggestions', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const events = await reengagementAgent.listSuggestions(prisma, orgId, Number(req.query.limit) || 50);
+
+    const conversationIds = [...new Set(events.map((e) => e.conversationId))];
+    const conversations = conversationIds.length
+      ? await prisma.whatsAppConversation.findMany({
+          where: { id: { in: conversationIds }, orgId },
+          select: { id: true, phoneNumber: true, chatId: true, prospectId: true },
+        })
+      : [];
+    const convMap = new Map(conversations.map((c) => [c.id, c]));
+    const prospectIds = [...new Set(conversations.map((c) => c.prospectId).filter(Boolean))];
+    const prospects = prospectIds.length
+      ? await prisma.prospect.findMany({ where: { id: { in: prospectIds } }, select: { id: true, companyName: true, tradeName: true } })
+      : [];
+    const prospectMap = new Map(prospects.map((p) => [p.id, p]));
+
+    const data = events.map((e) => {
+      const conv = convMap.get(e.conversationId);
+      const prospect = conv && conv.prospectId ? prospectMap.get(conv.prospectId) || null : null;
+      return { ...e, conversation: conv || null, prospect };
+    });
+
+    res.json({ success: true, data, count: data.length, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/automation/suggestions/:id/approve — aprova (e envia).
+// Body opcional: { content } para o operador editar o texto antes de enviar.
+app.post('/api/whatsapp/automation/suggestions/:id/approve', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await reengagementAgent.approveSuggestion(prisma, {
+      orgId,
+      eventId: req.params.id,
+      content: req.body && req.body.content,
+    });
+    if (result.error) {
+      const status = { not_found: 404, not_pending: 409, paused: 409, conversation_OPTED_OUT: 409, conversation_PAUSED: 409, do_not_contact: 409, lead_responded: 409, empty_content: 400 }[result.error] || 400;
+      return res.status(status).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, data: result.message, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/automation/suggestions/:id/discard — descarta a sugestão.
+app.post('/api/whatsapp/automation/suggestions/:id/discard', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await reengagementAgent.discardSuggestion(prisma, {
+      orgId,
+      eventId: req.params.id,
+      reason: req.body && req.body.reason,
+    });
+    if (result.error) {
+      const status = { not_found: 404, not_pending: 409 }[result.error] || 400;
+      return res.status(status).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/whatsapp/conversations/:id/automation — estado da automação + últimos eventos.
+app.get('/api/whatsapp/conversations/:id/automation', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const state = await reengagementAgent.getConversationAutomation(prisma, { orgId, conversationId: req.params.id });
+    if (!state) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+    res.json({ success: true, data: state, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/conversations/:id/automation/pause — kill switch por conversa.
+app.post('/api/whatsapp/conversations/:id/automation/pause', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await reengagementAgent.pauseConversationAutomation(prisma, { orgId, conversationId: req.params.id });
+    if (result.error) return res.status(404).json({ success: false, error: result.error });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/conversations/:id/automation/resume — reativa a automação.
+app.post('/api/whatsapp/conversations/:id/automation/resume', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await reengagementAgent.resumeConversationAutomation(prisma, { orgId, conversationId: req.params.id });
+    if (result.error) return res.status(404).json({ success: false, error: result.error });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/whatsapp/prospects/:id/do-not-contact — bloqueio manual.
 app.post('/api/whatsapp/prospects/:id/do-not-contact', async (req, res) => {
   try {

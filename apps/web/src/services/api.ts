@@ -24,7 +24,9 @@ import {
   WhatsAppCampaign,
   WhatsAppConversation,
   WhatsAppMessage,
-  WhatsAppConnectResult
+  WhatsAppConnectResult,
+  WhatsAppReengagementSuggestion,
+  WhatsAppAutomationConfig
 } from '../types';
 
 const API_BASE = '/api';
@@ -853,6 +855,69 @@ export async function markDoNotContact(prospectId: string): Promise<void> {
   const json = await res.json();
   if (!res.ok || !json.success) {
     throw new Error(json.error || 'Erro ao bloquear contato');
+  }
+}
+
+// --- Automação de reengajamento (agente de IA) -------------------------------
+
+export async function fetchWhatsAppAutomationConfig(): Promise<WhatsAppAutomationConfig | null> {
+  try {
+    const res = await fetch(`${API_BASE}/whatsapp/automation/config`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar configuração de automação');
+    return json.data || null;
+  } catch (error) {
+    console.error('API fetchWhatsAppAutomationConfig error:', error);
+    return null;
+  }
+}
+
+export async function fetchWhatsAppSuggestions(): Promise<WhatsAppReengagementSuggestion[]> {
+  try {
+    const res = await fetch(`${API_BASE}/whatsapp/automation/suggestions`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao listar sugestões');
+    return json.data || [];
+  } catch (error) {
+    console.error('API fetchWhatsAppSuggestions error:', error);
+    return [];
+  }
+}
+
+export async function approveWhatsAppSuggestion(id: string, content?: string): Promise<WhatsAppMessage> {
+  const res = await fetch(`${API_BASE}/whatsapp/automation/suggestions/${id}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(content != null ? { content } : {}),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao aprovar sugestão');
+  }
+  return json.data;
+}
+
+export async function discardWhatsAppSuggestion(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/automation/suggestions/${id}/discard`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao descartar sugestão');
+  }
+}
+
+export async function pauseWhatsAppAutomation(conversationId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/conversations/${conversationId}/automation/pause`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao pausar automação');
+  }
+}
+
+export async function resumeWhatsAppAutomation(conversationId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/whatsapp/conversations/${conversationId}/automation/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao reativar automação');
   }
 }
 

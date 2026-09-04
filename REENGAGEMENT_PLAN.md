@@ -331,13 +331,26 @@ Config só por env (Infisical), sem schema de settings: `REENGAGE_ENABLED`, `REE
 `REENGAGE_LLM_MODEL`. Kill switches no dia 1 (sem UI nova): flag de env (redeploy ArgoCD ~3min) e
 o botão **"Não contatar"** que já existe no WhatsAppView (`LeadChannelState` já bloqueia o scan).
 
-### O que fica explicitamente para o dia 2+ (nesta ordem)
+### Day 2 — IMPLEMENTADO (2026-09-04)
 
-1. Badge de automação + botões pausar na `WhatsAppView` (visibilidade).
-2. Tabela `WhatsAppReengagementEvent` + modo `suggest` com fila de aprovação (dataset de qualidade).
-3. Métricas Prometheus (`_messages_sent_total`, `_reactivated_total`, `_optouts_total`) + painel Grafana.
-4. `aiContext` (resumo incremental) e classificação de intenção no inbound ("me chama semana que vem" → agenda).
-5. Settings por org na `CommercialSettings`; A/B por estratégia.
+- Tabela `WhatsAppReengagementEvent` (migração `20260904160000`): auditoria de toda decisão do
+  agente (`GENERATED`/`SENT`/`BLOCKED_GUARD`/`REFUSED_IA`/`CANCELLED_INBOUND`) + fila de aprovação.
+- **Modo `suggest`**: agente gera a mensagem e aguarda aprovação humana. O scan não duplica
+  sugestão pendente; aprovar revalida os guardas e o final check (lead respondeu entretanto →
+  sugestão vira `CANCELLED_INBOUND`); edição do operador passa de novo pelo policy guard.
+- Pausa/reativação de automação por conversa (`automationPausedAt`), respeitada pelo scan.
+- Rotas: `GET /api/whatsapp/automation/config`, `GET /api/whatsapp/automation/suggestions`,
+  `POST .../suggestions/:id/approve|discard`,
+  `GET /api/whatsapp/conversations/:id/automation`, `POST .../automation/pause|resume`.
+- UI (`WhatsAppView`): badge de reengajamento (🤖 N/M) na lista e no cabeçalho da conversa,
+  botão pausar/reativar auto, painel de sugestões com Enviar/Editar/Descartar.
+- E2E contra Postgres real: suggest 7/7 ✓ · shadow e auto gravando eventos ✓.
+
+### O que fica para o day 3+ (nesta ordem)
+
+1. Métricas Prometheus (`_messages_sent_total`, `_reactivated_total`, `_optouts_total`) + painel Grafana.
+2. `aiContext` (resumo incremental) e classificação de intenção no inbound ("me chama semana que vem" → agenda).
+3. Settings por org na `CommercialSettings`; A/B por estratégia (agregar por `strategy` nos eventos).
 
 ### Risco assumido no dia 1 e mitigação
 

@@ -399,10 +399,43 @@ export interface WhatsAppConversation {
   assignedTo?: string | null;
   lastMessageAt?: string | null;
   lastInboundMessageAt?: string | null;
+  // Reengajamento automático (agente de IA)
+  reengageAttempts?: number;
+  reengageTotal?: number;
+  lastReengageAt?: string | null;
+  automationPausedAt?: string | null;
   whatsappAccountId?: string | null;
   whatsappAccount?: Pick<WhatsAppAccount, 'id' | 'phoneNumber' | 'status'> | null;
   prospect?: { id: string; companyName: string; cnpj: string; city?: string | null; state?: string | null; industry?: string | null } | null;
   _count?: { messages: number };
+}
+
+// Sugestão do agente de reengajamento aguardando aprovação (modo suggest).
+export interface WhatsAppReengagementSuggestion {
+  id: string;
+  conversationId: string;
+  prospectId?: string | null;
+  attempt: number;
+  strategy?: string | null;
+  reason?: string | null;
+  content?: string | null;
+  origin?: string | null;
+  mode: string;
+  status: string;
+  createdAt: string;
+  conversation?: { id: string; phoneNumber: string; chatId?: string | null; prospectId?: string | null } | null;
+  prospect?: { id: string; companyName: string; tradeName?: string | null } | null;
+}
+
+export interface WhatsAppAutomationConfig {
+  enabled: boolean;
+  mode: 'shadow' | 'suggest' | 'auto';
+  maxAttempts: number;
+  maxTotal: number;
+  cooldownHours: number;
+  minGapHours: number;
+  dailyCap: number;
+  scanIntervalMin: number;
 }
 
 export interface WhatsAppConnectResult {

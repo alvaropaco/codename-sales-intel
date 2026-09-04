@@ -488,6 +488,29 @@ model WhatsAppMessage {
   @@index([status])
 }
 
+// Auditoria e fila de sugestões do agente de reengajamento. Cada decisão do
+// agente (gerada, enviada, bloqueada pelo guard, recusada pela IA) vira um
+// evento; no modo suggest, eventos GENERATED aguardam aprovação humana.
+model WhatsAppReengagementEvent {
+  id             String   @id @default(cuid())
+  orgId          String
+  conversationId String
+  prospectId     String?
+  attempt        Int      @default(1)
+  strategy       String?             // RETOMAR_CONTEXTO, VALOR_NOVO, REFRAME_E_ENCERRAMENTO
+  reason         String?             // justificativa da IA / motivo do bloqueio
+  content        String?             // mensagem gerada
+  origin         String?             // ai | fallback
+  mode           String              // shadow | suggest | auto (modo vigente na decisão)
+  status         String              // GENERATED, SENT, APPROVED, DISCARDED, BLOCKED_GUARD, REFUSED_IA, CANCELLED_INBOUND, FAILED
+  sentMessageId  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([orgId, status, createdAt])
+  @@index([conversationId])
+}
+
 // Estado de engajamento do lead POR CANAL (whatsapp, email, linkedin, ...).
 // Permite opt-out / do-not-contact do WhatsApp sem afetar os demais canais e
 // sem duplicar o cadastro do lead (que permanece no modelo Prospect).
