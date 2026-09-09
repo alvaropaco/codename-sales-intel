@@ -4,7 +4,8 @@
  * O reengajamento (reengagement-agent.js) manda a mensagem; quando o lead
  * responde, ESTE módulo continua a conversa em segundos (em vez de esperar um
  * humano entrar no inbox): responde as dúvidas de forma natural e conduz o
- * lead ao cadastro em https://b2base.net.
+ * lead ao objetivo da org/campanha de origem (contexto de CADA cliente —
+ * ver org-context.js; a IA fala do negócio da org, nunca do "produto B2Base").
  *
  * Disparo: whatsapp-engine.handleMessageEvent enfileira whatsapp:reengage-reply
  * (jobId determinístico = idempotência contra reentregas do webhook/NATS).
@@ -12,8 +13,10 @@
  * Pipeline do processador:
  *   → guarda dura (re-leitura do estado no banco: opt-out, pause, DNC, tetos)
  *   → só conversa conduzida pelo agente (última outbound = REENGAGEMENT/AI_REPLY;
- *     se um humano respondeu por último, a conversa é dele — não entramos)
- *   → context assembly (produto + org + lead + histórico) → 1 chamada LiteLLM
+ *     e, se REENGAGE_REPLY_INCLUDE_CAMPAIGN=true, também CAMPAIGN. Se um humano
+ *     respondeu por último, a conversa é dele — não entramos)
+ *   → context assembly (empresa da org + campanha de origem + lead + histórico)
+ *     → 1 chamada LiteLLM
  *   → Policy Guard (blocklist, tamanho, dedupe) → fila whatsapp:send
  *
  * Modos (REENGAGE_REPLY_MODE): auto (envia) | shadow (só registra). O modo
@@ -22,6 +25,7 @@
  * Config por env (Infisical/k8s):
  *   REENGAGE_REPLY_ENABLED              — "false" força off; default segue REENGAGE_ENABLED
  *   REENGAGE_REPLY_MODE                 — auto | shadow (default = REENGAGE_MODE se auto, senão shadow)
+ *   REENGAGE_REPLY_INCLUDE_CAMPAIGN     — "true" também responde leads que reagem a CAMPAIGN
  *   REENGAGE_REPLY_MAX_PER_CONVERSATION — teto de respostas de IA por conversa (default 8)
  *   REENGAGE_REPLY_DAILY_CAP            — teto global de respostas de IA/dia (default 60)
  *   REENGAGE_REPLY_MIN_DELAY_SEC        — atraso mínimo "humano" antes de responder (default 5)
@@ -32,14 +36,22 @@ const { PrismaClient } = require('@prisma/client');
 const { registerProcessor } = require('./outreach-queues');
 const { getWhatsAppQueues } = require('./whatsapp-queues');
 const { BLOCKLIST, normalizeForCompare } = require('./whatsapp-utils');
-const b2baseContext = require('./b2base-context');
+const orgContext = require('./org-context');
 
 const QUEUES = Object.freeze({
   REENGAGE_REPLY: 'whatsapp:reengage-reply',
 });
 
-// Fontes de outbound que caracterizam uma conversa conduzida pelo agente.
+// Fontes de outbound que caracterizam uma conversa conduzida por automação.
+// CAMPAIGN entra só com REENGAGE_REPLY_INCLUDE_CAMPAIGN=true (mensagens de
+// sequência de campanha: o lead respondeu ao disparo → a IA continua usando a
+// proposta da campanha). MANUAL (humano) NUNCA vira conversa do agente.
 const AGENT_SOURCES = Object.freeze(['REENGAGEMENT', 'AI_REPLY']);
+const CAMPAIGN_SOURCE = 'CAMPAIGN';
+
+function agentSources() {
+  return CONFIG.includeCampaign ? [...AGENT_SOURCES, CAMPAIGN_SOURCE] : AGENT_SOURCES;
+}
 
 function envInt(name, fallback) {
   const n = Number(process.env[name]);
@@ -63,6 +75,7 @@ function resolveMode() {
 const CONFIG = Object.freeze({
   enabled: resolveEnabled(),
   mode: resolveMode(),
+  includeCampaign: process.env.REENGAGE_REPLY_INCLUDE_CAMPAIGN === 'true',
   maxRepliesPerConversation: envInt('REENGAGE_REPLY_MAX_PER_CONVERSATION', 8),
   dailyCap: envInt('REENGAGE_REPLY_DAILY_CAP', 60),
   minDelaySec: envInt('REENGAGE_REPLY_MIN_DELAY_SEC', 5),
@@ -149,8 +162,19 @@ async function replyGuard(prisma, { conversation, inboundMessage }) {
     where: { conversationId: conversation.id, direction: 'OUTBOUND' },
     orderBy: { createdAt: 'desc' },
   });
-  if (!lastOutbound || !AGENT_SOURCES.includes(lastOutbound.source)) {
+  if (!lastOutbound || !agentSources().includes(lastOutbound.source)) {
     return { allowed: false, reason: 'not_agent_conversation' };
+  }
+
+  // Conversa de campanha: carrega a proposta da campanha de origem (pilar 2)
+  // para o prompt responder no contexto do que foi ofertado ao lead.
+  let originCampaign = null;
+  if (lastOutbound.source === CAMPAIGN_SOURCE && lastOutbound.campaignContactId) {
+    const campaignContact = await prisma.whatsAppCampaignContact.findUnique({
+      where: { id: lastOutbound.campaignContactId },
+      select: { campaign: { select: { id: true, name: true, objective: true, offer: true, ctaUrl: true } } },
+    });
+    originCampaign = campaignContact ? campaignContact.campaign : null;
   }
 
   const aiReplies = await prisma.whatsAppMessage.count({
@@ -169,7 +193,7 @@ async function replyGuard(prisma, { conversation, inboundMessage }) {
     return { allowed: false, reason: 'daily_cap_reached' };
   }
 
-  return { allowed: true, lastMessage: last };
+  return { allowed: true, lastMessage: last, lastOutbound, campaign: originCampaign };
 }
 
 // ─── Context assembly ────────────────────────────────────────────────────────
@@ -192,7 +216,7 @@ function renderTranscript(messages, lastInboundId) {
     .join('\n');
 }
 
-function buildReplyPrompt({ prospect, settings, messages, lastInboundId }) {
+function buildReplyPrompt({ prospect, orgCtx, campaign, messages, lastInboundId }) {
   const contact = prospect ? contactName(prospect) : null;
   const location = prospect ? [prospect.city, prospect.state].filter(Boolean).join('/') : '';
   const partners = prospect && Array.isArray(prospect.cnpjPartners) ? prospect.cnpjPartners : [];
@@ -212,21 +236,21 @@ function buildReplyPrompt({ prospect, settings, messages, lastInboundId }) {
         'NÃO invente nem use nome do contato, empresa ou segmento — baseie-se apenas no histórico abaixo.',
       ];
 
+  const campaignBlock = orgContext.renderCampaignBlock(campaign);
+  const cta = orgContext.effectiveCtaText(orgCtx, campaign);
+
   return [
-    'Você é um vendedor do B2Base respondendo um lead no WhatsApp. O lead ACABOU de mandar',
-    'uma mensagem. Responda de forma natural e humana e conduza a conversa para o cadastro.',
+    `Você é um vendedor da ${orgContext.sellerIdentity(orgCtx)} respondendo um lead no WhatsApp.`,
+    'O lead ACABOU de mandar uma mensagem. Responda de forma natural e humana e conduza',
+    'a conversa para o objetivo abaixo.',
     '',
     '== OBJETIVO (SEMPRE) ==',
-    b2baseContext.B2BASE_CONTEXT.cta,
+    cta,
     '',
-    '== CONTEXTO DO PRODUTO ==',
-    b2baseContext.renderForPrompt(),
+    '== CONTEXTO DA NOSSA EMPRESA ==',
+    orgCtx.renderForPrompt(),
     '',
-    '== NOSSA OPERAÇÃO ==',
-    settings ? `Proposta de valor: ${settings.valueProposition || 'não informada'}` : 'Proposta de valor: não informada',
-    settings ? `Segmentos-alvo: ${JSON.stringify(settings.targetSegments || [])}` : '',
-    settings ? `Regiões-alvo: ${JSON.stringify(settings.targetLocations || [])}` : '',
-    '',
+    ...(campaignBlock ? [campaignBlock, ''] : []),
     ...leadBlock,
     '',
     '== HISTÓRICO DA CONVERSA (mais antiga → mais recente) ==',
@@ -235,15 +259,14 @@ function buildReplyPrompt({ prospect, settings, messages, lastInboundId }) {
     '== ESTILO — CRÍTICO, NÃO PODE PARECER ROBÔ ==',
     '- Português do Brasil informal de WhatsApp, como um vendedor de verdade: "vc", "pra", "tá".',
     '- CURTO: 1 a 3 frases, no máximo 400 caracteres. Nada de listas, markdown ou tom de e-mail.',
-    '- Responda PRIMEIRO o que o lead perguntou; o convite para o site vem depois, encaixado naturalmente.',
+    '- Responda PRIMEIRO o que o lead perguntou; o convite/objetivo vem depois, encaixado naturalmente.',
     '- Não se apresente como "assistente virtual" ou "IA". Sem "Prezado", sem saudação longa, no máximo 1 emoji.',
     '- No máximo UMA pergunta.',
     '',
     '== RESTRIÇÕES ==',
-    '- Use SOMENTE o contexto do produto e o histórico acima. NUNCA invente preços, planos, descontos, prazos, garantias, integrações ou resultados.',
-    '- Se perguntarem algo fora do contexto (ex.: preço exato), seja leve e honesto ("essa parte eu confirmo certinho pra vc") e conduza para o cadastro.',
+    '- Use SOMENTE o contexto da empresa, da campanha e o histórico acima. NUNCA invente preços, planos, descontos, prazos, garantias, integrações, resultados ou links.',
+    '- Se perguntarem algo fora do contexto (ex.: preço exato), seja leve e honesto ("essa parte eu confirmo certinho pra vc") e conduza para o objetivo.',
     '- Se a mensagem não pede resposta de verdade (ex.: só "ok", "👍"), pode curtir o retorno e reforçar o convite — ou recusar (should_send=false) se for claramente desnecessário.',
-    '- Se for pedido de recomendação, ofereça mostrar empresas do segmento dele na plataforma (via cadastro no site).',
     '',
     'Responda SOMENTE com JSON válido:',
     '{ "should_send": true, "message": "texto da resposta", "reason": "1 frase" }',
@@ -291,7 +314,7 @@ async function replyContentGuard(prisma, conversation, messageText) {
   // Não repete a última mensagem automatizada desta conversa (o lead percebe
   // quando o robô manda o mesmo texto duas vezes).
   const previous = await prisma.whatsAppMessage.findMany({
-    where: { conversationId: conversation.id, source: { in: AGENT_SOURCES } },
+    where: { conversationId: conversation.id, source: { in: agentSources() } },
     orderBy: { createdAt: 'desc' },
     take: 3,
     select: { content: true },
@@ -305,13 +328,19 @@ async function replyContentGuard(prisma, conversation, messageText) {
 
 /**
  * Fallback pré-aprovado (LLM caiu/JSON inválido/mensagem vetada): sempre
- * conduz ao cadastro no site.
+ * conduz ao objetivo da org (site) sem prometer nada fora do contexto.
  */
-function fallbackReply(prospect, variant = 0) {
-  const templates = [
-    'Consigo te explicar por aqui mesmo! O caminho mais rápido é criar sua conta em https://b2base.net — cadastro rapidinho e você já consegue testar hoje. Qualquer dúvida me chama aqui 👍',
-    'Boa! Dá uma olhada em https://b2base.net — o cadastro é rápido e o onboarding te mostra tudo passo a passo. Aí você já faz a primeira busca e eu te ajudo no que precisar 😉',
-  ];
+function fallbackReply(prospect, variant = 0, orgCtx = null) {
+  const site = orgCtx && orgCtx.site;
+  const templates = site
+    ? [
+        `Consigo te explicar por aqui mesmo! O caminho mais rápido é acessar ${site} — é rapidinho e você já consegue adiantar hoje. Qualquer dúvida me chama aqui 👍`,
+        `Boa! Dá uma olhada em ${site} — leva pouco tempo e já te adianta. Aí a gente conversa do que fizer sentido pra vc 😉`,
+      ]
+    : [
+        'Consigo te explicar por aqui mesmo! Me conta o que você precisa que eu te oriento no próximo passo 👍',
+        'Boa! Quer que eu te explique como funciona na prática? Me diz o seu cenário que eu já te adianto 😉',
+      ];
   const contact = prospect ? contactName(prospect) : null;
   const base = templates[Math.abs(variant) % templates.length];
   return contact ? `${contact}, ${base.charAt(0).toLowerCase()}${base.slice(1)}` : base;
@@ -319,7 +348,7 @@ function fallbackReply(prospect, variant = 0) {
 
 // ─── Processador: whatsapp:reengage-reply ────────────────────────────────────
 
-async function recordEvent(prisma, { conversation, reason, content, origin, status, sentMessageId }) {
+async function recordEvent(prisma, { conversation, reason, content, origin, status, sentMessageId, campaign, orgConfigured }) {
   return prisma.whatsAppReengagementEvent.create({
     data: {
       orgId: conversation.orgId,
@@ -333,6 +362,13 @@ async function recordEvent(prisma, { conversation, reason, content, origin, stat
       mode: CONFIG.mode,
       status,
       sentMessageId: sentMessageId || null,
+      context: {
+        orgId: conversation.orgId,
+        orgConfigured: Boolean(orgConfigured),
+        campaignId: (campaign && campaign.id) || null,
+        campaignName: (campaign && campaign.name) || null,
+        includeCampaign: CONFIG.includeCampaign,
+      },
     },
   });
 }
@@ -352,7 +388,7 @@ async function processReengageReply(job) {
   const prospect = conversation.prospectId
     ? await prisma.prospect.findUnique({ where: { id: conversation.prospectId } })
     : null;
-  const settings = await prisma.commercialSettings.findUnique({ where: { orgId: conversation.orgId } });
+  const orgCtx = await orgContext.loadOrgContext(prisma, conversation.orgId);
 
   const history = await prisma.whatsAppMessage.findMany({
     where: { conversationId },
@@ -361,7 +397,13 @@ async function processReengageReply(job) {
   });
   history.reverse();
 
-  const prompt = buildReplyPrompt({ prospect, settings, messages: history, lastInboundId: guard.lastMessage.id });
+  const prompt = buildReplyPrompt({
+    prospect,
+    orgCtx,
+    campaign: guard.campaign,
+    messages: history,
+    lastInboundId: guard.lastMessage.id,
+  });
   const decision = await callLlm(prompt);
 
   let messageText = null;
@@ -388,18 +430,18 @@ async function processReengageReply(job) {
   }
 
   if (!messageText && !refusedByAi) {
-    messageText = fallbackReply(prospect, history.length);
+    messageText = fallbackReply(prospect, history.length, orgCtx);
     origin = 'fallback';
   }
 
   if (refusedByAi) {
-    await recordEvent(prisma, { conversation, reason, origin: 'ai', status: EVENT_STATUS.REFUSED_IA });
+    await recordEvent(prisma, { conversation, reason, origin: 'ai', status: EVENT_STATUS.REFUSED_IA, campaign: guard.campaign, orgConfigured: orgCtx.configured });
     log(`decisão: NÃO responder ${conversationId} (${reason})`);
     return { decided: false, reason };
   }
 
   if (blockedAiMessage) {
-    await recordEvent(prisma, { conversation, reason, content: blockedAiMessage, origin: 'ai', status: EVENT_STATUS.BLOCKED_GUARD });
+    await recordEvent(prisma, { conversation, reason, content: blockedAiMessage, origin: 'ai', status: EVENT_STATUS.BLOCKED_GUARD, campaign: guard.campaign, orgConfigured: orgCtx.configured });
   }
 
   // Final check de concorrência: um operador pode ter respondido pelo inbox
@@ -430,8 +472,8 @@ async function processReengageReply(job) {
     { attempts: 5, backoff: { type: 'exponential', delay: 5000 } }
   );
 
-  await recordEvent(prisma, { conversation, reason, content: messageText, origin, status: EVENT_STATUS.SENT, sentMessageId: message.id });
-  log(`respondido (origem=${origin}) para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
+  await recordEvent(prisma, { conversation, reason, content: messageText, origin, status: EVENT_STATUS.SENT, sentMessageId: message.id, campaign: guard.campaign, orgConfigured: orgCtx.configured });
+  log(`respondido (origem=${origin}${guard.campaign ? ', campanha' : ''}) para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
   return { sent: true, messageId: message.id, origin };
 }
 
@@ -443,12 +485,15 @@ async function startReengagementReply() {
     return { enabled: false };
   }
   registerProcessor(QUEUES.REENGAGE_REPLY, processReengageReply, 1);
-  log(`✓ ativo (mode=${CONFIG.mode}, max/conversa=${CONFIG.maxRepliesPerConversation}, cap diário=${CONFIG.dailyCap}, delay=${CONFIG.minDelaySec}+${CONFIG.jitterSec}s)`);
+  log(`✓ ativo (mode=${CONFIG.mode}, max/conversa=${CONFIG.maxRepliesPerConversation}, cap diário=${CONFIG.dailyCap}, delay=${CONFIG.minDelaySec}+${CONFIG.jitterSec}s, responde campanha=${CONFIG.includeCampaign ? 'sim' : 'não'})`);
   return { enabled: true, mode: CONFIG.mode };
 }
 
 module.exports = {
   CONFIG,
+  AGENT_SOURCES,
+  CAMPAIGN_SOURCE,
+  agentSources,
   processReengageReply,
   enqueueReply,
   replyGuard,

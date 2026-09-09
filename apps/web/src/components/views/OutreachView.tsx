@@ -53,6 +53,8 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [suiteObjective, setSuiteObjective] = useState('');
+  const [suiteOffer, setSuiteOffer] = useState('');
   const [creating, setCreating] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
 
@@ -155,6 +157,8 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
       const created = await createOutreachCampaign({
         name: name.trim(),
         description: description.trim() || undefined,
+        objective: suiteObjective.trim() || undefined,
+        offer: suiteOffer.trim() || undefined,
         trigger: suiteAuto ? 'on_enrichment' : 'manual',
         channels,
         autoActive: suiteAuto,
@@ -167,6 +171,8 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
       setCampaigns([created, ...campaigns]);
       setName('');
       setDescription('');
+      setSuiteObjective('');
+      setSuiteOffer('');
       setSuiteSubject('');
       setSuiteBody('');
       setSuiteWaMessage('');
@@ -437,6 +443,27 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                   placeholder="Segmento, objetivo, etc."
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
+                  className="bg-secondary/40 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Objetivo da campanha (usado pela IA)</label>
+                <Input
+                  placeholder="Ex.: agendar uma demo de 15 min"
+                  value={suiteObjective}
+                  onChange={(e) => setSuiteObjective(e.target.value)}
+                  className="bg-secondary/40 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Proposta/oferta da campanha (usado pela IA)</label>
+                <Input
+                  placeholder="Ex.: diagnóstico gratuito do funil"
+                  value={suiteOffer}
+                  onChange={(e) => setSuiteOffer(e.target.value)}
                   className="bg-secondary/40 text-xs"
                 />
               </div>

@@ -113,6 +113,7 @@ COPY whatsapp-engine.js ./
 COPY whatsapp-workers.js ./
 COPY reengagement-agent.js ./
 COPY reengagement-reply.js ./
+COPY org-context.js ./
 COPY b2base-context.js ./
 COPY metrics.js ./
 COPY package.json ./

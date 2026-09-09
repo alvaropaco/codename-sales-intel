@@ -157,6 +157,20 @@ function stepIdempotencyKey(campaignId, prospectId, stepIndex) {
   return idempotencyKey(campaignId, prospectId, stepIndex);
 }
 
+/**
+ * Normaliza um campo Json/string para lista de strings não-vazias (aceita
+ * array JSON ou "a, b, c"). Usado nos contextos de IA (org-context.js).
+ */
+function asStringList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
 module.exports = {
   normalizePhone,
   toChatId,
@@ -167,6 +181,7 @@ module.exports = {
   OPT_OUT_KEYWORDS,
   BLOCKLIST,
   normalizeForCompare,
+  asStringList,
   idempotencyKey,
   stepIdempotencyKey,
 };

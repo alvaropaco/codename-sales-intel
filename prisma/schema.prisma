@@ -49,6 +49,15 @@ model CommercialSettings {
   averageTicket       Int?
   salesCycle          String?
   valueProposition    String?
+  // ── Contexto de negócio da org usado pela IA (org-context.js) ──────────
+  // Fonte do pilar 1: produto, modelo de negócio, diferenciais, site/CTA.
+  // Campos opcionais: o que não estiver preenchido a IA NÃO afirma.
+  productDescription  String?  // o que a empresa vende (produto/serviço)
+  businessModel       String?  // como a empresa ganha dinheiro
+  differentiators     Json     @default("[]") // diferenciais (array de strings)
+  websiteUrl          String?  // site público (CTA default dos agentes)
+  ctaGoal             String?  // o que a IA deve conduzir o lead a fazer
+  toneNotes           String?  // tom de voz desejado (opcional)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -211,6 +220,9 @@ model OutreachCampaign {
   tenantId    String                         // organization.id
   name        String
   description String?
+  // Proposta comercial da campanha (pilar 2 dos prompts de IA).
+  objective   String?  // objetivo da campanha (ex.: agendar call, cadastro self-service)
+  offer       String?  // proposta/oferta: o que oferecer ao lead nesta campanha
   status      String   @default("draft")     // draft, active, paused, completed
 
   // ── Suíte multicanal (gatilho pós-enriquecimento) ──────────────────
@@ -372,6 +384,11 @@ model WhatsAppCampaign {
   id                String   @id @default(cuid())
   orgId             String                         // organization.id
   name              String
+  // Proposta comercial da campanha (pilar 2 dos prompts de IA). Alimenta o
+  // reply agent quando o lead responde a uma mensagem da campanha.
+  objective         String?  // objetivo da campanha
+  offer             String?  // proposta/oferta: o que oferecer ao lead
+  ctaUrl            String?  // link/ação que a campanha conduz (default: site da org)
   whatsappAccountId String?
   whatsappAccount   WhatsAppAccount? @relation(fields: [whatsappAccountId], references: [id], onDelete: SetNull)
   status            String   @default("DRAFT")     // DRAFT, SCHEDULED, RUNNING, PAUSED, COMPLETED, CANCELLED
@@ -504,6 +521,8 @@ model WhatsAppReengagementEvent {
   mode           String              // shadow | suggest | auto (modo vigente na decisão)
   status         String              // GENERATED, SENT, APPROVED, DISCARDED, BLOCKED_GUARD, REFUSED_IA, CANCELLED_INBOUND, FAILED
   sentMessageId  String?
+  // Auditoria do contexto usado na geração (org configurada? campanha de origem?).
+  context        Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

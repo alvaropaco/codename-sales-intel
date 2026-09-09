@@ -23,6 +23,12 @@ const EMPTY_PROFILE: CommercialProfile = {
   averageTicket: null,
   salesCycle: '',
   valueProposition: '',
+  productDescription: '',
+  businessModel: '',
+  differentiators: [],
+  websiteUrl: '',
+  ctaGoal: '',
+  toneNotes: '',
 };
 
 const statusOptions = [
@@ -321,6 +327,51 @@ export function CommercialProfileForm({
               <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Promessa comercial</label>
               <Input value={form.valueProposition} onChange={(event) => update('valueProposition', event.target.value)} placeholder="Resultado que sua solução entrega" className="h-11 text-xs" />
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
+        <CardHeader className="border-b border-slate-100 dark:border-white/10">
+          <CardTitle className="text-base font-black">Contexto usado pela IA</CardTitle>
+          <CardDescription>
+            É daqui que os agentes de IA (emails de outreach, WhatsApp e reengajamento) tiram o que sabem sobre o seu
+            negócio. O que ficar em branco, a IA NÃO inventa.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 p-5">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-600 dark:text-slate-300">O que sua empresa faz/vende</label>
+            <Input value={form.productDescription} onChange={(event) => update('productDescription', event.target.value)} placeholder="Ex.: Software de gestão financeira para pequenas construtoras" className="h-11 text-xs" />
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Modelo de negócio</label>
+              <Input value={form.businessModel} onChange={(event) => update('businessModel', event.target.value)} placeholder="Ex.: SaaS por assinatura mensal" className="h-11 text-xs" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Site público</label>
+              <Input value={form.websiteUrl} onChange={(event) => update('websiteUrl', event.target.value)} placeholder="https://suaempresa.com.br" className="h-11 text-xs" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Diferenciais (separados por vírgula)</label>
+              <Input
+                value={form.differentiators.join(', ')}
+                onChange={(event) => update('differentiators', event.target.value.split(',').map((item) => item.trim()).filter(Boolean))}
+                placeholder="Ex.: implantação em 48h, suporte humano, sem fidelidade"
+                className="h-11 text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Tom de voz (opcional)</label>
+              <Input value={form.toneNotes} onChange={(event) => update('toneNotes', event.target.value)} placeholder="Ex.: direto e informal, sem juridiquês" className="h-11 text-xs" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-600 dark:text-slate-300">O que a IA deve conduzir o lead a fazer</label>
+            <Input value={form.ctaGoal} onChange={(event) => update('ctaGoal', event.target.value)} placeholder="Ex.: acessar o site e criar a conta / agendar uma demo de 15 min" className="h-11 text-xs" />
           </div>
         </CardContent>
       </Card>

@@ -454,6 +454,9 @@ function CampaignsTab(props: {
   const { loading, campaigns, accounts, prospects, onReload, setError, setNotice } = props;
   const [name, setName] = useState('');
   const [accountId, setAccountId] = useState('');
+  const [campaignObjective, setCampaignObjective] = useState('');
+  const [campaignOffer, setCampaignOffer] = useState('');
+  const [campaignCtaUrl, setCampaignCtaUrl] = useState('');
   const [steps, setSteps] = useState<Array<{ messageTemplate: string; delayDays: number }>>([
     { messageTemplate: 'Olá {{firstName}}, tudo bem? Vi que a {{companyName}} atua em {{industry}}.', delayDays: 0 },
   ]);
@@ -480,6 +483,9 @@ function CampaignsTab(props: {
       await createWhatsAppCampaign({
         name: name.trim(),
         whatsappAccountId: accountId || null,
+        objective: campaignObjective.trim() || undefined,
+        offer: campaignOffer.trim() || undefined,
+        ctaUrl: campaignCtaUrl.trim() || undefined,
         steps: validSteps.map((s, i) => ({
           orderIndex: i,
           messageTemplate: s.messageTemplate,
@@ -488,6 +494,9 @@ function CampaignsTab(props: {
         })),
       });
       setName('');
+      setCampaignObjective('');
+      setCampaignOffer('');
+      setCampaignCtaUrl('');
       setSteps([{ messageTemplate: '', delayDays: 0 }]);
       setNotice('Campanha criada. Selecione os leads e inicie.');
       await onReload();
@@ -542,6 +551,20 @@ function CampaignsTab(props: {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Nome</label>
               <Input placeholder="Ex: Prospecção Q4" value={name} onChange={(e) => setName(e.target.value)} className="bg-secondary/40 text-xs" />
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Objetivo da campanha (usado pela IA)</label>
+                <Input placeholder="Ex.: convidar para conhecer a solução" value={campaignObjective} onChange={(e) => setCampaignObjective(e.target.value)} className="bg-secondary/40 text-xs" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Proposta/oferta (usado pela IA)</label>
+                <Input placeholder="Ex.: teste grátis do relatório de mercado" value={campaignOffer} onChange={(e) => setCampaignOffer(e.target.value)} className="bg-secondary/40 text-xs" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Link/CTA da campanha (opcional)</label>
+                <Input placeholder="Ex.: https://suaempresa.com.br/promo" value={campaignCtaUrl} onChange={(e) => setCampaignCtaUrl(e.target.value)} className="bg-secondary/40 text-xs" />
+              </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Conexão</label>

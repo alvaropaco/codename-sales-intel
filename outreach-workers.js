@@ -18,6 +18,8 @@ const { createWorker, registerWorker } = require('./outreach-queues');
 const { listHistory } = require('./gmail-api');
 const { sendEmailForAccount } = require('./email-provider');
 const { checkLimit, calculateDelay, getConfig: getRateConfig } = require('./outreach-rate-limiter');
+const { renderTemplate } = require('./whatsapp-utils');
+const orgContext = require('./org-context');
 const metrics = require('./metrics');
 
 // Lazy singleton — workers share one connection pool
@@ -31,46 +33,85 @@ function getPrisma() {
 
 // ─── Lightweight AI message generator ────────────────────────────
 /**
- * Generate outreach email content using the existing LiteLLM gateway
- * connected to a local quantized model (Qwen, Llama, etc).
+ * Gera o email de outreach com os 3 pilares de contexto:
+ *   1. Empresa da org (org-context.js: produto, modelo, diferenciais, site/CTA)
+ *   2. Proposta da campanha (objetivo/oferta)
+ *   3. Histórico de contato (follow-up referencia os toques anteriores)
+ * O HTML (com pixel de tracking da PLATAFORMA, não da org) é montado
+ * server-side — o modelo só devolve subject/body, para não vazar domínio
+ * alheio no corpo.
  */
-async function generateOutreachMessage(prisma, { lead, seq = 1 }) {
-  const litellmUrl = process.env.LITELLM_URL || 'http://localhost:4000';
-  const litellmModel = process.env.LITELLM_MODEL || 'qwen/qwen2.5-7b-instruct';
+function buildOutreachPrompt({ lead, orgCtx, campaign, seq = 1, history = [] }) {
+  const followup = seq > 1;
+  const historyBlock = followup && history.length
+    ? [
+        '== HISTÓRICO DE CONTATO ==',
+        `Este é o FOLLOW-UP #${seq} (até 4 toques no total). Toques anteriores:`,
+        ...history.map((m, i) => `${i + 1}. Assunto: "${m.subject}"${m.status && /OPENED/.test(m.status) ? ' (aberto pelo lead)' : ''}`),
+        'REGRA DE FOLLOW-UP: NÃO repita o mesmo conteúdo/ângulo dos toques anteriores;',
+        'referencie de forma breve e natural que você já escreveu antes e traga um ângulo novo',
+        '(outro benefício do contexto, caso de uso ou pergunta objetiva). Sem cobrança ou culpa.',
+        '',
+      ]
+    : [];
 
-  // Fetch org commercial profile for value proposition context
-  let valueProp = '';
-  try {
-    const settings = await prisma.commercialSettings.findFirst({
-      where: { orgId: lead.orgId },
-      select: { valueProposition: true },
-    });
-    valueProp = settings?.valueProposition || '';
-  } catch (_) {
-    // skip
-  }
+  const campaignBlock = orgContext.renderCampaignBlock(campaign);
 
-  const prompt = [
-    `Você é um assistente de vendas B2B do B2Base. Escreva um email frio em português brasileiro.`,
-    ``,
-    `DADOS DO PROSPECTO:`,
+  return [
+    `Você é um vendedor da ${orgContext.sellerIdentity(orgCtx)}. Escreva um email B2B em português brasileiro.`,
+    '',
+    '== CONTEXTO DA NOSSA EMPRESA ==',
+    orgCtx.renderForPrompt(),
+    '',
+    ...(campaignBlock ? [campaignBlock, ''] : []),
+    '== PROSPECTO ==',
     `- Empresa: ${lead.companyName}${lead.tradeName ? ` (${lead.tradeName})` : ''}`,
     `- Segmento: ${lead.industry || 'N/A'}`,
     `- Localização: ${lead.city ? [lead.city, lead.state].filter(Boolean).join('/') : 'N/A'}`,
     `- Colaboradores: ${lead.employees || 'N/A'}`,
     `- Faturamento estimado: R$ ${(lead.revenueEstimate || 0).toLocaleString('pt-BR')}`,
-    valueProp ? `- Nossa proposta de valor: ${valueProp}` : '',
-    ``,
-    `REGRA: Use apenas fatos presentes nos dados acima. Não invente informações.`,
-    ``,
-    `Retorne SOMENTE JSON válido:`,
-    `{`,
-    `  "subject": "Assunto curto (máx 60 caracteres)",`,
-    `  "body": "Corpo em texto plano",`,
-    `  "htmlBody": "Corpo HTML com pixel de tracking: <img src=\"https://b2base.net/t/o/{tracking-token}.gif\" width=\"1\" height=\"1\">",`,
-    `  "reasoning_facts": ["fato1", "fato2"]`,
-    `}`,
-  ].join('\n');
+    '',
+    ...historyBlock,
+    'REGRAS:',
+    '- Use apenas fatos presentes nos dados acima (empresa, campanha, histórico). Não invente informações, preços, prazos ou promessas.',
+    '- Não cite nomes de plataformas/empresas que não estejam no contexto e não inclua links que não estejam nele.',
+    '- Tom humano e direto, sem parecer template.',
+    '',
+    'Retorne SOMENTE JSON válido:',
+    '{',
+    '  "subject": "Assunto curto (máx 60 caracteres)",',
+    '  "body": "Corpo em texto plano",',
+    '  "reasoning_facts": ["fato1", "fato2"]',
+    '}',
+  ].filter((l) => l !== undefined).join('\n');
+}
+
+/** Corpo texto plano → HTML mínimo (o pixel é injetado depois pelo prepare). */
+function plainBodyToHtml(body) {
+  return `<p>${String(body || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br/>')}</p>`;
+}
+
+async function generateOutreachMessage(prisma, { lead, seq = 1, campaign = null, orgCtx = null, history = [] }) {
+  const litellmUrl = process.env.LITELLM_URL || 'http://localhost:4000';
+  const litellmModel = process.env.LITELLM_MODEL || 'qwen/qwen2.5-7b-instruct';
+
+  // Contexto da org (empresa do cliente) — pilar 1. Se o chamador já trouxe,
+  // evita re-consulta (processPrepare reusa para o fallback).
+  let ctx = orgCtx;
+  if (!ctx) {
+    try {
+      ctx = await orgContext.loadOrgContext(prisma, lead.orgId);
+    } catch (_) {
+      ctx = orgContext.buildOrgContext({ orgName: null, settings: null });
+    }
+  }
+
+  const prompt = buildOutreachPrompt({ lead, orgCtx: ctx, campaign, seq, history });
 
   try {
     const res = await fetch(`${litellmUrl}/v1/chat/completions`, {
@@ -86,7 +127,7 @@ async function generateOutreachMessage(prisma, { lead, seq = 1 }) {
         messages: [
           {
             role: 'system',
-            content: 'Você é um assistente de vendas B2B. Responda APENAS com JSON válido.',
+            content: 'Você é um vendedor B2B brasileiro. Responda APENAS com JSON válido.',
           },
           { role: 'user', content: prompt },
         ],
@@ -102,33 +143,42 @@ async function generateOutreachMessage(prisma, { lead, seq = 1 }) {
     const content = json.choices?.[0]?.message?.content || '';
     const parsed = JSON.parse(content);
 
+    const subject = parsed.subject || (seq > 1 ? `Retomando o contato: ${lead.companyName}` : `Uma oportunidade para ${lead.companyName}`);
+    const body = parsed.body || '';
     return {
-      subject: parsed.subject || 'Uma oportunidade para ' + lead.companyName,
-      body: parsed.body || '',
-      htmlBody: parsed.htmlBody || '',
+      subject,
+      body,
+      htmlBody: plainBodyToHtml(body),
       reasoningFacts: parsed.reasoning_facts || [],
     };
   } catch (err) {
     console.error('[outreach] AI generation failed, using template fallback:', err.message);
 
-    return _templateFallback(lead, valueProp);
+    return _templateFallback(lead, ctx, seq, history);
   }
 }
 
 /**
- * Template-based fallback when AI is unavailable.
+ * Template-based fallback when AI is unavailable — identidade e valor vêm do
+ * CONTEXTO DA ORG (nunca "Equipe B2Base" para outra empresa).
  */
-function _templateFallback(lead, valueProp) {
-  const vp = valueProp || 'encontrar e qualificar leads com mais eficiência';
-  const body = `Olá,\n\nEspero que esteja bem!\n\nConheço a ${lead.companyName} e sei que empresas do segmento ${lead.industry || 'de negócios'} costumam enfrentar desafios na identificação de oportunidades.\n\nNossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.\n\nGostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?\n\nAbs.,\nEquipe B2Base`;
+function _templateFallback(lead, orgCtx, seq = 1, history = []) {
+  const nome = orgContext.sellerIdentity(orgCtx);
+  const assinatura = `Equipe ${nome}`;
+  const valor = (orgCtx && (orgCtx.propostaValor || orgCtx.oQueE)) || 'ajudar empresas a encontrar e converter mais oportunidades';
+  const followup = seq > 1;
 
-  const html = `<p>Olá,</p><p>Espero que esteja bem!</p><p>Conheço a <strong>${lead.companyName}</strong> e sei que empresas do segmento <em>${lead.industry || 'de negócios'}</em> costumam enfrentar desafios na identificação de oportunidades.</p><p>Nossa plataforma de inteligência de dados ajuda times comerciais a ${vp}.</p><p>Gostaria de agendar uma conversa rápida de 15 min para apresentar como funciona?</p><p>Abraços,<br/>Equipe B2Base</p><img src="https://b2base.net/t/o/{tracking-token}.gif" width="1" height="1" alt="" />`;
+  const body = followup
+    ? `Olá,\n\nPassando para retomar minha mensagem anterior sobre ${lead.companyName}. Se fizer sentido, posso mostrar ${valor} na prática e responder suas dúvidas.\n\nSe agora não for o momento, sem problema — me avisa e não insisto mais.\n\nAbraços,\n${assinatura}`
+    : `Olá,\n\nEspero que esteja bem!\n\nConheço a ${lead.companyName} e sei que empresas do segmento ${lead.industry || 'de negócios'} costumam enfrentar desafios para crescer.\n\nTrabalho com ${valor}. Gostaria de agendar uma conversa rápida de 15 min para ver se faz sentido para vocês?\n\nAbraços,\n${assinatura}`;
+
+  const html = plainBodyToHtml(body);
 
   return {
-    subject: `Uma oportunidade para ${lead.companyName}`,
+    subject: followup ? `Retomando o contato: ${lead.companyName}` : `Uma oportunidade para ${lead.companyName}`,
     body,
     htmlBody: html,
-    reasoningFacts: [`Referência a ${lead.companyName}`, `Segmento: ${lead.industry || 'geral'}`],
+    reasoningFacts: [`Referência a ${lead.companyName}`, `Segmento: ${lead.industry || 'geral'}`, followup ? `followup_seq_${seq}` : 'first_touch'],
   };
 }
 
@@ -208,13 +258,19 @@ async function processPrepare(job) {
   });
 
   // Conteúdo: template custom da campanha (suíte multicanal) quando
-  // configurado; senão geração via IA com fallback de template.
+  // configurado; senão geração via IA com fallback de template. A IA recebe os
+  // 3 pilares de contexto: empresa da org, proposta da campanha e histórico.
   const campaign = await prisma.outreachCampaign.findUnique({
     where: { id: campaignId },
   });
+  const orgCtx = await orgContext.loadOrgContext(prisma, lead.orgId);
+  const history = await prisma.outreachMessage.findMany({
+    where: { contactId: contact.id },
+    orderBy: { createdAt: 'desc' },
+    take: 3,
+  });
   let generated;
   if (campaign?.emailTemplateSubject && campaign?.emailTemplateBody) {
-    const { renderTemplate } = require('./whatsapp-utils');
     generated = {
       subject: renderTemplate(campaign.emailTemplateSubject, lead),
       body: renderTemplate(campaign.emailTemplateBody, lead),
@@ -225,7 +281,13 @@ async function processPrepare(job) {
       reasoningFacts: ['campaign_template'],
     };
   } else {
-    generated = await generateOutreachMessage(prisma, { lead, seq: contact.outreachSequence });
+    generated = await generateOutreachMessage(prisma, {
+      lead,
+      seq: contact.outreachSequence,
+      campaign,
+      orgCtx,
+      history,
+    });
   }
 
   // Add tracking pixel
@@ -268,6 +330,13 @@ async function processPrepare(job) {
         subject: generated.subject,
         sequence: contact.outreachSequence,
         scheduledFor: message.scheduledFor,
+        campaignId: campaign ? campaign.id : campaignId,
+        campaignName: campaign ? campaign.name : null,
+        aiContext: {
+          orgConfigured: orgCtx.configured,
+          followup: contact.outreachSequence > 1,
+          historyCount: history.length,
+        },
       },
     },
   });
@@ -861,5 +930,7 @@ module.exports = {
   requeueStuckScheduledMessages,
   startOutreachCampaign,
   generateOutreachMessage,
+  buildOutreachPrompt,
+  _templateFallback,
   getPrisma,
 };

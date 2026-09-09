@@ -39,6 +39,12 @@ const EMPTY_PROFILE: CommercialProfile = {
   averageTicket: null,
   salesCycle: '',
   valueProposition: '',
+  productDescription: '',
+  businessModel: '',
+  differentiators: [],
+  websiteUrl: '',
+  ctaGoal: '',
+  toneNotes: '',
 };
 
 const segmentSuggestions = [
@@ -687,6 +693,31 @@ export function OnboardingModal({
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                      <Target className="h-4 w-4 text-indigo-500" /> O que sua empresa faz/vende
+                    </label>
+                    <Input
+                      value={form.productDescription}
+                      onChange={(event) => update('productDescription', event.target.value)}
+                      placeholder="Ex.: Software de gestão para construtoras"
+                      className="h-12 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                      <Sparkles className="h-4 w-4 text-indigo-500" /> Site público
+                    </label>
+                    <Input
+                      value={form.websiteUrl}
+                      onChange={(event) => update('websiteUrl', event.target.value)}
+                      placeholder="https://suaempresa.com.br"
+                      className="h-12 text-sm"
+                    />
+                  </div>
+                </div>
+
                 <div className="space-y-1.5">
                   <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
                     <Target className="h-4 w-4 text-indigo-500" /> Promessa comercial
@@ -695,6 +726,18 @@ export function OnboardingModal({
                     value={form.valueProposition}
                     onChange={(event) => update('valueProposition', event.target.value)}
                     placeholder="O resultado que sua solução entrega"
+                    className="h-12 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    <CheckCircle2 className="h-4 w-4 text-indigo-500" /> O que a IA deve conduzir o lead a fazer
+                  </label>
+                  <Input
+                    value={form.ctaGoal}
+                    onChange={(event) => update('ctaGoal', event.target.value)}
+                    placeholder="Ex.: acessar o site e criar a conta / agendar uma demo"
                     className="h-12 text-sm"
                   />
                 </div>

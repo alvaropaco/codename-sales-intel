@@ -430,6 +430,36 @@ liga os dois agentes; `REENGAGE_REPLY_ENABLED=false` desliga só a continuação
 
 **Sem migração**: usa `source` String + a tabela de eventos existente.
 
+### Contexto correto por cliente (2026-09-09): os 3 pilares nos prompts de IA
+
+Problema conceitual corrigido: a plataforma é multi-tenant, mas os prompts eram single-tenant
+da casa — toda org vendia "o B2Base" e mandava o lead para `https://b2base.net`. A partir de
+agora **toda mensagem gerada por IA se apoia em 3 pilares**:
+
+1. **Contexto da empresa cliente** (`org-context.js`, fonte: `CommercialSettings` — novos
+   campos `productDescription`, `businessModel`, `differentiators`, `websiteUrl`, `ctaGoal`,
+   `toneNotes`; UI em Perfil Comercial + onboarding). Org sem contexto configurado recebe
+   bloqueio honesto de degradação: a IA NÃO inventa produto/site/preço e conduz a um retorno.
+2. **Proposta comercial da campanha**: novos campos `objective`/`offer` em `OutreachCampaign`
+   e `objective`/`offer`/`ctaUrl` em `WhatsAppCampaign` (UI de criação de campanhas). O
+   reengajamento e a resposta rápida descobrem a campanha de origem da conversa via
+   `WhatsAppMessage.campaignContactId → WhatsAppCampaignContact` e injetam o bloco
+   "PROPOSTA DA CAMPANHA"; o CTA efetivo é o da campanha > da org > genérico honesto.
+3. **Histórico**: WhatsApp já usava transcrição; o outreach agora recebe as mensagens
+   anteriores do contato (`OutreachMessage`) e o `seq` — follow-ups viram follow-ups de
+   verdade (referenciam o toque anterior, não repetem o ângulo), e o HTML/pixel passou a ser
+   montado server-side (o modelo não recebe mais a URL de tracking, que era do domínio B2Base).
+
+`b2base-context.js` deixa de ser injetado em prompt algum — vira referência/seed do contexto
+da própria B2Base (a org da casa é backfillada com esse conteúdo no banco de produção).
+Fallbacks (LLM down / conteúdo vetado) usam identidade e site da org — nunca "Equipe B2Base".
+
+**Segurança extra**: agentes de resposta podem agora reagir a mensagens de CAMPAIGN com
+`REENGAGE_REPLY_INCLUDE_CAMPAIGN=true` (opt-in; default off — mensagens `MANUAL` nunca viram
+conversa do agente). Auditoria: eventos ganham `context` JSON (orgConfigured, campaignId).
+
+Migração: `20260909120000_add_org_ai_context_and_campaign_offer` (todas as colunas opcionais).
+
 ### Risco assumido no dia 1 e mitigação
 
 

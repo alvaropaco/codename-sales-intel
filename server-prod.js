@@ -740,6 +740,12 @@ function emptyCommercialProfile() {
     averageTicket: null,
     salesCycle: '',
     valueProposition: '',
+    productDescription: '',
+    businessModel: '',
+    differentiators: [],
+    websiteUrl: '',
+    ctaGoal: '',
+    toneNotes: '',
     createdAt: null,
     updatedAt: null,
   };
@@ -764,6 +770,12 @@ function formatCommercialProfile(settings, organization) {
     averageTicket: settings.averageTicket,
     salesCycle: settings.salesCycle || '',
     valueProposition: settings.valueProposition || '',
+    productDescription: settings.productDescription || '',
+    businessModel: settings.businessModel || '',
+    differentiators: Array.isArray(settings.differentiators) ? settings.differentiators : [],
+    websiteUrl: settings.websiteUrl || '',
+    ctaGoal: settings.ctaGoal || '',
+    toneNotes: settings.toneNotes || '',
     createdAt: settings.createdAt,
     updatedAt: settings.updatedAt,
   };
@@ -785,6 +797,13 @@ function normalizeCommercialProfilePayload(body = {}) {
     averageTicket: body.averageTicket === '' || body.averageTicket === null || body.averageTicket === undefined ? null : Number(body.averageTicket) || null,
     salesCycle: String(body.salesCycle || '').trim() || null,
     valueProposition: String(body.valueProposition || '').trim() || null,
+    // Contexto de negócio consumido pela IA (org-context.js).
+    productDescription: String(body.productDescription || '').trim() || null,
+    businessModel: String(body.businessModel || '').trim() || null,
+    differentiators: asStringArray(body.differentiators),
+    websiteUrl: String(body.websiteUrl || '').trim() || null,
+    ctaGoal: String(body.ctaGoal || '').trim() || null,
+    toneNotes: String(body.toneNotes || '').trim() || null,
   };
 }
 
@@ -2643,7 +2662,7 @@ app.post('/api/outreach/campaigns', async (req, res) => {
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
 
     const {
-      name, description,
+      name, description, objective, offer,
       trigger, channels, autoActive,
       emailAccountId, emailTemplateSubject, emailTemplateBody,
       whatsappAccountId, whatsappTemplate,
@@ -2671,6 +2690,8 @@ app.post('/api/outreach/campaigns', async (req, res) => {
         tenantId: user.orgId,
         name,
         description: description || null,
+        objective: objective || null,
+        offer: offer || null,
         trigger: trigger === 'on_enrichment' ? 'on_enrichment' : 'manual',
         channels: validChannels,
         autoActive: trigger === 'on_enrichment' ? Boolean(autoActive) : false,
@@ -2702,7 +2723,7 @@ app.patch('/api/outreach/campaigns/:id', async (req, res) => {
     if (!existing) return res.status(404).json({ success: false, error: 'Campaign not found' });
 
     const {
-      name, description, status,
+      name, description, objective, offer, status,
       trigger, channels, autoActive,
       emailAccountId, emailTemplateSubject, emailTemplateBody,
       whatsappAccountId, whatsappTemplate,
@@ -2730,6 +2751,8 @@ app.patch('/api/outreach/campaigns/:id', async (req, res) => {
       data: {
         ...(name ? { name } : {}),
         ...(description !== undefined ? { description: description || null } : {}),
+        ...(objective !== undefined ? { objective: objective || null } : {}),
+        ...(offer !== undefined ? { offer: offer || null } : {}),
         ...(status ? { status } : {}),
         ...(trigger ? { trigger: trigger === 'on_enrichment' ? 'on_enrichment' : 'manual' } : {}),
         ...(validChannels ? { channels: validChannels } : {}),
@@ -3843,8 +3866,8 @@ app.get('/api/whatsapp/automation/config', async (req, res) => {
   try {
     await requireRequestOrgId(req);
     const { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin } = reengagementAgent.CONFIG;
-    const { enabled: replyEnabled, mode: replyMode, maxRepliesPerConversation, dailyCap: replyDailyCap } = reengagementReply.CONFIG;
-    res.json({ success: true, data: { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin, reply: { enabled: replyEnabled, mode: replyMode, maxRepliesPerConversation, dailyCap: replyDailyCap } }, timestamp: new Date().toISOString() });
+    const { enabled: replyEnabled, mode: replyMode, maxRepliesPerConversation, dailyCap: replyDailyCap, includeCampaign } = reengagementReply.CONFIG;
+    res.json({ success: true, data: { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin, reply: { enabled: replyEnabled, mode: replyMode, maxRepliesPerConversation, dailyCap: replyDailyCap, includeCampaign } }, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
   }
@@ -4016,7 +4039,7 @@ app.get('/api/whatsapp/campaigns/:id', async (req, res) => {
 app.post('/api/whatsapp/campaigns', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
-    const { name, whatsappAccountId, steps } = req.body || {};
+    const { name, whatsappAccountId, steps, objective, offer, ctaUrl } = req.body || {};
     if (!name || !String(name).trim()) {
       return res.status(400).json({ success: false, error: 'name é obrigatório' });
     }
@@ -4041,6 +4064,9 @@ app.post('/api/whatsapp/campaigns', async (req, res) => {
       data: {
         orgId,
         name: String(name).trim(),
+        objective: objective ? String(objective).trim() : null,
+        offer: offer ? String(offer).trim() : null,
+        ctaUrl: ctaUrl ? String(ctaUrl).trim() : null,
         whatsappAccountId: account ? account.id : null,
         status: 'DRAFT',
         ...(normalizedSteps ? {

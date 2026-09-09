@@ -541,6 +541,8 @@ export async function fetchOutreachCampaigns(): Promise<OutreachCampaign[]> {
 export interface CreateCampaignPayload {
   name: string;
   description?: string;
+  objective?: string;
+  offer?: string;
   trigger?: 'manual' | 'on_enrichment';
   channels?: string[];
   autoActive?: boolean;
@@ -936,6 +938,9 @@ export async function fetchWhatsAppCampaigns(): Promise<WhatsAppCampaign[]> {
 export async function createWhatsAppCampaign(data: {
   name: string;
   whatsappAccountId?: string | null;
+  objective?: string;
+  offer?: string;
+  ctaUrl?: string;
   steps: Array<{ orderIndex: number; messageTemplate: string; delayMinutes: number; conditions?: unknown[] }>;
 }): Promise<WhatsAppCampaign> {
   const res = await fetch(`${API_BASE}/whatsapp/campaigns`, {

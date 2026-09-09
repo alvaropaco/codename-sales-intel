@@ -119,6 +119,13 @@ export interface CommercialProfile {
   averageTicket?: number | null;
   salesCycle: string;
   valueProposition: string;
+  // Contexto de negócio consumido pela IA (org-context.js)
+  productDescription: string;
+  businessModel: string;
+  differentiators: string[];
+  websiteUrl: string;
+  ctaGoal: string;
+  toneNotes: string;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -242,6 +249,9 @@ export interface OutreachCampaign {
   id: string;
   name: string;
   description?: string | null;
+  // Proposta comercial da campanha (contexto da IA)
+  objective?: string | null;
+  offer?: string | null;
   status: string; // draft, active, paused, completed
   // Suíte multicanal (gatilho pós-enriquecimento)
   trigger?: string; // manual | on_enrichment
@@ -355,6 +365,10 @@ export interface WhatsAppSequenceStep {
 export interface WhatsAppCampaign {
   id: string;
   name: string;
+  // Proposta comercial da campanha (contexto da IA)
+  objective?: string | null;
+  offer?: string | null;
+  ctaUrl?: string | null;
   whatsappAccountId?: string | null;
   whatsappAccount?: Pick<WhatsAppAccount, 'id' | 'phoneNumber' | 'status'> | null;
   status: string;

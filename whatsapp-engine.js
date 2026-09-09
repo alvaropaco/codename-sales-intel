@@ -434,12 +434,24 @@ async function handleMessageEvent(prisma, wahaProvider, event) {
     });
   }
 
-  // Continuação automática: se a conversa está sendo conduzida pelo agente de
-  // reengajamento (última outbound = REENGAGEMENT/AI_REPLY), responde o lead
-  // em segundos. As guardas duras (opt-out, pause, DNC, tetos, "humano já
-  // respondeu?") rodam no processador — aqui só um pré-filtro barato: toda
-  // conversa do agente tem reengageTotal > 0 (setado no envio de reengajamento).
-  if (!isOptOut && body && conversation.reengageTotal > 0) {
+  // Continuação automática: se a conversa está sendo conduzida por automação,
+  // responde o lead em segundos. Dois gatilhos:
+  //   1. Conversa do agente de reengajamento (reengageTotal > 0, setado no envio).
+  //   2. Com REENGAGE_REPLY_INCLUDE_CAMPAIGN=true: lead respondeu a uma mensagem
+  //      de CAMPAIGN (sequência de disparo) — a IA continua com a proposta da
+  //      campanha (guarda dura no processador valida fonte/estado atuais).
+  // As guardas duras (opt-out, pause, DNC, tetos, "humano já respondeu?") rodam
+  // no processador — aqui só um pré-filtro barato para não enfileirar à toa.
+  let replyEligible = conversation.reengageTotal > 0;
+  if (!replyEligible && !isOptOut && body && reengagementReply.CONFIG.includeCampaign) {
+    const lastOutbound = await prisma.whatsAppMessage.findFirst({
+      where: { conversationId: conversation.id, direction: 'OUTBOUND' },
+      orderBy: { createdAt: 'desc' },
+      select: { source: true },
+    });
+    replyEligible = Boolean(lastOutbound && lastOutbound.source === reengagementReply.CAMPAIGN_SOURCE);
+  }
+  if (!isOptOut && body && replyEligible) {
     try {
       await reengagementReply.enqueueReply(prisma, {
         conversationId: conversation.id,

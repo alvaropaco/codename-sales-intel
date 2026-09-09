@@ -10,7 +10,8 @@
  *     → enfileira whatsapp:reengage (jobId determinístico = idempotência)
  *   whatsapp:reengage
  *     → guarda dura (re-leitura do estado no banco)
- *     → context assembly (B2Base + org + lead + histórico + exemplos MCP)
+ *     → context assembly (empresa da org + campanha de origem + lead + histórico
+ *       + exemplos MCP — ver org-context.js)
  *     → 1 chamada LiteLLM com JSON estrito (decisão + mensagem)
  *     → Policy Guard determinístico (veto duro)
  *     → shadow: só loga | auto: cria WhatsAppMessage source=REENGAGEMENT
@@ -33,7 +34,7 @@ const { registerProcessor } = require('./outreach-queues');
 const { getWhatsAppQueues } = require('./whatsapp-queues');
 const { isContactable } = require('./whatsapp-engine');
 const { BLOCKLIST, normalizeForCompare } = require('./whatsapp-utils');
-const b2baseContext = require('./b2base-context');
+const orgContext = require('./org-context');
 const mcpCnpj = require('./mcp-cnpj');
 
 const QUEUES = Object.freeze({
@@ -83,7 +84,7 @@ function strategyFor(attempt) {
   return (STRATEGIES[attempt] || STRATEGIES[CONFIG.maxAttempts]).id;
 }
 
-async function recordEvent(prisma, { conversation, attempt, strategyId, reason, content, origin, mode, status, sentMessageId }) {
+async function recordEvent(prisma, { conversation, attempt, strategyId, reason, content, origin, mode, status, sentMessageId, context }) {
   return prisma.whatsAppReengagementEvent.create({
     data: {
       orgId: conversation.orgId,
@@ -97,6 +98,7 @@ async function recordEvent(prisma, { conversation, attempt, strategyId, reason, 
       mode,
       status,
       sentMessageId: sentMessageId || null,
+      context: context || undefined,
     },
   });
 }
@@ -268,26 +270,26 @@ const STRATEGIES = Object.freeze({
   1: {
     id: 'RETOMAR_CONTEXTO',
     goal:
-      'Retomar exatamente de onde a conversa parou (o lead demonstrou interesse e recebeu a resposta/link). ' +
-      'Pergunte com naturalidade se ele conseguiu ver/avançar. Se houver abertura, conduza ao cadastro em ' +
-      'https://b2base.net (é rápido e ele já pode testar). NÃO reintroduza o B2Base do zero.',
+      'Retomar exatamente de onde a conversa parou (o lead demonstrou interesse e recebeu a resposta/oferta). ' +
+      'Pergunte com naturalidade se ele conseguiu ver/avançar. Se houver abertura, conduza à ação do OBJETIVO ' +
+      'abaixo. NÃO reintroduza a empresa do zero.',
   },
   2: {
     id: 'VALOR_NOVO',
     goal:
-      'Trazer valor NOVO e concreto: se houver empresas-exemplo abaixo, ofereça mostrar empresas reais ' +
-      'do segmento/cidade dele que caberiam no perfil de prospecção dele. Conduza para a plataforma: ' +
-      'vale convidar a criar a conta em https://b2base.net para ver isso ao vivo.',
+      'Trazer valor NOVO e concreto, com base no CONTEXTO DA EMPRESA e na proposta da campanha: se houver ' +
+      'empresas-exemplo abaixo, ofereça mostrar algo útil e específico para o lead. Conduza à ação do OBJETIVO.',
   },
   3: {
     id: 'REFRAME_E_ENCERRAMENTO',
     goal:
-      'Última tentativa. Recadastre o valor em uma frase (não é lista de empresas; é encontrar empresas com o perfil certo e transformar em oportunidade) ' +
-      'e encerre com elegância dizendo que não vai mais incomodar — deixando a porta aberta com o link https://b2base.net (cadastro rápido) ou chamando aqui.',
+      'Última tentativa. Recadastre o valor em UMA frase, usando o CONTEXTO DA EMPRESA acima (sem inventar nada ' +
+      'que não esteja lá), e encerre com elegância dizendo que não vai mais incomodar — deixando a porta aberta ' +
+      'pela ação do OBJETIVO ou chamando por aqui.',
   },
 });
 
-function buildPrompt({ prospect, settings, conversation, messages, attempt, examples }) {
+function buildPrompt({ prospect, orgCtx, campaign, messages, attempt, examples }) {
   const strategy = STRATEGIES[attempt] || STRATEGIES[CONFIG.maxAttempts];
   const contact = prospect ? contactName(prospect) : null;
   const location = prospect ? [prospect.city, prospect.state].filter(Boolean).join('/') : '';
@@ -309,19 +311,18 @@ function buildPrompt({ prospect, settings, conversation, messages, attempt, exam
         'NÃO invente nem use nome do contato, empresa ou segmento — baseie-se apenas no histórico abaixo.',
       ];
 
+  const campaignBlock = orgContext.renderCampaignBlock(campaign);
+  const cta = orgContext.effectiveCtaText(orgCtx, campaign);
+
   const lines = [
-    'Você é o agente comercial do B2Base no WhatsApp. Sua tarefa: decidir se devemos enviar uma',
+    `Você é o vendedor da ${orgContext.sellerIdentity(orgCtx)} no WhatsApp. Sua tarefa: decidir se devemos enviar uma`,
     'mensagem de reengajamento para este lead e escrevê-la. A conversa esfriou: a última mensagem foi',
     'nossa e ele não respondeu.',
     '',
-    '== CONTEXTO DO PRODUTO ==',
-    b2baseContext.renderForPrompt(),
+    '== CONTEXTO DA NOSSA EMPRESA ==',
+    orgCtx.renderForPrompt(),
     '',
-    '== NOSSA OPERAÇÃO (o cliente B2Base que está conversando) ==',
-    settings ? `Proposta de valor: ${settings.valueProposition || 'não informada'}` : 'Proposta de valor: não informada',
-    settings ? `Segmentos-alvo: ${JSON.stringify(settings.targetSegments || [])}` : '',
-    settings ? `Regiões-alvo: ${JSON.stringify(settings.targetLocations || [])}` : '',
-    '',
+    ...(campaignBlock ? [campaignBlock, ''] : []),
     ...leadBlock,
     '',
     '== HISTÓRICO DA CONVERSA (mais antiga → mais recente) ==',
@@ -337,7 +338,7 @@ function buildPrompt({ prospect, settings, conversation, messages, attempt, exam
       : '',
     '',
     '== REGRAS ==',
-    '- OBJETIVO PERMANENTE: conduzir o lead a acessar https://b2base.net, criar a conta e começar a usar. ' + (b2baseContext.B2BASE_CONTEXT.cta || ''),
+    `- OBJETIVO PERMANENTE: ${cta}`,
     '- Português do Brasil, tom humano de WhatsApp, curto: MÁXIMO 500 caracteres.',
     '- No máximo UMA pergunta. Sem "Oi, viu minha mensagem?", sem formalismo de e-mail.',
     '- Se o nome do contato estiver disponível, use-o. Referencie algo REAL da conversa. Nunca invente fatos, preços, prazos ou promessas.',
@@ -426,7 +427,7 @@ async function fetchMcpExamples(prospect) {
 
 // ─── Fallback (templates pré-aprovados, se a IA falhar/recusar) ──────────────
 
-function fallbackMessage(prospect, attempt, examples) {
+function fallbackMessage(prospect, attempt, examples, orgCtx = null) {
   const contact = prospect ? contactName(prospect) : null;
   const pre = contact ? `${contact}, ` : '';
   const segment = prospect && prospect.industry ? ` do setor de ${prospect.industry}` : '';
@@ -438,21 +439,22 @@ function fallbackMessage(prospect, attempt, examples) {
           .map((e) => e.tradeName || e.legalName)
           .join(' e ')}.`
       : '';
+  // CTA e resumo de valor vêm do CONTEXTO DA ORG (nunca de outra empresa).
+  const site = orgCtx && orgCtx.site;
+  const cta = site ? `é só acessar ${site}` : 'me chama por aqui que eu te oriento no próximo passo';
+  const ctaAjuda = site ? `Dá uma olhada em ${site} que eu te ajudo no que precisar` : 'Me chama por aqui que eu te oriento no próximo passo';
+  const resumo =
+    orgCtx && (orgCtx.propostaValor || orgCtx.oQueE)
+      ? `resumindo: ${orgCtx.propostaValor || orgCtx.oQueE}`
+      : null;
 
   if (attempt <= 1) {
-    return contact
-      ? `${contact}, conseguiu dar uma olhada no que te mandei? Se quiser adiantar, é só criar sua conta em https://b2base.net — cadastro rapidinho e já dá pra testar.`
-      : 'Conseguiu dar uma olhada no que te mandei? Se quiser adiantar, é só criar sua conta em https://b2base.net — cadastro rapidinho e já dá pra testar.';
+    return `${pre}conseguiu dar uma olhada no que te mandei? Se quiser adiantar, ${cta}.`;
   }
   if (attempt === 2) {
-    if (!prospect) {
-      return 'Estava pensando aqui em como isso funciona na prática: a ideia é filtrar empresas com o perfil que você procura e já trazer os contatos certos. Dá pra ver ao vivo: cria sua conta em https://b2base.net que eu te ajudo na primeira busca.';
-    }
-    return `${pre}estava pensando aqui em como isso funciona na prática para empresas${segment}${city}. A ideia é filtrar empresas com o perfil que você procura e já trazer os contatos${examplesLine} Dá pra ver ao vivo: cria sua conta em https://b2base.net que eu te ajudo na primeira busca.`;
+    return `${pre}estava pensando em como isso funciona na prática para empresas${segment}${city}${resumo ? ` (${resumo})` : ''}.${examplesLine} ${ctaAjuda}.`;
   }
-  return contact
-    ? `${contact}, talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se quiser testar, é só criar sua conta em https://b2base.net ou me chamar. 😉`
-    : 'Talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se quiser testar, é só criar sua conta em https://b2base.net ou me chamar. 😉';
+  return `${pre}talvez eu tenha explicado mal antes${resumo ? ` — ${resumo}` : ''}. Vou parar de te incomodar por aqui — ${cta} ou me chama. 😉`;
 }
 
 // ─── Processador: whatsapp:reengage ──────────────────────────────────────────
@@ -477,7 +479,7 @@ async function processReengage(job) {
     ? await prisma.prospect.findUnique({ where: { id: conversation.prospectId } })
     : null;
 
-  const settings = await prisma.commercialSettings.findUnique({ where: { orgId: conversation.orgId } });
+  const orgCtx = await orgContext.loadOrgContext(prisma, conversation.orgId);
 
   const history = await prisma.whatsAppMessage.findMany({
     where: { conversationId },
@@ -486,10 +488,22 @@ async function processReengage(job) {
   });
   history.reverse();
 
+  // Campanha de origem (pilar 2): se a conversa nasceu de um disparo de
+  // campanha, o reengajamento retoma a PROPOSTA daquela campanha.
+  const lastCampaignMsg = [...history].reverse().find((m) => m.source === 'CAMPAIGN' && m.campaignContactId);
+  let campaign = null;
+  if (lastCampaignMsg) {
+    const campaignContact = await prisma.whatsAppCampaignContact.findUnique({
+      where: { id: lastCampaignMsg.campaignContactId },
+      select: { campaign: { select: { id: true, name: true, objective: true, offer: true, ctaUrl: true } } },
+    });
+    campaign = campaignContact ? campaignContact.campaign : null;
+  }
+
   const attemptNum = Number(attempt);
   const examples = attemptNum === 2 ? await fetchMcpExamples(prospect) : null;
 
-  const prompt = buildPrompt({ prospect, settings, conversation, messages: history, attempt: attemptNum, examples });
+  const prompt = buildPrompt({ prospect, orgCtx, campaign, messages: history, attempt: attemptNum, examples });
   const decision = await callLlm(prompt);
 
   // O que a IA decidiu/produziu. Em qualquer falha (LLM down, JSON inválido,
@@ -520,17 +534,23 @@ async function processReengage(job) {
   }
 
   if (!messageText && !refusedByAi) {
-    messageText = fallbackMessage(prospect, attemptNum, examples);
+    messageText = fallbackMessage(prospect, attemptNum, examples, orgCtx);
     origin = 'fallback';
   }
 
   const now = new Date();
+  const evtContext = {
+    orgId: conversation.orgId,
+    orgConfigured: orgCtx.configured,
+    campaignId: (campaign && campaign.id) || null,
+    campaignName: (campaign && campaign.name) || null,
+  };
 
   if (refusedByAi) {
     // Recusa explícita da IA: registra e adia a próxima avaliação
     // (lastReengageAt atua como gate de gap no scan). Não queima tentativa.
     await prisma.whatsAppConversation.update({ where: { id: conversationId }, data: { lastReengageAt: now } });
-    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, origin: 'ai', mode: CONFIG.mode, status: EVENT_STATUS.REFUSED_IA });
+    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, origin: 'ai', mode: CONFIG.mode, status: EVENT_STATUS.REFUSED_IA, context: evtContext });
     log(`decisão: NÃO enviar ${conversationId} (${reason})`);
     return { decided: false, reason };
   }
@@ -538,7 +558,7 @@ async function processReengage(job) {
   if (blockedAiMessage) {
     // Guard derrubou o conteúdo da IA: registra a mensagem vetada para
     // auditoria/iteração de prompt (a mensagem do fallback segue abaixo).
-    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: blockedAiMessage, origin: 'ai', mode: CONFIG.mode, status: EVENT_STATUS.BLOCKED_GUARD });
+    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: blockedAiMessage, origin: 'ai', mode: CONFIG.mode, status: EVENT_STATUS.BLOCKED_GUARD, context: evtContext });
   }
 
   if (CONFIG.mode === 'auto') {
@@ -578,15 +598,15 @@ async function processReengage(job) {
       { attempts: 5, backoff: { type: 'exponential', delay: 5000 } }
     );
 
-    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.SENT, sentMessageId: message.id });
-    log(`enviado (origem=${origin}, tentativa=${attemptNum}) para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
+    await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.SENT, sentMessageId: message.id, context: evtContext });
+    log(`enviado (origem=${origin}${campaign ? ', campanha' : ''}, tentativa=${attemptNum}) para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
     return { sent: true, messageId: message.id, origin };
   }
 
   // SHADOW e SUGGEST: não enviam, não queimam tentativa — registram a
   // sugestão/decisão (o gap via lastReengageAt evita re-LLM em loop).
   await prisma.whatsAppConversation.update({ where: { id: conversationId }, data: { lastReengageAt: now } });
-  await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.GENERATED });
+  await recordEvent(prisma, { conversation, attempt: attemptNum, strategyId, reason, content: messageText, origin, mode: CONFIG.mode, status: EVENT_STATUS.GENERATED, context: evtContext });
   if (CONFIG.mode === 'suggest') {
     log(`sugestão gerada [${strategyId}] para ${prospect ? prospect.companyName : '(sem cadastro)'}: ${messageText.slice(0, 80)}...`);
     return { mode: 'suggest', origin, message: messageText };
