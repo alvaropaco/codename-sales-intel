@@ -34,6 +34,12 @@ const B2BASE_CONTEXT = {
     'Filtros que combinam segmento + geografia + porte para achar o "perfil de cliente ideal"',
     'Do dado bruto ao contato: enriquecimento automático, sem trabalho manual de planilha',
   ],
+  // Objetivo comercial permanente: toda conversa deve conduzir o lead ao site.
+  cta:
+    'Sempre conduza o lead para acessar https://b2base.net, criar a conta e fazer o ' +
+    'onboarding rápido para começar a usar a plataforma no mesmo dia. Inclua o link ' +
+    'https://b2base.net na mensagem quando houver abertura natural (interesse, dúvida ' +
+    'sobre funcionamento/preço, primeira resposta).',
   // Regras negativas — a IA NUNCA pode afirmar isto (não temos o dado aqui).
   naoAFirmar: [
     'preços, planos, condições, descontos ou promoções',

@@ -18,6 +18,7 @@ const QUEUES = Object.freeze({
   WHATSAPP_SEND: 'whatsapp:send',
   WHATSAPP_REENGAGE_SCAN: 'whatsapp:reengage-scan',
   WHATSAPP_REENGAGE: 'whatsapp:reengage',
+  WHATSAPP_REENGAGE_REPLY: 'whatsapp:reengage-reply',
 });
 
 let _queues = null;
@@ -29,6 +30,7 @@ function getWhatsAppQueues() {
       send: createQueue(QUEUES.WHATSAPP_SEND),
       reengageScan: createQueue(QUEUES.WHATSAPP_REENGAGE_SCAN),
       reengage: createQueue(QUEUES.WHATSAPP_REENGAGE),
+      reengageReply: createQueue(QUEUES.WHATSAPP_REENGAGE_REPLY),
     };
   }
   return _queues;
@@ -41,6 +43,7 @@ async function closeWhatsAppQueues() {
       _queues.send.close(),
       _queues.reengageScan.close(),
       _queues.reengage.close(),
+      _queues.reengageReply.close(),
     ]);
     _queues = null;
   }

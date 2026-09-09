@@ -131,6 +131,19 @@ function isOptOutMessage(text) {
   });
 }
 
+// ─── Guard de conteúdo (compartilhado pelos agentes do WhatsApp) ─────────────
+// Afirmações proibidas em qualquer mensagem automatizada: preço/promoção/
+// garantia (não temos esses dados — ver b2base-context.naoAFirmar).
+const BLOCKLIST = /(r\$\s?\d|desconto|grátis|gratis|garantid|promoç|promocao|promoção|hoje apenas|últimas vagas|ultimas vagas)/i;
+
+function normalizeForCompare(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
 // ─── Idempotência ────────────────────────────────────────────────────────────
 function idempotencyKey(...parts) {
   return crypto
@@ -152,6 +165,8 @@ module.exports = {
   buildTemplateVars,
   isOptOutMessage,
   OPT_OUT_KEYWORDS,
+  BLOCKLIST,
+  normalizeForCompare,
   idempotencyKey,
   stepIdempotencyKey,
 };

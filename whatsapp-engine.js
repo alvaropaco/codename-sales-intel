@@ -20,6 +20,7 @@ const {
   isOptOutMessage,
 } = require('./whatsapp-utils');
 const whatsappNats = require('./whatsapp-nats');
+const reengagementReply = require('./reengagement-reply');
 
 // ─── Constantes de estado ────────────────────────────────────────────────────
 const ACCOUNT_STATUS = Object.freeze({
@@ -431,6 +432,22 @@ async function handleMessageEvent(prisma, wahaProvider, event) {
       prospectId,
       phoneNumber,
     });
+  }
+
+  // Continuação automática: se a conversa está sendo conduzida pelo agente de
+  // reengajamento (última outbound = REENGAGEMENT/AI_REPLY), responde o lead
+  // em segundos. As guardas duras (opt-out, pause, DNC, tetos, "humano já
+  // respondeu?") rodam no processador — aqui só um pré-filtro barato: toda
+  // conversa do agente tem reengageTotal > 0 (setado no envio de reengajamento).
+  if (!isOptOut && body && conversation.reengageTotal > 0) {
+    try {
+      await reengagementReply.enqueueReply(prisma, {
+        conversationId: conversation.id,
+        inboundMessageId: message.id,
+      });
+    } catch (err) {
+      console.error('[whatsapp] falha ao enfileirar resposta automática:', err.message);
+    }
   }
 
   await whatsappNats.publishEvent(whatsappNats.SUBJECTS.MESSAGE_RECEIVED, {

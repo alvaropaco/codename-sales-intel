@@ -392,7 +392,47 @@ funciona com qualidade um pouco menor para chats LID.
    endpoint exposto); (c) corrigir `phoneNumber` das conversas LID para o telefone real (hoje
    só o `prospectId` foi vinculado; envio continua pelo `chatId` LID, que funciona).
 
+### Continuação automática da conversa (2026-09-09): resposta rápida quando o lead responde
+
+Até então, quando o lead respondia a um reengajamento o ciclo era zerado e a conversa ia para
+`HUMAN_HANDOFF` — e morria esperando um humano. Agora o **próprio agente continua a conversa em
+segundos** (`reengagement-reply.js`, fila `whatsapp:reengage-reply`):
+
+1. **Disparo**: `whatsapp-engine.handleMessageEvent` enfileira a resposta no inbound com texto
+   (pré-filtro barato: `reengageTotal > 0`), com atraso "humano" de 5–15s (`REENGAGE_REPLY_*`).
+   `jobId = reengage-reply:<inboundMessageId>` → idempotente contra reentregas do webhook/NATS.
+2. **Guarda dura no processador**: só responde se a conversa está sendo conduzida pelo agente
+   (última outbound = `REENGAGEMENT` ou `AI_REPLY`) e a última mensagem é a inbound do lead.
+   Se um humano respondeu por último, a conversa é do operador — o agente não entra. Opt-out,
+   pause por conversa, DNC, teto por conversa (`REENGAGE_REPLY_MAX_PER_CONVERSATION`, default 8)
+   e cap diário global (`REENGAGE_REPLY_DAILY_CAP`, default 60) cortam tudo.
+3. **Geração**: 1 chamada LiteLLM com o histórico (últimas 20 msgs, inbound marcada como
+   "responda a esta") + contexto do produto. Estilo: pt-BR informal de WhatsApp ("vc", "pra"),
+   1–3 frases, sem tom de e-mail, sem se apresentar como IA/assistente, máx. 1 emoji e 1 pergunta.
+4. **Objetivo permanente**: conduzir o lead a acessar **https://b2base.net**, criar a conta e
+   fazer o onboarding rápido — o link entra na resposta quando há abertura natural; os fallbacks
+   (LLM down/mensagem vetada) sempre trazem o link. O mesmo CTA entrou nas estratégias e
+   templates do reengajamento frio (`b2base-context.B2BASE_CONTEXT.cta`).
+5. **Guard de conteúdo**: mesma blocklist do reengajamento (agora compartilhada em
+   `whatsapp-utils.BLOCKLIST`), máx. 600 chars, não repete a última mensagem automatizada, e
+   **final check**: se o operador respondeu pelo inbox enquanto a IA gerava, a resposta é abortada.
+6. **Auditoria**: cada decisão vira `WhatsAppReengagementEvent` com `attempt=0` e
+   `strategy='CONTINUAR_CONVERSA'` (status `SENT`/`REFUSED_IA`/`BLOCKED_GUARD`). A resposta sai
+   com `WhatsAppMessage.source='AI_REPLY'` (sem migração — `source` é String); a contagem por
+   conversa aparece em `GET /:id/automation` (`aiReplies`) e a config em
+   `GET /api/whatsapp/automation/config` (`reply: {...}`).
+
+**Modos**: `REENGAGE_REPLY_MODE=auto` envia; `shadow` só registra. O modo `suggest` **não se
+aplica** de propósito (resposta instantânea não espera aprovação; e o fluxo de aprovação atual
+cancela se a última mensagem é inbound — que é exatamente o caso de uma resposta). Default:
+segue `REENGAGE_MODE=auto` se for o caso, senão `shadow`. Ativação: `REENGAGE_ENABLED=true`
+liga os dois agentes; `REENGAGE_REPLY_ENABLED=false` desliga só a continuação.
+
+**Sem migração**: usa `source` String + a tabela de eventos existente.
+
 ### Risco assumido no dia 1 e mitigação
+
+
 
 Sem modo `suggest`, a IA envia sem aprovação humana. Mitigações: (a) iteração de prompt em shadow
 *antes* do auto, (b) caps agressivos (3 tentativas, gap 24h, cap diário, teto vitalício 6),

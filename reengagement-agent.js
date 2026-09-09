@@ -32,6 +32,7 @@ const { PrismaClient } = require('@prisma/client');
 const { registerProcessor } = require('./outreach-queues');
 const { getWhatsAppQueues } = require('./whatsapp-queues');
 const { isContactable } = require('./whatsapp-engine');
+const { BLOCKLIST, normalizeForCompare } = require('./whatsapp-utils');
 const b2baseContext = require('./b2base-context');
 const mcpCnpj = require('./mcp-cnpj');
 
@@ -268,19 +269,21 @@ const STRATEGIES = Object.freeze({
     id: 'RETOMAR_CONTEXTO',
     goal:
       'Retomar exatamente de onde a conversa parou (o lead demonstrou interesse e recebeu a resposta/link). ' +
-      'Pergunte com naturalidade se ele conseguiu ver/avançar. NÃO reintroduza o B2Base do zero.',
+      'Pergunte com naturalidade se ele conseguiu ver/avançar. Se houver abertura, conduza ao cadastro em ' +
+      'https://b2base.net (é rápido e ele já pode testar). NÃO reintroduza o B2Base do zero.',
   },
   2: {
     id: 'VALOR_NOVO',
     goal:
       'Trazer valor NOVO e concreto: se houver empresas-exemplo abaixo, ofereça mostrar empresas reais ' +
-      'do segmento/cidade dele que caberiam no perfil de prospecção dele. A mensagem deve demonstrar o produto.',
+      'do segmento/cidade dele que caberiam no perfil de prospecção dele. Conduza para a plataforma: ' +
+      'vale convidar a criar a conta em https://b2base.net para ver isso ao vivo.',
   },
   3: {
     id: 'REFRAME_E_ENCERRAMENTO',
     goal:
       'Última tentativa. Recadastre o valor em uma frase (não é lista de empresas; é encontrar empresas com o perfil certo e transformar em oportunidade) ' +
-      'e encerre com elegância dizendo que não vai mais incomodar — que se quiser testar, é só chamar aqui.',
+      'e encerre com elegância dizendo que não vai mais incomodar — deixando a porta aberta com o link https://b2base.net (cadastro rápido) ou chamando aqui.',
   },
 });
 
@@ -334,6 +337,7 @@ function buildPrompt({ prospect, settings, conversation, messages, attempt, exam
       : '',
     '',
     '== REGRAS ==',
+    '- OBJETIVO PERMANENTE: conduzir o lead a acessar https://b2base.net, criar a conta e começar a usar. ' + (b2baseContext.B2BASE_CONTEXT.cta || ''),
     '- Português do Brasil, tom humano de WhatsApp, curto: MÁXIMO 500 caracteres.',
     '- No máximo UMA pergunta. Sem "Oi, viu minha mensagem?", sem formalismo de e-mail.',
     '- Se o nome do contato estiver disponível, use-o. Referencie algo REAL da conversa. Nunca invente fatos, preços, prazos ou promessas.',
@@ -378,16 +382,7 @@ async function callLlm(prompt) {
 
 // ─── Policy Guard (conteúdo) ─────────────────────────────────────────────────
 
-const BLOCKLIST = /(r\$\s?\d|desconto|grátis|gratis|garantid|promoç|promocao|promoção|hoje apenas|últimas vagas|ultimas vagas)/i;
 const MAX_LEN = 600;
-
-function normalizeForCompare(text) {
-  return String(text || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
 
 async function contentGuard(prisma, conversation, messageText) {
   const content = String(messageText || '').trim();
@@ -446,18 +441,18 @@ function fallbackMessage(prospect, attempt, examples) {
 
   if (attempt <= 1) {
     return contact
-      ? `${contact}, conseguiu dar uma olhada no que te mandei? Qualquer dúvida é só me chamar por aqui que eu te explico rapidinho.`
-      : 'Conseguiu dar uma olhada no que te mandei? Qualquer dúvida é só me chamar por aqui que eu te explico rapidinho.';
+      ? `${contact}, conseguiu dar uma olhada no que te mandei? Se quiser adiantar, é só criar sua conta em https://b2base.net — cadastro rapidinho e já dá pra testar.`
+      : 'Conseguiu dar uma olhada no que te mandei? Se quiser adiantar, é só criar sua conta em https://b2base.net — cadastro rapidinho e já dá pra testar.';
   }
   if (attempt === 2) {
     if (!prospect) {
-      return 'Estava pensando aqui em como isso funciona na prática: a ideia é filtrar empresas com o perfil que você procura e já trazer os contatos certos. Quer que eu te mostre um exemplo?';
+      return 'Estava pensando aqui em como isso funciona na prática: a ideia é filtrar empresas com o perfil que você procura e já trazer os contatos certos. Dá pra ver ao vivo: cria sua conta em https://b2base.net que eu te ajudo na primeira busca.';
     }
-    return `${pre}estava pensando aqui em como isso funciona na prática para empresas${segment}${city}. A ideia é filtrar empresas com o perfil que você procura e já trazer os contatos${examplesLine} Quer que eu te mostre um exemplo?`;
+    return `${pre}estava pensando aqui em como isso funciona na prática para empresas${segment}${city}. A ideia é filtrar empresas com o perfil que você procura e já trazer os contatos${examplesLine} Dá pra ver ao vivo: cria sua conta em https://b2base.net que eu te ajudo na primeira busca.`;
   }
   return contact
-    ? `${contact}, talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se um dia quiser testar, é só me chamar. 😉`
-    : 'Talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se um dia quiser testar, é só me chamar. 😉';
+    ? `${contact}, talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se quiser testar, é só criar sua conta em https://b2base.net ou me chamar. 😉`
+    : 'Talvez eu tenha explicado mal antes: não é uma lista de empresas, é uma ferramenta pra encontrar empresas com as características que você define e transformar isso em oportunidade comercial. Vou parar de te incomodar por aqui — se quiser testar, é só criar sua conta em https://b2base.net ou me chamar. 😉';
 }
 
 // ─── Processador: whatsapp:reengage ──────────────────────────────────────────
@@ -740,6 +735,9 @@ async function getConversationAutomation(prisma, { orgId, conversationId }) {
     orderBy: { createdAt: 'desc' },
     take: 5,
   });
+  const aiReplies = await prisma.whatsAppMessage.count({
+    where: { conversationId: conv.id, source: 'AI_REPLY' },
+  });
   return {
     paused: Boolean(conv.automationPausedAt),
     pausedAt: conv.automationPausedAt,
@@ -747,6 +745,7 @@ async function getConversationAutomation(prisma, { orgId, conversationId }) {
     total: conv.reengageTotal,
     lastReengageAt: conv.lastReengageAt,
     nextEligibleAt: nextEligibleAt(conv),
+    aiReplies,
     events,
   };
 }

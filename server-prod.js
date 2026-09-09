@@ -71,6 +71,7 @@ const whatsappWorkers = require('./whatsapp-workers');
 const whatsappNats = require('./whatsapp-nats');
 const whatsappUtils = require('./whatsapp-utils');
 const reengagementAgent = require('./reengagement-agent');
+const reengagementReply = require('./reengagement-reply');
 const { closeWhatsAppQueues, getWhatsAppQueues } = require('./whatsapp-queues');
 const metrics = require('./metrics');
 
@@ -3842,7 +3843,8 @@ app.get('/api/whatsapp/automation/config', async (req, res) => {
   try {
     await requireRequestOrgId(req);
     const { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin } = reengagementAgent.CONFIG;
-    res.json({ success: true, data: { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin }, timestamp: new Date().toISOString() });
+    const { enabled: replyEnabled, mode: replyMode, maxRepliesPerConversation, dailyCap: replyDailyCap } = reengagementReply.CONFIG;
+    res.json({ success: true, data: { enabled, mode, maxAttempts, maxTotal, cooldownHours, minGapHours, dailyCap, scanIntervalMin, reply: { enabled: replyEnabled, mode: replyMode, maxRepliesPerConversation, dailyCap: replyDailyCap } }, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
   }
@@ -4172,6 +4174,13 @@ async function start() {
       await reengagementAgent.startReengagement();
     } catch (err) {
       console.error('[reengage] failed to start:', err.message);
+    }
+
+    // Resposta rápida do agente quando o lead responde (continuação automática).
+    try {
+      await reengagementReply.startReengagementReply();
+    } catch (err) {
+      console.error('[reengage-reply] failed to start:', err.message);
     }
 
     if (whatsappNats.isEnabled()) {
