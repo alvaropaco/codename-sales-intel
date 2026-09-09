@@ -352,23 +352,33 @@ async function processPrepare(job) {
  * vivo para a mensagem, add() devolve o existente em vez de duplicar). Jobs
  * mortos (failed/completed) com o mesmo id são removidos antes — sem isso o
  * add() é ignorado e a mensagem ficaria presa para sempre.
+ *
+ * `dedupe: false` (usado no reenvio pós-rate-limit DENTRO do próprio job):
+ * o dedupe encontraria o job ATIVO em execução e adicionaria nada — o
+ * "retrying in Xms" nunca era criado e a mensagem congelava em SCHEDULED
+ * até o boot seguinte. Com dedupe off, o jobId é auto-gerado (novo job de
+ * verdade); duplicatas inofensivas são cortadas pelo check de idempotência
+ * (status SENT) no início do processador.
  */
-async function _enqueueSend(sendQueue, messageId, delayMs = 0) {
-  const existing = await sendQueue.getJob(messageId).catch(() => null);
-  if (existing) {
-    const state = await existing.getState().catch(() => null);
-    if (['delayed', 'waiting', 'active', 'waiting-children', 'prioritized'].includes(state)) {
-      return existing; // já está na fila — não duplica
+async function _enqueueSend(sendQueue, messageId, delayMs = 0, { dedupe = true } = {}) {
+  if (dedupe) {
+    const existing = await sendQueue.getJob(messageId).catch(() => null);
+    if (existing) {
+      const state = await existing.getState().catch(() => null);
+      if (['delayed', 'waiting', 'active', 'waiting-children', 'prioritized'].includes(state)) {
+        return existing; // já está na fila — não duplica
+      }
+      await existing.remove().catch(() => {});
     }
-    await existing.remove().catch(() => {});
   }
   return sendQueue.add(
     { messageId },
     {
-      jobId: messageId,
+      ...(dedupe ? { jobId: messageId } : {}),
       delay: delayMs,
       attempts: 3,
       backoff: { type: 'exponential', delay: 60 * 1000 },
+      removeOnComplete: true,
     }
   );
 }
@@ -465,7 +475,10 @@ async function processSend(job) {
     const sendQueue = createQueue('outreach:message-send', {
       redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
     });
-    await _enqueueSend(sendQueue, messageId, rateLimit.retryIn);
+    // dedupe OFF: o job "atual" é este que está rodando — o dedupe padrão o
+    // encontraria e descartaria o reagendamento (bug dos disparos travados
+    // em "Agendado").
+    await _enqueueSend(sendQueue, messageId, rateLimit.retryIn, { dedupe: false });
     return { retried: true, retryIn: rateLimit.retryIn };
   }
 
@@ -486,7 +499,9 @@ async function processSend(job) {
       where: { id: messageId },
       data: { status: 'FAILED', error: 'No recipient email found' },
     });
-    throw new Error('No recipient email found');
+    // Falha PERMANENTE (lead sem e-mail): termina sem re-tentar — o throw
+    // anterior gastava 3 retries do Bull para o mesmo erro determinístico.
+    return { failed: 'no_recipient_email', messageId };
   }
 
   // Build MIME and send (provider-agnostic: gmail OAuth, SMTP ou Resend)
@@ -932,5 +947,6 @@ module.exports = {
   generateOutreachMessage,
   buildOutreachPrompt,
   _templateFallback,
+  _enqueueSend,
   getPrisma,
 };
