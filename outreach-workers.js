@@ -409,7 +409,11 @@ async function requeueStuckScheduledMessages() {
 
     let requeued = 0;
     for (const m of stuck) {
-      await _enqueueSend(sendQueue, m.id, 0);
+      // dedupe OFF: o dedupe por jobId pode sofrer no-op silencioso contra
+      // referências mortas do ciclo anterior (o log dizia "reenfileirada"
+      // mas a mensagem ficava sem job). Duplicata inofensiva: o processador
+      // aborta com already_sent se a mensagem já saiu de SCHEDULED.
+      await _enqueueSend(sendQueue, m.id, 0, { dedupe: false });
       requeued += 1;
     }
 
