@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cnpj-data-publisher.dev/company-br-cnpj-snapshot-ready-v1.schema.json",
+  "title": "CNPJ_SNAPSHOT_READY v1",
+  "description": "A validated canonical snapshot is available for bulk consumption.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "source": {
+      "type": "string",
+      "const": "cnpj-data-publisher"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "CNPJ_SNAPSHOT_READY"
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "\\.snapshot\\.ready\\.v1$",
+      "description": "Subject ending in .snapshot.ready.v1. The prefix is set by NATS_SUBJECT_PREFIX."
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "snapshot_version": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "schema_version": {
+          "type": "integer"
+        },
+        "total_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "headquarters_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": [
+                "LOCAL",
+                "S3"
+              ]
+            },
+            "bucket": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "manifest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        "checksum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "snapshot_version",
+        "schema_version",
+        "total_rows",
+        "active_rows",
+        "storage"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "subject",
+    "source",
+    "occurred_at",
+    "correlation_id",
+    "data",
+    "metadata"
+  ],
+  "additionalProperties": false
+}

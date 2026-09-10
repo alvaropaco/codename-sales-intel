@@ -1,0 +1,19 @@
+{{- if and .Values.storage.local.enabled (not .Values.storage.local.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cnpj-data-publisher.pvcName" . }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.storage.local.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.local.size }}
+  {{- if .Values.storage.local.storageClassName }}
+  storageClassName: {{ .Values.storage.local.storageClassName }}
+  {{- end }}
+{{- end }}

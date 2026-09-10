@@ -1,0 +1,58 @@
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-migrations" (include "cnpj-data-publisher.fullname" .) }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrations
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "cnpj-data-publisher.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrations
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrations
+          image: {{ include "cnpj-data-publisher.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          # Migrations only need the database URL. Deliberately self-contained:
+          # as a pre-install/pre-upgrade hook it must not depend on the normal
+          # ServiceAccount, ConfigMap or data PVC (which ArgoCD/Helm create
+          # after hooks run).
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgresql.enabled }}
+                  name: {{ printf "%s-postgresql-url" (include "cnpj-data-publisher.fullname" .) }}
+                  key: database-url
+                  {{- else }}
+                  name: {{ .Values.externalPostgresql.secretName }}
+                  key: {{ .Values.externalPostgresql.secretKey }}
+                  {{- end }}
+          resources:
+            {{- toYaml .Values.resources.migrations | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cnpj-data-publisher.fullname" . }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+
+  NATS_STREAM: {{ .Values.config.natsStream | quote }}
+  NATS_SUBJECT_PREFIX: {{ .Values.config.natsSubjectPrefix | quote }}
+  NATS_STREAM_REPLICAS: {{ .Values.config.natsStreamReplicas | quote }}
+  NATS_STREAM_MAX_AGE_DAYS: {{ .Values.config.natsStreamMaxAgeDays | quote }}
+  NATS_STREAM_DUPLICATE_WINDOW_HOURS: {{ .Values.config.natsStreamDuplicateWindowHours | quote }}
+
+  RECEITA_BASE_URL: {{ .Values.config.receitaBaseUrl | quote }}
+  RECEITA_INCLUDE_PARTNERS: {{ .Values.config.receitaIncludePartners | quote }}
+  RECEITA_MAX_DOWNLOAD_CONCURRENCY: {{ .Values.config.receitaMaxDownloadConcurrency | quote }}
+  RECEITA_REQUEST_TIMEOUT_SECONDS: {{ .Values.config.receitaRequestTimeoutSeconds | quote }}
+  {{- with .Values.config.receitaAllowedHosts }}
+  RECEITA_ALLOWED_HOSTS: {{ . | quote }}
+  {{- end }}
+
+  INCLUDE_BRANCHES: {{ .Values.config.includeBranches | quote }}
+  INITIAL_SNAPSHOT_MODE: {{ .Values.config.initialSnapshotMode | quote }}
+  {{- with .Values.config.duckdbThreads }}
+  DUCKDB_THREADS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.duckdbMemoryLimit }}
+  DUCKDB_MEMORY_LIMIT: {{ . | quote }}
+  {{- end }}
+
+  STORAGE_BACKEND: {{ .Values.storage.backend | quote }}
+  {{- if .Values.s3.bucket }}
+  S3_BUCKET: {{ .Values.s3.bucket | quote }}
+  S3_REGION: {{ .Values.s3.region | quote }}
+  S3_FORCE_PATH_STYLE: {{ .Values.s3.forcePathStyle | quote }}
+  {{- end }}
+
+  {{- if .Values.sink }}
+  SINK: {{ .Values.sink.backend | default "NONE" | quote }}
+  {{- if .Values.sink.table }}
+  SINK_TABLE: {{ .Values.sink.table | quote }}
+  {{- end }}
+  SINK_ACTIVE_OPENING_YEAR: {{ .Values.sink.activeOpeningYear | default 0 | quote }}
+  SINK_EMBEDDING_DIMENSIONS: {{ .Values.sink.embeddingDimensions | default 1536 | quote }}
+  {{- end }}
+
+  PARQUET_COMPRESSION: {{ .Values.config.parquetCompression | quote }}
+  PARQUET_ROW_GROUP_SIZE: {{ .Values.config.parquetRowGroupSize | quote }}
+
+  MAX_REJECTED_ROW_PERCENTAGE: {{ .Values.config.maxRejectedRowPercentage | quote }}
+  MIN_EXPECTED_TOTAL_ROWS: {{ .Values.config.minExpectedTotalRows | int64 | quote }}
+
+  OUTBOX_BATCH_SIZE: {{ .Values.config.outboxBatchSize | quote }}
+  OUTBOX_CONCURRENCY: {{ .Values.config.outboxConcurrency | quote }}
+  OUTBOX_POLL_INTERVAL_MS: {{ .Values.config.outboxPollIntervalMs | quote }}
+  OUTBOX_MAX_ATTEMPTS: {{ .Values.config.outboxMaxAttempts | quote }}
+
+  KEEP_RAW_DOWNLOADS_MONTHS: {{ .Values.config.keepRawDownloadsMonths | quote }}
+  KEEP_EXTRACTED_FILES_MONTHS: {{ .Values.config.keepExtractedFilesMonths | quote }}
+  KEEP_CANONICAL_SNAPSHOTS_MONTHS: {{ .Values.config.keepCanonicalSnapshotsMonths | quote }}
+  KEEP_DIFFS_MONTHS: {{ .Values.config.keepDiffsMonths | quote }}
+  KEEP_PUBLISHED_OUTBOX_DAYS: {{ .Values.config.keepPublishedOutboxDays | quote }}
+
+  METRICS_PORT: {{ .Values.config.metricsPort | quote }}
+  HEALTH_PORT: {{ .Values.config.healthPort | quote }}
+  OTEL_ENABLED: {{ .Values.config.otelEnabled | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterOtlpEndpoint | quote }}

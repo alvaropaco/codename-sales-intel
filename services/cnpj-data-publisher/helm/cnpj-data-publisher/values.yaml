@@ -1,0 +1,252 @@
+# Default values for cnpj-data-publisher.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/alvaropaco/cnpj-data-publisher
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# --- Monthly ingestion CronJob ---
+ingestor:
+  enabled: true
+  schedule: "0 4 15 * *"
+  timeZone: "America/Sao_Paulo"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  backoffLimit: 2
+  snapshot: latest
+  extraArgs: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Outbox publisher Deployment ---
+outboxPublisher:
+  enabled: true
+  replicas: 1
+  revisionHistoryLimit: 3
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Migration Job (runs pre-install/pre-upgrade) ---
+migrations:
+  enabled: true
+  backoffLimit: 3
+
+# --- Optional one-shot backfill Job ---
+backfill:
+  enabled: false
+  snapshot: latest
+  rate: 100
+  batchSize: 1000
+  extraArgs: []
+  backoffLimit: 1
+
+# --- Optional retention CronJob ---
+cleanup:
+  enabled: false
+  schedule: "0 3 * * 0"
+  timeZone: "America/Sao_Paulo"
+
+# --- Storage ---
+storage:
+  backend: LOCAL
+  local:
+    enabled: true
+    size: 250Gi
+    storageClassName: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+
+# --- Analytical sink (OLAP / RAG / semantic search) ---
+# backend: NONE | POSTGRES. POSTGRES loads the active dataset into a pgvector
+# table for querying and semantic search, in addition to the Parquet snapshot.
+sink:
+  backend: NONE
+  table: companies
+  activeOpeningYear: 0        # 0 = all active companies; e.g. 2025 = opened 2025 or later
+  embeddingDimensions: 1536   # match the embedding model (gemini-embedding=1536)
+  # DSN with password comes from a pre-created secret (never the ConfigMap).
+  databaseUrlSecret:
+    name: cnpj-postgres-secrets
+    key: database-url
+
+# --- Embedding backfill CronJob (semantic search) ---
+# Runs `cnpj-data-publisher embed` to populate companies.embedding from the
+# in-cluster embeddings endpoint. Disabled by default; enable once the sink is
+# populated and EMBEDDING_BASE_URL points at your gateway.
+embedder:
+  enabled: false
+  schedule: "0 6 15 * *"   # a couple hours after the monthly ingest
+  timeZone: "America/Sao_Paulo"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  backoffLimit: 2
+  createIndex: true
+  extraArgs: []
+  nodeSelector: {}
+  # Non-secret embedding settings rendered as env on the job.
+  env:
+    - { name: EMBEDDING_BASE_URL, value: "http://litellm-gateway.ai-gateway.svc.cluster.local:4000" }
+    - { name: EMBEDDING_MODEL, value: "gemini-embedding" }
+    - { name: EMBEDDING_BATCH_SIZE, value: "128" }
+
+# --- PostgreSQL ---
+postgresql:
+  enabled: false
+  auth:
+    username: cnpj
+    password: cnpj
+    database: cnpj
+  primary:
+    persistence:
+      size: 20Gi
+
+externalPostgresql:
+  secretName: cnpj-data-publisher-postgresql
+  secretKey: database-url
+
+# --- NATS ---
+nats:
+  enabled: false
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        pvc:
+          size: 20Gi
+
+externalNats:
+  secretName: cnpj-data-publisher-nats
+  urlKey: url
+  credentialsKey: credentials
+
+# --- MinIO (optional S3 backend) ---
+minio:
+  enabled: false
+
+s3:
+  secretName: ""
+  endpointKey: endpoint
+  accessKeyKey: access-key
+  secretKeyKey: secret-key
+  bucket: ""
+  region: ""
+  forcePathStyle: true
+
+# --- Application configuration (rendered into a ConfigMap) ---
+config:
+  appEnv: production
+  logLevel: INFO
+  logFormat: json
+
+  natsStream: BRAZIL_COMPANY_EVENTS
+  natsSubjectPrefix: company.br.cnpj
+  natsStreamReplicas: 1
+  natsStreamMaxAgeDays: 30
+  natsStreamDuplicateWindowHours: 24
+
+  receitaBaseUrl: https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj
+  receitaIncludePartners: false
+  receitaMaxDownloadConcurrency: 4
+  receitaRequestTimeoutSeconds: 60
+
+  includeBranches: false
+  initialSnapshotMode: STORE_ONLY
+
+  parquetCompression: zstd
+  parquetRowGroupSize: 250000
+
+  maxRejectedRowPercentage: "0.01"
+  minExpectedTotalRows: 1000000
+
+  outboxBatchSize: 500
+  outboxConcurrency: 20
+  outboxPollIntervalMs: 1000
+  outboxMaxAttempts: 20
+
+  keepRawDownloadsMonths: 2
+  keepExtractedFilesMonths: 1
+  keepCanonicalSnapshotsMonths: 3
+  keepDiffsMonths: 6
+  keepPublishedOutboxDays: 14
+
+  metricsPort: 9090
+  healthPort: 8080
+  otelEnabled: false
+  otelExporterOtlpEndpoint: ""
+
+# --- Resources ---
+resources:
+  ingestor:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  outboxPublisher:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  migrations:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  embedder:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# --- Security (spec section 32) ---
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+
+# --- Observability ---
+service:
+  type: ClusterIP
+  healthPort: 8080
+  metricsPort: 9090
+
+podMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+networkPolicy:
+  enabled: false
+  extraEgress: []

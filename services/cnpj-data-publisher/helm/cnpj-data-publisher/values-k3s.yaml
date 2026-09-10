@@ -1,0 +1,56 @@
+# Single-node K3s: everything runs in-cluster with local-path storage.
+
+storage:
+  backend: LOCAL
+  local:
+    enabled: true
+    storageClassName: local-path
+    size: 250Gi
+
+postgresql:
+  enabled: true
+  auth:
+    username: cnpj
+    password: cnpj
+    database: cnpj
+  primary:
+    persistence:
+      storageClass: local-path
+      size: 20Gi
+
+nats:
+  enabled: true
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        pvc:
+          storageClassName: local-path
+          size: 20Gi
+
+outboxPublisher:
+  replicas: 1
+
+config:
+  # A single JetStream node cannot replicate.
+  natsStreamReplicas: 1
+  initialSnapshotMode: STORE_ONLY
+
+resources:
+  ingestor:
+    requests:
+      cpu: "500m"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 6Gi
+  outboxPublisher:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+cleanup:
+  enabled: true

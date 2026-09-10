@@ -1,0 +1,21 @@
+{{- if .Values.outboxPublisher.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-outbox-publisher" (include "cnpj-data-publisher.fullname" .) }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+    app.kubernetes.io/component: outbox-publisher
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "cnpj-data-publisher.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: outbox-publisher
+  ports:
+    - name: health
+      port: {{ .Values.service.healthPort }}
+      targetPort: health
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+{{- end }}

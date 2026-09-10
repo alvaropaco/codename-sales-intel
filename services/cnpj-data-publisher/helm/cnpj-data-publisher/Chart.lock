@@ -1,0 +1,12 @@
+dependencies:
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 15.5.38
+- name: nats
+  repository: https://nats-io.github.io/k8s/helm/charts/
+  version: 1.2.2
+- name: minio
+  repository: https://charts.bitnami.com/bitnami
+  version: 14.7.0
+digest: sha256:c7439362b4aa2661e1de7e4352c41215ff6ef651e54cb5790addbb89c6182fae
+generated: "2026-08-05T22:25:00.365641-03:00"

@@ -1,0 +1,68 @@
+{{- if .Values.embedder.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ printf "%s-embedder" (include "cnpj-data-publisher.fullname" .) }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedder
+spec:
+  schedule: {{ .Values.embedder.schedule | quote }}
+  {{- with .Values.embedder.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: {{ .Values.embedder.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.embedder.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.embedder.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.embedder.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "cnpj-data-publisher.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: embedder
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "cnpj-data-publisher.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: embedder
+              image: {{ include "cnpj-data-publisher.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              ports:
+                - name: metrics
+                  containerPort: {{ .Values.config.metricsPort }}
+              args:
+                - embed
+                {{- if .Values.embedder.createIndex }}
+                - --create-index
+                {{- end }}
+                {{- with .Values.embedder.extraArgs }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              env:
+                {{- include "cnpj-data-publisher.envVars" . | nindent 16 }}
+                {{- with .Values.embedder.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              envFrom:
+                {{- include "cnpj-data-publisher.envFrom" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources.embedder | nindent 16 }}
+              volumeMounts:
+                {{- include "cnpj-data-publisher.volumeMounts" . | nindent 16 }}
+          volumes:
+            {{- include "cnpj-data-publisher.volumes" . | nindent 12 }}
+          {{- with .Values.embedder.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cnpj-data-publisher.dev/company-br-cnpj-ingest-failed-v1.schema.json",
+  "title": "INGEST_FAILED v1",
+  "description": "An ingest run failed.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "source": {
+      "type": "string",
+      "const": "cnpj-data-publisher"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "INGEST_FAILED"
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "\\.ingest\\.failed\\.v1$",
+      "description": "Subject ending in .ingest.failed.v1. The prefix is set by NATS_SUBJECT_PREFIX."
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "snapshot_version": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "error_code": {
+          "type": "string"
+        },
+        "error_message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_version",
+        "stage",
+        "error_code"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "subject",
+    "source",
+    "occurred_at",
+    "correlation_id",
+    "data",
+    "metadata"
+  ],
+  "additionalProperties": false
+}

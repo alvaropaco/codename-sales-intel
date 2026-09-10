@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cnpj-data-publisher.dev/company-br-cnpj-ingest-completed-v1.schema.json",
+  "title": "INGEST_COMPLETED v1",
+  "description": "An ingest run finished successfully.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "source": {
+      "type": "string",
+      "const": "cnpj-data-publisher"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "INGEST_COMPLETED"
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "\\.ingest\\.completed\\.v1$",
+      "description": "Subject ending in .ingest.completed.v1. The prefix is set by NATS_SUBJECT_PREFIX."
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "snapshot_version": {
+          "type": "string"
+        },
+        "statistics": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "snapshot_version",
+        "statistics"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "subject",
+    "source",
+    "occurred_at",
+    "correlation_id",
+    "data",
+    "metadata"
+  ],
+  "additionalProperties": false
+}

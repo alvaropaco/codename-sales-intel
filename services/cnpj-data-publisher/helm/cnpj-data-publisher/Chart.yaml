@@ -1,0 +1,30 @@
+apiVersion: v2
+name: cnpj-data-publisher
+description: Publishes Brazilian CNPJ open-data company events to NATS JetStream
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - cnpj
+  - receita-federal
+  - open-data
+  - nats
+  - jetstream
+home: https://github.com/alvaropaco/codename-sales-intel/tree/main/services/cnpj-data-publisher
+sources:
+  - https://github.com/alvaropaco/codename-sales-intel/tree/main/services/cnpj-data-publisher
+maintainers:
+  - name: cnpj-data-publisher maintainers
+dependencies:
+  - name: postgresql
+    version: "15.5.38"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: nats
+    version: "1.2.2"
+    repository: https://nats-io.github.io/k8s/helm/charts/
+    condition: nats.enabled
+  - name: minio
+    version: "14.7.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.enabled

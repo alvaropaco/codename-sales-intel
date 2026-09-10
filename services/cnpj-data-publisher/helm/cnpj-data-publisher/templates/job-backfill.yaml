@@ -1,0 +1,48 @@
+{{- if .Values.backfill.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-backfill" (include "cnpj-data-publisher.fullname" .) }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backfill
+spec:
+  backoffLimit: {{ .Values.backfill.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "cnpj-data-publisher.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backfill
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cnpj-data-publisher.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backfill
+          image: {{ include "cnpj-data-publisher.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - backfill
+            - --snapshot
+            - {{ .Values.backfill.snapshot | quote }}
+            - --rate
+            - {{ .Values.backfill.rate | quote }}
+            - --batch-size
+            - {{ .Values.backfill.batchSize | quote }}
+            {{- with .Values.backfill.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            {{- include "cnpj-data-publisher.envVars" . | nindent 12 }}
+          envFrom:
+            {{- include "cnpj-data-publisher.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.ingestor | nindent 12 }}
+          volumeMounts:
+            {{- include "cnpj-data-publisher.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "cnpj-data-publisher.volumes" . | nindent 8 }}
+{{- end }}

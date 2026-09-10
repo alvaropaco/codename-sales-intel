@@ -1,0 +1,84 @@
+{{- if .Values.outboxPublisher.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-outbox-publisher" (include "cnpj-data-publisher.fullname" .) }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+    app.kubernetes.io/component: outbox-publisher
+spec:
+  replicas: {{ .Values.outboxPublisher.replicas }}
+  revisionHistoryLimit: {{ .Values.outboxPublisher.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "cnpj-data-publisher.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: outbox-publisher
+  template:
+    metadata:
+      labels:
+        {{- include "cnpj-data-publisher.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: outbox-publisher
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.outboxPublisher.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "cnpj-data-publisher.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: outbox-publisher
+          image: {{ include "cnpj-data-publisher.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["publish-outbox"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.config.healthPort }}
+            - name: metrics
+              containerPort: {{ .Values.config.metricsPort }}
+          env:
+            {{- include "cnpj-data-publisher.envVars" . | nindent 12 }}
+          envFrom:
+            {{- include "cnpj-data-publisher.envFrom" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources.outboxPublisher | nindent 12 }}
+          volumeMounts:
+            {{- include "cnpj-data-publisher.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "cnpj-data-publisher.volumes" . | nindent 8 }}
+      {{- with .Values.outboxPublisher.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.outboxPublisher.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.outboxPublisher.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

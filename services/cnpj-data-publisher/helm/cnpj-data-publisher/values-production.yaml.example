@@ -1,0 +1,74 @@
+# Production example: external PostgreSQL, external NATS and S3 storage.
+#
+# Create the referenced secrets before installing:
+#
+#   kubectl create secret generic cnpj-data-publisher-postgresql \
+#     --from-literal=database-url='postgresql+psycopg://user:pass@host:5432/cnpj'
+#
+#   kubectl create secret generic cnpj-data-publisher-nats \
+#     --from-literal=url='nats://nats.internal:4222' \
+#     --from-file=credentials=./publisher.creds
+#
+#   kubectl create secret generic cnpj-data-publisher-s3 \
+#     --from-literal=endpoint='https://s3.amazonaws.com' \
+#     --from-literal=access-key='...' \
+#     --from-literal=secret-key='...'
+
+image:
+  repository: ghcr.io/alvaropaco/cnpj-data-publisher
+  tag: v0.1.0
+  pullPolicy: IfNotPresent
+
+postgresql:
+  enabled: false
+externalPostgresql:
+  secretName: cnpj-data-publisher-postgresql
+  secretKey: database-url
+
+nats:
+  enabled: false
+externalNats:
+  secretName: cnpj-data-publisher-nats
+  urlKey: url
+  credentialsKey: credentials
+
+storage:
+  backend: S3
+  local:
+    enabled: true
+    size: 500Gi
+    storageClassName: fast-ssd
+
+s3:
+  secretName: cnpj-data-publisher-s3
+  bucket: cnpj-snapshots
+  region: us-east-1
+  forcePathStyle: false
+
+outboxPublisher:
+  replicas: 3
+
+config:
+  appEnv: production
+  logLevel: INFO
+  # Multi-node JetStream should replicate.
+  natsStreamReplicas: 3
+  initialSnapshotMode: STORE_ONLY
+
+resources:
+  ingestor:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "8"
+      memory: 16Gi
+
+podMonitor:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+
+cleanup:
+  enabled: true

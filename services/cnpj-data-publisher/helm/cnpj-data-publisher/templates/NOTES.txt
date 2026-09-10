@@ -1,0 +1,20 @@
+cnpj-data-publisher {{ .Chart.AppVersion }} installed as {{ .Release.Name }}.
+
+Components:
+{{ if .Values.ingestor.enabled }}  - ingestor CronJob      schedule {{ .Values.ingestor.schedule }} ({{ .Values.ingestor.timeZone }}){{ end }}
+{{ if .Values.outboxPublisher.enabled }}  - outbox-publisher      {{ .Values.outboxPublisher.replicas }} replica(s){{ end }}
+{{ if .Values.backfill.enabled }}  - backfill Job          rate {{ .Values.backfill.rate }}/s{{ end }}
+{{ if .Values.cleanup.enabled }}  - cleanup CronJob       schedule {{ .Values.cleanup.schedule }}{{ end }}
+
+Stream: {{ .Values.config.natsStream }}
+Subjects: {{ .Values.config.natsSubjectPrefix }}.>
+Initial snapshot mode: {{ .Values.config.initialSnapshotMode }}
+{{ if eq .Values.config.initialSnapshotMode "STORE_ONLY" }}
+The first snapshot will only publish CNPJ_SNAPSHOT_READY. To publish all
+active companies afterwards, run a backfill:
+
+  kubectl create job --from=cronjob/{{ include "cnpj-data-publisher.fullname" . }}-ingestor manual-ingest -n {{ .Release.Namespace }}
+{{ end }}
+Check status:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=outbox-publisher -f

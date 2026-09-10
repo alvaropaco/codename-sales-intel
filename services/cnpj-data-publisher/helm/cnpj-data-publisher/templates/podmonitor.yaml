@@ -1,0 +1,21 @@
+{{- if .Values.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "cnpj-data-publisher.fullname" . }}
+  labels:
+    {{- include "cnpj-data-publisher.labels" . | nindent 4 }}
+    {{- with .Values.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "cnpj-data-publisher.selectorLabels" . | nindent 6 }}
+  # Scrape every component that exposes the metrics port: the long-lived
+  # outbox-publisher plus the short-lived ingestor/embedder CronJob pods
+  # (which emit cnpj_snapshot_*, cnpj_rows_*, and the sink stage metrics).
+  podMetricsEndpoints:
+    - port: metrics
+      interval: {{ .Values.podMonitor.interval }}
+{{- end }}

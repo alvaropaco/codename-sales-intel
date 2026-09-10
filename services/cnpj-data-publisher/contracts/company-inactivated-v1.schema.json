@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cnpj-data-publisher.dev/company-br-cnpj-inactivated-v1.schema.json",
+  "title": "COMPANY_INACTIVATED v1",
+  "description": "A previously active company whose current record is no longer active.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "source": {
+      "type": "string",
+      "const": "cnpj-data-publisher"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "COMPANY_INACTIVATED"
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "\\.inactivated\\.v1$",
+      "description": "Subject ending in .inactivated.v1. The prefix is set by NATS_SUBJECT_PREFIX."
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "cnpj": {
+          "type": "string",
+          "minLength": 14,
+          "maxLength": 14
+        },
+        "previous_registration_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_registration_status_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_registration_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_registration_status_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registration_status_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "registration_status_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cnpj",
+        "previous_registration_status_code",
+        "current_registration_status_code"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "subject",
+    "source",
+    "occurred_at",
+    "correlation_id",
+    "data",
+    "metadata"
+  ],
+  "additionalProperties": false
+}
