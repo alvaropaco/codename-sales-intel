@@ -62,6 +62,7 @@ const gmailApi = require('./gmail-api');
 const emailProvider = require('./email-provider');
 const { maskProspectForTrial, maskCompanyGraphForTrial, stripMaskedIncomingFields } = require('./plan-masking');
 const outreachWorkers = require('./outreach-workers');
+const aiCampaign = require('./ai-campaign');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
 
 // ─── WhatsApp modules (WAHA) ───────────────────────────────────────
@@ -666,6 +667,23 @@ async function assertCanCaptureLead(orgId) {
       err.code = 'PLAN_LIMIT_REACHED';
       throw err;
     }
+  }
+}
+
+/**
+ * Garante que a Organization é Premium — gate das features pagas (ex.:
+ * campanha com IA). Lança erro 403 (code PREMIUM_REQUIRED) para trial.
+ */
+async function assertPremiumOrg(orgId) {
+  const plan = await getOrgPlan(orgId);
+  if (plan !== 'premium') {
+    const err = new Error(
+      'Este recurso está disponível apenas no plano Premium. ' +
+        'Faça upgrade para desbloquear a campanha com IA.'
+    );
+    err.status = 403;
+    err.code = 'PREMIUM_REQUIRED';
+    throw err;
   }
 }
 
@@ -2994,6 +3012,43 @@ app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
 
     res.json({ success: true, data: result, timestamp: new Date().toISOString() });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================================
+// CAMPANHA COM IA (feature PREMIUM)
+// ============================================================================
+// POST /api/ai/campaigns — a IA gera a estratégia (nome/objetivo/oferta) a
+// partir do contexto comercial da org, SALVA as campanhas (email e/ou WhatsApp
+// conforme contas conectadas) e INICIA os disparos para todos os leads em
+// "Prontos para contato" (status='qualified'). Mensagem única por lead:
+//   - email: campanha sem template → processPrepare gera via IA por lead;
+//   - whatsapp: step aiPersonalized → worker gera por lead (template = fallback).
+// Resposta: { success, data: { emailCampaignId, whatsappCampaignId, channels,
+//   leadCount, enrolled, contextConfigured, strategy, launchErrors } }
+app.post('/api/ai/campaigns', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    // Gate do plano (o orquestrador revalida — defesa em profundidade).
+    await assertPremiumOrg(user.orgId);
+
+    const result = await aiCampaign.createAndLaunchAiCampaign(prisma, {
+      orgId: user.orgId,
+      userId,
+    });
+
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    if (err.code && err.status) {
+      return res.status(err.status).json({ success: false, code: err.code, error: err.message });
+    }
+    console.error('[ai-campaign] erro inesperado:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

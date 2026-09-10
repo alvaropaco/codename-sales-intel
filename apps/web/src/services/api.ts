@@ -26,7 +26,8 @@ import {
   WhatsAppMessage,
   WhatsAppConnectResult,
   WhatsAppReengagementSuggestion,
-  WhatsAppAutomationConfig
+  WhatsAppAutomationConfig,
+  AiCampaignResult
 } from '../types';
 
 const API_BASE = '/api';
@@ -709,6 +710,27 @@ export async function startOutreachCampaign(
   const json = await res.json();
   if (!res.ok || !json.success) {
     throw new Error(json.error || 'Erro ao iniciar campanha');
+  }
+  return json.data;
+}
+
+/**
+ * Campanha com IA (feature Premium): a IA gera a estratégia, salva as campanhas
+ * e inicia os disparos para todos os leads "Prontos para contato".
+ * Erros de domínio chegam com `code` (PREMIUM_REQUIRED, NO_READY_LEADS,
+ * NO_CHANNEL_AVAILABLE, AI_CAMPAIGN_LIMIT).
+ */
+export async function createAiCampaign(): Promise<AiCampaignResult> {
+  const res = await fetch(`${API_BASE}/ai/campaigns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    const err = new Error(json.error || 'Erro ao gerar campanha com IA') as Error & { code?: string };
+    err.code = json.code;
+    throw err;
   }
   return json.data;
 }

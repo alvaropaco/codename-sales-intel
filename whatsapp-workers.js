@@ -17,7 +17,9 @@ const { getWhatsAppQueues } = require('./whatsapp-queues');
 const { registerProcessor } = require('./outreach-queues');
 const { WAHAWhatsAppProvider } = require('./waha-provider');
 const { checkLimit, calculateDelay } = require('./whatsapp-rate-limiter');
-const { toChatId, normalizePhone, renderTemplate } = require('./whatsapp-utils');
+const { toChatId, normalizePhone, renderTemplate, BLOCKLIST } = require('./whatsapp-utils');
+const llm = require('./llm-client');
+const orgContext = require('./org-context');
 const {
   getOrCreateConversation,
   isContactable,
@@ -70,6 +72,85 @@ async function maybeCompleteCampaign(prisma, campaignId) {
       data: { status: CAMPAIGN_STATUS.COMPLETED, completedAt: new Date() },
     });
     await whatsappNats.publishEvent('whatsapp.campaigns.completed', { campaignId });
+  }
+}
+
+// ─── Geração de mensagem única por lead (steps aiPersonalized) ───────────────
+// Feature premium: campanhas criadas pelo gerador de IA (ai-campaign.js) usam
+// steps com aiPersonalized=true. A mensagem é gerada por lead (org + campanha +
+// prospect); QUALQUER falha cai no renderTemplate do step — a mensagem nunca
+// deixa de sair por culpa do LLM. Org não-premium usa template direto (sem
+// gasto de LLM após um downgrade no meio de uma campanha).
+
+const STEP_MESSAGE_MAX_LEN = 600;
+
+function buildStepMessagePrompt({ prospect, orgCtx, campaign }) {
+  const campaignBlock = orgContext.renderCampaignBlock(campaign);
+  return [
+    `Você é um vendedor da ${orgContext.sellerIdentity(orgCtx)}. Escreva UMA mensagem`,
+    'inicial de WhatsApp B2B em português brasileiro para o prospecto abaixo.',
+    '',
+    '== CONTEXTO DA NOSSA EMPRESA ==',
+    orgCtx.renderForPrompt(),
+    '',
+    ...(campaignBlock ? [campaignBlock, ''] : []),
+    '== PROSPECTO ==',
+    `- Empresa: ${prospect.companyName}${prospect.tradeName ? ` (${prospect.tradeName})` : ''}`,
+    `- Segmento: ${prospect.industry || 'N/A'}`,
+    `- Localização: ${prospect.city ? [prospect.city, prospect.state].filter(Boolean).join('/') : 'N/A'}`,
+    '',
+    'REGRAS:',
+    '- Use apenas fatos presentes nos dados acima. NÃO invente informações, preços, prazos ou promessas.',
+    '- NÃO cite plataformas/empresas que não estejam no contexto e NÃO inclua links.',
+    '- Mensagem CURTA (máx. 3 frases), humana e direta, sem parecer template.',
+    '- Termine com uma pergunta leve que convide à resposta (CTA do contexto, se houver).',
+    '- Responda APENAS com JSON válido: { "message": "texto da mensagem" }',
+  ].join('\n');
+}
+
+/** Guard determinístico (mesma política do reengagement-agent). */
+function stepMessageGuard(text) {
+  const content = String(text || '').trim();
+  if (!content) return { pass: false, reason: 'empty' };
+  if (content.length > STEP_MESSAGE_MAX_LEN) return { pass: false, reason: 'too_long' };
+  if (BLOCKLIST.test(content)) return { pass: false, reason: 'blocked_claim' };
+  return { pass: true, content };
+}
+
+/**
+ * Mensagem única para (contato, step). NUNCA lança e NUNCA retorna vazio:
+ * fallback = renderTemplate(step.messageTemplate). Uma resposta vazia/curta
+ * demais do modelo (JSON parcial) tem direito a 1 retry antes do fallback.
+ */
+async function generateStepMessage(prisma, { prospect, campaign, step }) {
+  const fallback = () => renderTemplate(step.messageTemplate, prospect);
+  try {
+    const { isPremiumOrg } = require('./ai-campaign');
+    if (!(await isPremiumOrg(prisma, campaign.orgId))) return fallback();
+
+    const orgCtx = await orgContext.loadOrgContext(prisma, campaign.orgId);
+    const prompt = buildStepMessagePrompt({ prospect, orgCtx, campaign });
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { content } = await llm.callLlm({
+        system: 'Você é um vendedor B2B brasileiro. Responda APENAS com JSON válido.',
+        user: prompt,
+        temperature: 0.7,
+        maxTokens: 300,
+        model: llm.premiumModel(),
+        tag: 'whatsapp:step-ai',
+      });
+      const parsed = llm.parseJsonLoose(content);
+      const guard = stepMessageGuard(parsed && parsed.message);
+      if (guard.pass) return guard.content;
+      if (guard.reason === 'empty' && attempt === 1) continue; // 1 retry p/ resposta vazia
+      console.warn(`[whatsapp] step AI bloqueado (${guard.reason}), usando template fallback`);
+      return fallback();
+    }
+    return fallback();
+  } catch (err) {
+    console.error('[whatsapp] geração AI do step falhou, usando template fallback:', err.message);
+    return fallback();
   }
 }
 
@@ -157,7 +238,12 @@ async function processSequence(job) {
     return { rate_limited: true, retryIn: limit.retryIn };
   }
 
-  const content = renderTemplate(step.messageTemplate, prospect);
+  // Campanha IA (step.aiPersonalized): mensagem única por lead, com o
+  // renderTemplate do step como fallback garantido. generateStepMessage nunca
+  // retorna vazio.
+  const content = step.aiPersonalized
+    ? await generateStepMessage(prisma, { prospect, campaign, step })
+    : renderTemplate(step.messageTemplate, prospect);
   if (!content) {
     await prisma.whatsAppCampaignContact.update({
       where: { id: contactId },
@@ -355,6 +441,15 @@ async function startCampaign(prisma, { campaignId, prospectIds, orgId }) {
   let queued = 0;
   let skippedAlreadyEnrolled = 0;
 
+  // RUNNING ANTES do enfileiramento: o primeiro job sai com delay 0 e o
+  // processador confere o status da campanha — se o update vinha depois do
+  // loop, o job 0 lia DRAFT e era descartado (lead #1 ficava QUEUED para
+  // sempre, sem mensagem e sem erro).
+  await prisma.whatsAppCampaign.update({
+    where: { id: campaignId },
+    data: { status: CAMPAIGN_STATUS.RUNNING, startedAt: new Date(), pausedAt: null, completedAt: null },
+  });
+
   for (let i = 0; i < prospectIds.length; i++) {
     const prospectId = prospectIds[i];
     const prospect = ownedMap.get(prospectId);
@@ -424,11 +519,6 @@ async function startCampaign(prisma, { campaignId, prospectIds, orgId }) {
     queued++;
   }
 
-  await prisma.whatsAppCampaign.update({
-    where: { id: campaignId },
-    data: { status: CAMPAIGN_STATUS.RUNNING, startedAt: new Date(), pausedAt: null, completedAt: null },
-  });
-
   await whatsappNats.publishEvent('whatsapp.campaigns.started', { campaignId, orgId, queued });
 
   if (skippedAlreadyEnrolled > 0) {
@@ -492,4 +582,5 @@ module.exports = {
   resumeCampaign,
   cancelCampaign,
   registerAllWorkers,
+  generateStepMessage,
 };

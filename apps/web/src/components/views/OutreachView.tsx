@@ -13,12 +13,15 @@ import {
   Loader2,
   Zap,
   Eye,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Prospect, EmailAccount, WhatsAppAccount, OutreachCampaign, SuppressionEntry } from '@/types';
+import { Prospect, EmailAccount, WhatsAppAccount, OutreachCampaign, SuppressionEntry, AiCampaignResult } from '@/types';
+import { usePlan } from '@/hooks/usePlan';
 import {
   fetchGmailAuthUrl,
   fetchGmailAccounts,
@@ -32,6 +35,7 @@ import {
   fetchSuppressionList,
   addToSuppressionList,
   removeFromSuppressionList,
+  createAiCampaign,
 } from '@/services/api';
 
 interface OutreachViewProps {
@@ -77,6 +81,12 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   const [suppressEmail, setSuppressEmail] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Campanha com IA (feature Premium)
+  const { plan } = usePlan();
+  const isPremium = plan?.plan === 'premium';
+  const [aiCreating, setAiCreating] = useState(false);
+  const [aiResult, setAiResult] = useState<AiCampaignResult | null>(null);
 
   // O alerta renderiza no topo da página; sem este scroll o usuário que
   // acabou de clicar num botão do fim do formulário não vê o feedback.
@@ -240,6 +250,39 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
     }
   };
 
+  /**
+   * Campanha com IA (Premium): gera estratégia, salva campanhas e inicia os
+   * disparos para todos os leads "Prontos para contato". Trial → upgrade.
+   */
+  const handleGenerateAiCampaign = async () => {
+    setError(null);
+    setNotice(null);
+    if (!isPremium) {
+      window.location.href = '/settings?plan=upgrade';
+      return;
+    }
+    setAiCreating(true);
+    try {
+      const result = await createAiCampaign();
+      setAiResult(result);
+      const total = result.enrolled.email + result.enrolled.whatsapp;
+      setNotice(
+        `Campanha "${result.strategy.name}" criada e lançada: ${total} envio(s) na fila ` +
+          `(${result.channels.join(' + ')}) para ${result.leadCount} lead(s) pronto(s).`
+      );
+      await loadAll();
+    } catch (err) {
+      const code = (err as Error & { code?: string }).code;
+      if (code === 'PREMIUM_REQUIRED') {
+        window.location.href = '/settings?plan=upgrade';
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Erro ao gerar campanha com IA');
+    } finally {
+      setAiCreating(false);
+    }
+  };
+
   const handleStartCampaign = async (campaignId: string) => {
     setError(null);
     if (selectedIds.size === 0) {
@@ -352,6 +395,97 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
           {error || notice}
         </div>
       )}
+
+      {/* Campanha com IA (feature Premium) */}
+      <Card className="glass-card border-violet-500/20">
+        <CardHeader>
+          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-violet-500/10 p-2 text-violet-500">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base font-bold">
+                  Campanha com IA
+                  {!isPremium && (
+                    <Badge variant="secondary" className="gap-1">
+                      <Lock className="h-3 w-3" /> Premium
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  {isPremium
+                    ? 'A IA cria a campanha com base no seu perfil comercial, escreve uma mensagem única para cada lead e inicia os disparos para todos os leads "Prontos para contato".'
+                    : 'Recurso do plano Premium: a IA cria a campanha e dispara mensagens personalizadas para todos os seus leads prontos, automaticamente.'}
+                </CardDescription>
+              </div>
+            </div>
+            <Button
+              variant="gradient"
+              size="sm"
+              onClick={handleGenerateAiCampaign}
+              disabled={aiCreating || loading}
+              className="gap-2 shrink-0"
+            >
+              {aiCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {aiCreating ? 'IA criando campanha…' : 'Gerar campanha com IA'}
+            </Button>
+          </div>
+        </CardHeader>
+        {(aiCreating || aiResult) && (
+          <CardContent className="space-y-3">
+            {aiCreating && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Lendo seu perfil comercial, escrevendo a estratégia e enfileirando os disparos…
+              </div>
+            )}
+            {aiResult && (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm dark:border-violet-500/20 dark:bg-violet-500/10">
+                  <p className="font-bold text-violet-700 dark:text-violet-300">
+                    ✨ {aiResult.strategy.name}
+                  </p>
+                  {aiResult.strategy.objective && (
+                    <p className="mt-1 text-foreground/80">Objetivo: {aiResult.strategy.objective}</p>
+                  )}
+                  {aiResult.strategy.offer && (
+                    <p className="text-foreground/80">Oferta: {aiResult.strategy.offer}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  {aiResult.emailCampaignId && (
+                    <Badge variant="qualified" className="gap-1">
+                      <Mail className="h-3 w-3" /> Email: {aiResult.enrolled.email} na fila
+                    </Badge>
+                  )}
+                  {aiResult.whatsappCampaignId && (
+                    <Badge variant="qualified" className="gap-1">
+                      <MessageCircle className="h-3 w-3" /> WhatsApp: {aiResult.enrolled.whatsapp} na fila
+                    </Badge>
+                  )}
+                  <span className="text-muted-foreground">
+                    Mensagem única por lead. Os envios respeitam os limites diários por conta — listas
+                    grandes são distribuídas automaticamente pelos próximos dias.
+                  </span>
+                </div>
+                {!aiResult.contextConfigured && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+                    Seu Perfil Comercial está incompleto: a IA foi genérica para não inventar dados.
+                    Preencha em <a className="font-bold underline" href="/settings">Configurações → Perfil Comercial</a> para
+                    campanhas muito mais assertivas.
+                  </div>
+                )}
+                {aiResult.launchErrors.length > 0 && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+                    Alguns canais falharam ao lançar: {aiResult.launchErrors.join(' · ')}
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
 
       {/* Connected Gmail accounts */}
       <Card className="glass-card">

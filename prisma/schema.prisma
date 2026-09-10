@@ -229,6 +229,7 @@ model OutreachCampaign {
   // trigger=on_enrichment + autoActive: assim que o enriquecimento do lead
   // conclui, dispara os canais selecionados com os templates configurados.
   trigger                String   @default("manual")  // manual | on_enrichment
+  source                 String   @default("manual")  // manual | ai (criada pelo gerador de campanha IA)
   channels               Json     @default("[]")      // ["email", "whatsapp"]
   autoActive             Boolean  @default(false)     // automação ligada?
   emailAccountId         String?                      // conta de envio do disparo automático
@@ -392,6 +393,7 @@ model WhatsAppCampaign {
   whatsappAccountId String?
   whatsappAccount   WhatsAppAccount? @relation(fields: [whatsappAccountId], references: [id], onDelete: SetNull)
   status            String   @default("DRAFT")     // DRAFT, SCHEDULED, RUNNING, PAUSED, COMPLETED, CANCELLED
+  source            String   @default("manual")    // manual | ai (criada pelo gerador de campanha IA)
   startedAt         DateTime?
   pausedAt          DateTime?
   completedAt       DateTime?
@@ -411,7 +413,8 @@ model WhatsAppSequenceStep {
   campaignId      String
   campaign        WhatsAppCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   orderIndex      Int      @default(0)
-  messageTemplate String
+  messageTemplate String                           // fallback garantido quando aiPersonalized (render de template)
+  aiPersonalized  Boolean  @default(false)         // gera mensagem única por lead com IA (falha → messageTemplate)
   delayMinutes    Int      @default(0)             // delay em minutos antes deste step
   conditions      Json     @default("[]")          // condições opcionais (ex.: só enviar se lead abriu)
   createdAt       DateTime @default(now())

@@ -18,6 +18,18 @@ export interface PlanInfo {
   billing?: PlanBillingInfo;
 }
 
+/** Resultado do gerador de campanha com IA (feature Premium). */
+export interface AiCampaignResult {
+  emailCampaignId: string | null;
+  whatsappCampaignId: string | null;
+  channels: Array<'email' | 'whatsapp'>;
+  leadCount: number;
+  enrolled: { email: number; whatsapp: number };
+  contextConfigured: boolean;
+  strategy: { name: string; objective: string | null; offer: string | null; fallbackUsed?: boolean };
+  launchErrors: string[];
+}
+
 export interface EnrichmentSummary {
   domain?: string | null;
   website_active?: boolean | null;

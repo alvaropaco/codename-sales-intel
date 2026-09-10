@@ -76,6 +76,7 @@ function buildOutreachPrompt({ lead, orgCtx, campaign, seq = 1, history = [] }) 
     '- Use apenas fatos presentes nos dados acima (empresa, campanha, histórico). Não invente informações, preços, prazos ou promessas.',
     '- Não cite nomes de plataformas/empresas que não estejam no contexto e não inclua links que não estejam nele.',
     '- Tom humano e direto, sem parecer template.',
+    '- NÃO use placeholders como [Seu Nome] ou [Cargo] — assine como "Equipe ' + (orgCtx && orgCtx.nome ? orgCtx.nome : 'da empresa') + '".',
     '',
     'Retorne SOMENTE JSON válido:',
     '{',
@@ -144,7 +145,20 @@ async function generateOutreachMessage(prisma, { lead, seq = 1, campaign = null,
     const parsed = JSON.parse(content);
 
     const subject = parsed.subject || (seq > 1 ? `Retomando o contato: ${lead.companyName}` : `Uma oportunidade para ${lead.companyName}`);
-    const body = parsed.body || '';
+    // Scrub determinístico: alguns modelos escrevem "[Seu Nome]" no corpo.
+    // Placeholders de nome viram a assinatura da org (mais confiável que regra
+    // de prompt). Qualquer outro placeholder de colchete é removido.
+    const orgNome = orgContext.sellerIdentity(ctx);
+    const body = String(parsed.body || '')
+      .replace(/\[(?:seu nome|nome|nome aqui|seu nome aqui)\]/gi, `Equipe ${orgNome}`)
+      .replace(/\s*\[[^\]]{1,30}\]/g, '')
+      .trim();
+    // Corpo vazio (JSON parcial/estranho do modelo) → email em branco nunca
+    // pode ser agendado; cai no fallback de template.
+    if (!body) {
+      console.warn('[outreach] AI retornou body vazio, usando template fallback');
+      return _templateFallback(lead, ctx, seq, history);
+    }
     return {
       subject,
       body,
