@@ -117,6 +117,24 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
     }
 
     const enrichment = mapBrasilApiPayload(lookup.data);
+
+    // Scoring real do lead (0–100). Só quando a esteira NATS ainda não
+    // pontuou este prospect — o `commercial_potential` do pipeline externo
+    // tem precedência e nunca é sobrescrito pelo fallback.
+    let opportunityScore;
+    if (prospect.enrichmentSource !== 'nats.enrichment') {
+      const { computeOpportunityScore } = require('./opportunity-score');
+      const profile = await prisma.commercialSettings
+        .findUnique({ where: { orgId: prospect.orgId } })
+        .catch(() => null);
+      const mergedProspect = { ...prospect, industry: enrichment.industry || prospect.industry };
+      opportunityScore = computeOpportunityScore({
+        cnpjData: lookup.data,
+        prospect: mergedProspect,
+        profile,
+      }).score;
+    }
+
     const data = compactObject({
       companyName: enrichment.companyName || prospect.companyName,
       tradeName: enrichment.tradeName,
@@ -127,6 +145,7 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
       cnpjRawData: enrichment.cnpjRawData,
       cnpjOpenedAt: enrichment.cnpjOpenedAt,
       cnpjLegalNature: enrichment.cnpjLegalNature,
+      ...(opportunityScore != null ? { opportunityScore } : {}),
       enrichmentStatus: enrichment.enrichmentStatus,
       enrichmentSource: enrichment.enrichmentSource,
       enrichedAt: enrichment.enrichedAt,
