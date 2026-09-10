@@ -1,6 +1,39 @@
 # Local secrets / environment overrides (never commit)
 .env.local
+.env
 
 # Node
 node_modules/
 *.log
+package-lock.json
+
+# Build output
+dist/
+apps/web/dist/
+
+# Python (services/)
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dados pesados do ETL (downloads/extrações da Receita, snapshots, diffs)
+data/
+
+# Tooling local / machine-specific
+.DS_Store
+.zcode/
+.serena/
+.token-savior*
+.cgcignore
+.wtest
+.mcp.json
+
+# Clones vendidos apenas para referência local
+deepseek-harness-container/
+deepseek-harness-docker/
