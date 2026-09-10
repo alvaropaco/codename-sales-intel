@@ -83,10 +83,27 @@ export interface PipelineAnalytics {
   closure_rate: number;
 }
 
-export interface ForecastAnalytics {
-  this_month: number;
-  next_month: number;
-  q3_projection: number;
+/** Métricas operacionais reais do funil de contato (GET /api/analytics/operational). */
+export interface OperationalAnalytics {
+  leads_total: number;
+  /** leads que nunca receberam contato real (contactedChannels vazio) */
+  leads_uncontacted: number;
+  /** leads criados no mês corrente */
+  leads_new_this_month: number;
+  contacted_total: number;
+  contacted_email: number;
+  contacted_whatsapp: number;
+  /** união (por prospect) de quem respondeu por email ou WhatsApp */
+  leads_replied: number;
+  replied_email: number;
+  replied_whatsapp: number;
+  /** leads_replied / contacted_total */
+  response_rate: number;
+  whatsapp_conversations_active: number;
+  whatsapp_conversations_total: number;
+  /** volume histórico de disparos enviados por canal */
+  dispatches_email_sent: number;
+  dispatches_whatsapp_sent: number;
 }
 
 export interface StatusBreakdownItem {

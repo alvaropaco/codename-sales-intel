@@ -1,38 +1,28 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   BarChart3,
   BriefcaseBusiness,
-  Building2,
   CalendarDays,
-  CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
   Clock3,
-  Download,
   Factory,
   Flag,
-  Landmark,
   MailCheck,
+  MessageCircle,
+  MessageCircleReply,
   MoreHorizontal,
   PhoneCall,
   Plus,
+  Send,
   ShieldCheck,
   Sparkles,
   Target,
-  TrendingUp,
-  Trophy,
   Users,
-  Zap,
 } from 'lucide-react';
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -42,25 +32,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Prospect, PipelineAnalytics, ForecastAnalytics, QualificationResult } from '@/types';
-import { cn, formatCNPJ, formatCurrency } from '@/lib/utils';
+import { Prospect, PipelineAnalytics, OperationalAnalytics, QualificationResult } from '@/types';
+import { cn, formatCNPJ } from '@/lib/utils';
 import { qualifyCompany } from '@/services/api';
 
 interface ExecutiveDashboardViewProps {
   prospects: Prospect[];
   analytics: PipelineAnalytics;
-  forecast: ForecastAnalytics;
+  operational: OperationalAnalytics;
   onSelectProspect: (prospect: Prospect) => void;
   onNavigateToTab: (tab: any) => void;
 }
 
 const statusConfig = {
-  qualified: { label: 'Pronto para contato', color: '#10b981', badge: 'qualified' as const, weight: 0.72 },
-  prospect: { label: 'Lead', color: '#6366f1', badge: 'prospect' as const, weight: 0.38 },
-  lead: { label: 'Nova oportunidade', color: '#3b82f6', badge: 'lead' as const, weight: 0.18 },
-  contacted: { label: 'Contato iniciado', color: '#f59e0b', badge: 'prospect' as const, weight: 0.48 },
-  proposal: { label: 'Proposta enviada', color: '#8b5cf6', badge: 'closed' as const, weight: 0.82 },
-  closed: { label: 'Cliente ganho', color: '#14b8a6', badge: 'closed' as const, weight: 1 },
+  qualified: { label: 'Pronto para contato', color: '#10b981', badge: 'qualified' as const },
+  prospect: { label: 'Lead', color: '#6366f1', badge: 'prospect' as const },
+  lead: { label: 'Nova oportunidade', color: '#3b82f6', badge: 'lead' as const },
+  contacted: { label: 'Contato iniciado', color: '#f59e0b', badge: 'prospect' as const },
+  proposal: { label: 'Proposta enviada', color: '#8b5cf6', badge: 'closed' as const },
+  closed: { label: 'Cliente ganho', color: '#14b8a6', badge: 'closed' as const },
 };
 
 const getInitials = (name: string) =>
@@ -73,6 +63,8 @@ const getInitials = (name: string) =>
     .toUpperCase();
 
 const safeNumber = (value?: number | null) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+const pct = (part: number, total: number) => (total > 0 ? Math.round((part / total) * 100) : 0);
 
 function ProgressBar({ value, className }: { value: number; className?: string }) {
   return (
@@ -89,14 +81,14 @@ function MetricCard({
   title,
   value,
   subtitle,
-  trend,
+  hint,
   icon: Icon,
   tone,
 }: {
   title: string;
   value: string | number;
   subtitle: string;
-  trend: string;
+  hint?: string;
   icon: React.ElementType;
   tone: 'indigo' | 'emerald' | 'sky' | 'amber';
 }) {
@@ -121,10 +113,7 @@ function MetricCard({
         </div>
         <div className="mt-4 flex items-center justify-between gap-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{subtitle}</p>
-          <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[11px] font-bold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
-            <ArrowUpRight className="mr-1 h-3 w-3" />
-            {trend}
-          </Badge>
+          {hint && <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">{hint}</span>}
         </div>
       </CardContent>
     </Card>
@@ -134,7 +123,7 @@ function MetricCard({
 export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
   prospects,
   analytics,
-  forecast,
+  operational,
   onSelectProspect,
   onNavigateToTab,
 }) => {
@@ -144,59 +133,59 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
   const [isQualifying, setIsQualifying] = useState(false);
 
   const derived = useMemo(() => {
-    const forecastPool = safeNumber(forecast.q3_projection) || safeNumber(forecast.next_month) || safeNumber(forecast.this_month);
-    const scoreWeight = prospects.reduce((sum, p) => sum + Math.max(1, safeNumber(p.opportunityScore)), 0) || 1;
-    const dealValueById = prospects.reduce<Record<string, number>>((acc, p) => {
-      const explicitRevenue = safeNumber(p.revenueEstimate);
-      acc[p.id] = explicitRevenue > 0
-        ? explicitRevenue
-        : forecastPool * (Math.max(1, safeNumber(p.opportunityScore)) / scoreWeight);
-      return acc;
-    }, {});
+    const op = operational;
+    const responseRate = Math.round((op.response_rate || 0) * 100);
+    const contactedPctOfBase = pct(op.contacted_total, op.leads_total);
+    const repliedPctOfContacted = pct(op.leads_replied, op.contacted_total);
 
-    const totalRevenue = prospects.reduce((sum, p) => sum + (dealValueById[p.id] || 0), 0);
-    const avgTicket = prospects.length ? totalRevenue / prospects.length : 0;
-    const weightedPipeline = prospects.reduce((sum, p) => {
-      const config = statusConfig[p.status as keyof typeof statusConfig] || statusConfig.prospect;
-      return sum + (dealValueById[p.id] || 0) * config.weight;
-    }, 0);
+    const funnel = [
+      {
+        label: 'Base de leads',
+        value: op.leads_total,
+        pct: 100,
+        note: 'Todos os leads da sua carteira',
+      },
+      {
+        label: 'Contactados',
+        value: op.contacted_total,
+        pct: contactedPctOfBase,
+        note: `${op.contacted_whatsapp} via WhatsApp · ${op.contacted_email} via email`,
+      },
+      {
+        label: 'Responderam',
+        value: op.leads_replied,
+        pct: repliedPctOfContacted,
+        note: `${op.replied_whatsapp} no WhatsApp · ${op.replied_email} no email`,
+      },
+    ];
 
-    const industries = prospects.reduce<Record<string, { count: number; revenue: number }>>((acc, p) => {
+    const industries = prospects.reduce<Record<string, number>>((acc, p) => {
       const key = p.industry || 'Não classificado';
-      acc[key] = acc[key] || { count: 0, revenue: 0 };
-      acc[key].count += 1;
-      acc[key].revenue += dealValueById[p.id] || 0;
+      acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
 
     const industryChart = Object.entries(industries)
-      .map(([name, value]) => ({ name, count: value.count, revenue: value.revenue }))
+      .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 4);
 
     const pipeline = Object.entries(statusConfig).map(([status, config]) => {
       const rows = prospects.filter((p) => p.status === status);
-      const revenue = rows.reduce((sum, p) => sum + (dealValueById[p.id] || 0), 0);
       return {
         status,
         label: config.label,
         count: rows.length,
-        revenue,
         color: config.color,
-        pct: prospects.length ? Math.round((rows.length / prospects.length) * 100) : 0,
+        pct: pct(rows.length, prospects.length),
       };
     }).filter((stage) => stage.count > 0 || ['qualified', 'prospect', 'lead'].includes(stage.status));
 
-    const qRate = Math.round((analytics.qualification_rate || 0) * 100);
     const targetProgress = Math.min(100, Math.round((analytics.qualified / Math.max(analytics.total_prospects || 1, 1)) * 100));
-    const highIntent = prospects.filter((p) => safeNumber(p.opportunityScore) >= 75).length;
 
-    const revenueChart = [
-      { month: 'Hoje', revenue: totalRevenue, deals: prospects.length },
-      { month: 'Mês atual', revenue: forecast.this_month, deals: Math.max(analytics.qualified, 1) },
-      { month: 'Próx. mês', revenue: forecast.next_month, deals: Math.max(analytics.qualified + analytics.prospects, 1) },
-      { month: 'Q3', revenue: forecast.q3_projection, deals: Math.max(prospects.length + analytics.leads, 1) },
-    ];
+    const currentMonthLabel = new Date()
+      .toLocaleDateString('pt-BR', { month: 'long' })
+      .replace(/^\w/, (c) => c.toUpperCase());
 
     const priorityTasks = prospects
       .slice()
@@ -210,8 +199,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         prospect: p,
       }));
 
-    return { totalRevenue, avgTicket, weightedPipeline, industryChart, pipeline, qRate, targetProgress, highIntent, revenueChart, priorityTasks, dealValueById };
-  }, [prospects, analytics, forecast]);
+    return { responseRate, contactedPctOfBase, repliedPctOfContacted, funnel, industryChart, pipeline, targetProgress, currentMonthLabel, priorityTasks };
+  }, [prospects, analytics, operational]);
 
   const handleQuickQualify = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -254,7 +243,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                   Descubra leads com potencial de compra e priorize as melhores oportunidades.
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-                  Acompanhe sinais comerciais, potencial de receita e próximos passos para transformar leads em oportunidades de venda.
+                  Acompanhe o funil real: leads disponíveis, contatos feitos por WhatsApp e email, respostas recebidas e conversas ativas.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -270,8 +259,8 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
             <div className="min-w-[280px] rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/[0.03]">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Meta comercial</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{derived.targetProgress}% completo</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Qualificação da base</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{derived.targetProgress}% prontos</p>
                 </div>
                 <Target className="h-10 w-10 text-indigo-500" />
               </div>
@@ -287,32 +276,37 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Pipeline ponderado</p>
-                <p className="mt-3 text-3xl font-black">{formatCurrency(derived.weightedPipeline)}</p>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Taxa de resposta</p>
+                <p className="mt-3 text-3xl font-black">{derived.responseRate}%</p>
               </div>
-              <CircleDollarSign className="h-11 w-11 text-emerald-300" />
+              <MessageCircleReply className="h-11 w-11 text-emerald-300" />
             </div>
+            <p className="mt-2 text-[11px] text-slate-400">
+              {operational.leads_replied} de {operational.contacted_total} leads contactados responderam
+            </p>
             <div className="mt-6 grid grid-cols-2 gap-3">
               <div className="rounded-2xl bg-white/10 p-3">
-                <p className="text-[11px] text-slate-400">Ticket médio</p>
-                <p className="mt-1 text-sm font-bold">{formatCurrency(derived.avgTicket)}</p>
+                <p className="text-[11px] text-slate-400">Respondidos</p>
+                <p className="mt-1 text-sm font-bold">{operational.leads_replied} leads</p>
               </div>
               <div className="rounded-2xl bg-white/10 p-3">
-                <p className="text-[11px] text-slate-400">Alta intenção</p>
-                <p className="mt-1 text-sm font-bold">{derived.highIntent} contas</p>
+                <p className="text-[11px] text-slate-400">Conversas ativas</p>
+                <p className="mt-1 text-sm font-bold">{operational.whatsapp_conversations_active} agora</p>
               </div>
             </div>
             <div className="mt-6 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
               <div className="flex items-center gap-3">
                 <div className="rounded-full bg-emerald-400/15 p-2 text-emerald-300">
-                  <TrendingUp className="h-4 w-4" />
+                  <Send className="h-4 w-4" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold">Projeção do trimestre</p>
-                  <p className="text-[11px] text-slate-400">Estimativa de receita potencial</p>
+                  <p className="text-xs font-bold">Disparos enviados</p>
+                  <p className="text-[11px] text-slate-400">Volume total por canal</p>
                 </div>
               </div>
-              <p className="text-sm font-black">{formatCurrency(forecast.q3_projection)}</p>
+              <p className="text-sm font-black">
+                {operational.dispatches_email_sent} email · {operational.dispatches_whatsapp_sent} zap
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -342,51 +336,49 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
         </section>
       )}
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="Leads alvo" value={analytics.total_prospects || prospects.length} subtitle="Leads sugeridos" trend="Atual" icon={Building2} tone="indigo" />
-        <MetricCard title="Oportunidades qualificadas" value={analytics.qualified} subtitle="Prontas para venda" trend={`${derived.qRate}%`} icon={Trophy} tone="emerald" />
-        <MetricCard title="Receita potencial" value={formatCurrency(derived.totalRevenue)} subtitle="Soma das oportunidades" trend="Previsto" icon={Landmark} tone="sky" />
-        <MetricCard title="Em prospecção" value={analytics.prospects + analytics.leads} subtitle="Aguardando maturação" trend="Ativo" icon={Users} tone="amber" />
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <MetricCard title="Leads disponíveis" value={operational.leads_uncontacted} subtitle="Ainda sem nenhum contato" hint={`${pct(operational.leads_uncontacted, operational.leads_total)}% da base`} icon={Users} tone="indigo" />
+        <MetricCard title="Novos leads do mês" value={operational.leads_new_this_month} subtitle={`Entraram na base em ${derived.currentMonthLabel}`} hint="Mês atual" icon={CalendarDays} tone="sky" />
+        <MetricCard title="Contactados por WhatsApp" value={operational.contacted_whatsapp} subtitle="Receberam o primeiro toque no WhatsApp" hint={`${pct(operational.contacted_whatsapp, operational.leads_total)}% da base`} icon={PhoneCall} tone="emerald" />
+        <MetricCard title="Contactados por email" value={operational.contacted_email} subtitle="Receberam o primeiro toque por email" hint={`${pct(operational.contacted_email, operational.leads_total)}% da base`} icon={MailCheck} tone="amber" />
+        <MetricCard title="Leads que responderam" value={operational.leads_replied} subtitle={`${operational.replied_whatsapp} no WhatsApp · ${operational.replied_email} no email`} hint={`${derived.responseRate}% de resposta`} icon={MessageCircleReply} tone="indigo" />
+        <MetricCard title="Conversas ativas no WhatsApp" value={operational.whatsapp_conversations_active} subtitle="Abertas agora (bot ou humano)" hint={`de ${operational.whatsapp_conversations_total} no total`} icon={MessageCircle} tone="emerald" />
       </section>
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.3fr_0.7fr]">
         <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
-          <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 pb-4 dark:border-white/10">
-            <div>
-              <CardTitle className="text-base font-black">Previsão de receita</CardTitle>
-              <CardDescription>Potencial da carteira atual e projeções para os próximos períodos.</CardDescription>
-            </div>
-            <Button variant="outline" size="sm" className="gap-2 text-xs">
-              <Download className="h-3.5 w-3.5" /> Baixar
-            </Button>
+          <CardHeader className="border-b border-slate-100 pb-4 dark:border-white/10">
+            <CardTitle className="text-base font-black">Funil de contato</CardTitle>
+            <CardDescription>Do lead disponível ao primeiro contato e à resposta — números reais da sua operação.</CardDescription>
           </CardHeader>
-          <CardContent className="p-6">
-            <div className="h-[320px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={derived.revenueChart} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="enterpriseRevenue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.28} />
-                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(val) => `R$${Number(val) / 1000}k`} />
-                  <Tooltip
-                    contentStyle={{ borderRadius: 14, borderColor: '#e2e8f0', boxShadow: '0 20px 45px rgba(15,23,42,0.12)', fontSize: 12 }}
-                    formatter={(value: any) => [formatCurrency(Number(value)), 'Receita']}
-                  />
-                  <Area type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={3} fill="url(#enterpriseRevenue)" />
-                </AreaChart>
-              </ResponsiveContainer>
+          <CardContent className="space-y-5 p-6">
+            {derived.funnel.map((stage) => (
+              <div key={stage.label} className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-slate-900 dark:text-white">{stage.label}</span>
+                  <span className="text-xs font-medium text-slate-500">
+                    {stage.value} leads · {stage.pct}%
+                  </span>
+                </div>
+                <ProgressBar value={stage.pct} />
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">{stage.note}</p>
+              </div>
+            ))}
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+              <div className="rounded-xl bg-white p-2 text-emerald-600 shadow-sm dark:bg-white/10 dark:text-emerald-300">
+                <MessageCircle className="h-4 w-4" />
+              </div>
+              <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                <strong className="text-slate-900 dark:text-white">{operational.whatsapp_conversations_active} conversas de WhatsApp ativas</strong> entre{' '}
+                {operational.whatsapp_conversations_total} criadas — acompanhe no inbox.
+              </p>
             </div>
           </CardContent>
         </Card>
 
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="border-b border-slate-100 dark:border-white/10">
-            <CardTitle className="text-base font-black">Oportunidades por segmento</CardTitle>
+            <CardTitle className="text-base font-black">Leads por segmento</CardTitle>
             <CardDescription>Onde há mais leads com aderência ao seu perfil comercial.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5 p-6">
@@ -409,7 +401,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                     </div>
                     <div>
                       <p className="text-xs font-bold text-slate-950 dark:text-white">{item.name}</p>
-                      <p className="text-[11px] text-slate-500">{formatCurrency(item.revenue)}</p>
+                      <p className="text-[11px] text-slate-500">{item.count} leads</p>
                     </div>
                   </div>
                   <Badge variant="outline" className="bg-white dark:bg-white/5">{item.count}</Badge>
@@ -425,7 +417,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
               <CardTitle className="text-base font-black">Próximas ações</CardTitle>
-              <CardDescription>Recomendações priorizadas por potencial e valor comercial.</CardDescription>
+              <CardDescription>Recomendações priorizadas por potencial do lead.</CardDescription>
             </div>
             <Button onClick={() => onNavigateToTab('workflows')} size="sm" variant="outline" className="gap-2 text-xs">
               <Plus className="h-3.5 w-3.5" /> Nova ação
@@ -462,7 +454,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
           <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-white/10">
             <div>
               <CardTitle className="text-base font-black">Pipeline de vendas</CardTitle>
-              <CardDescription>Oportunidades atuais por estágio do funil comercial.</CardDescription>
+              <CardDescription>Leads por estágio do funil comercial.</CardDescription>
             </div>
             <Button onClick={() => onNavigateToTab('pipeline')} variant="ghost" size="sm" className="gap-1 text-xs text-indigo-600 dark:text-indigo-300">
               Pipeline <ChevronRight className="h-3.5 w-3.5" />
@@ -477,7 +469,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                     <span className="text-sm font-bold text-slate-900 dark:text-white">{stage.label}</span>
                   </div>
                   <span className="text-xs font-medium text-slate-500">
-                    {stage.count} oportunidades · {formatCurrency(stage.revenue)}
+                    {stage.count} leads · {stage.pct}%
                   </span>
                 </div>
                 <ProgressBar value={stage.pct} />
@@ -504,7 +496,6 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                     <th className="px-6 py-3.5 font-black">Lead</th>
                     <th className="px-6 py-3.5 font-black">Momento</th>
                     <th className="px-6 py-3.5 font-black">ID do lead</th>
-                    <th className="px-6 py-3.5 font-black">Valor</th>
                     <th className="px-6 py-3.5 font-black">Potencial</th>
                     <th className="px-6 py-3.5 text-right font-black">Ação</th>
                   </tr>
@@ -527,7 +518,6 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
                         </td>
                         <td className="px-6 py-4"><Badge variant={config.badge}>{config.label}</Badge></td>
                         <td className="px-6 py-4 font-mono font-medium text-slate-500">{formatCNPJ(p.cnpj)}</td>
-                        <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">{formatCurrency(derived.dealValueById[p.id] || safeNumber(p.revenueEstimate))}</td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
                             <span className="font-black text-indigo-600 dark:text-indigo-300">{p.opportunityScore}</span>
@@ -550,7 +540,7 @@ export const ExecutiveDashboardView: React.FC<ExecutiveDashboardViewProps> = ({
 
         <Card className="border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-950/70">
           <CardHeader className="border-b border-slate-100 dark:border-white/10">
-            <CardTitle className="flex items-center gap-2 text-base font-black"><Zap className="h-4 w-4 text-indigo-500" /> Análise rápida de potencial</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base font-black"><BarChart3 className="h-4 w-4 text-indigo-500" /> Análise rápida de potencial</CardTitle>
             <CardDescription>Informe um lead e veja se ele combina com seu perfil comercial.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 p-5">

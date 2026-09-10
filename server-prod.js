@@ -1454,6 +1454,97 @@ app.get('/api/analytics/pipeline', async (req, res) => {
   }
 });
 
+// GET /api/analytics/operational — métricas operacionais reais do funil de
+// contato (substitui as projeções de receita fictícias do dashboard):
+//   - leads sem nenhum contato real (contactedChannels vazio)
+//   - leads criados no mês corrente
+//   - leads contactados por canal (badge "Contatado" gravado no envio real)
+//   - leads que responderam (email: OutreachContact REPLIED/replyCount>0;
+//     WhatsApp: conversa com lastInboundMessageAt — união por prospectId)
+//   - conversas de WhatsApp abertas (ACTIVE + HUMAN_HANDOFF)
+app.get('/api/analytics/operational', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const prospects = await prisma.prospect.findMany({
+      where: { orgId },
+      select: { contactedChannels: true, createdAt: true }
+    });
+
+    const channelList = (raw) => {
+      if (Array.isArray(raw)) return raw;
+      try {
+        const parsed = JSON.parse(raw || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const contacted = prospects.filter((p) => channelList(p.contactedChannels).length > 0);
+    const contactedEmail = prospects.filter((p) => channelList(p.contactedChannels).includes('email'));
+    const contactedWhatsapp = prospects.filter((p) => channelList(p.contactedChannels).includes('whatsapp'));
+    const contactedTotal = contacted.length;
+
+    const [emailReplies, waInbound, waActive, waTotal, emailSent, waSent] = await Promise.all([
+      prisma.outreachContact.findMany({
+        where: {
+          campaign: { tenantId: orgId },
+          OR: [{ replyCount: { gt: 0 } }, { status: 'REPLIED' }]
+        },
+        select: { prospectId: true },
+        distinct: ['prospectId']
+      }),
+      prisma.whatsAppConversation.findMany({
+        where: { orgId, lastInboundMessageAt: { not: null } },
+        select: { prospectId: true }
+      }),
+      prisma.whatsAppConversation.count({
+        where: { orgId, status: { in: ['ACTIVE', 'HUMAN_HANDOFF'] } }
+      }),
+      prisma.whatsAppConversation.count({ where: { orgId } }),
+      prisma.outreachMessage.count({
+        where: { status: 'SENT', contact: { campaign: { tenantId: orgId } } }
+      }),
+      prisma.whatsAppMessage.count({
+        where: { orgId, direction: 'OUTBOUND', status: { in: ['SENT', 'DELIVERED', 'READ'] } }
+      })
+    ]);
+
+    const repliedByEmail = new Set(emailReplies.map((r) => r.prospectId).filter(Boolean));
+    const repliedByWhatsapp = new Set(waInbound.map((c) => c.prospectId).filter(Boolean));
+    const repliedAll = new Set([...repliedByEmail, ...repliedByWhatsapp]);
+
+    res.json({
+      success: true,
+      data: {
+        leads_total: prospects.length,
+        leads_uncontacted: prospects.length - contactedTotal,
+        leads_new_this_month: prospects.filter((p) => p.createdAt >= monthStart).length,
+        contacted_total: contactedTotal,
+        contacted_email: contactedEmail.length,
+        contacted_whatsapp: contactedWhatsapp.length,
+        leads_replied: repliedAll.size,
+        replied_email: repliedByEmail.size,
+        replied_whatsapp: repliedByWhatsapp.size,
+        response_rate: contactedTotal > 0 ? Number((repliedAll.size / contactedTotal).toFixed(4)) : 0,
+        whatsapp_conversations_active: waActive,
+        whatsapp_conversations_total: waTotal,
+        dispatches_email_sent: emailSent,
+        dispatches_whatsapp_sent: waSent
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
 // GET /api/analytics/forecast - Revenue forecast
 app.get('/api/analytics/forecast', async (req, res) => {
   try {

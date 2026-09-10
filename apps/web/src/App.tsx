@@ -13,8 +13,8 @@ import { SettingsView } from '@/components/views/SettingsView';
 import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
 import { ProspectModal } from '@/components/modals/ProspectModal';
 import { ProspectDetailDrawer } from '@/components/modals/ProspectDetailDrawer';
-import { ActiveTab, Prospect, PipelineAnalytics, ForecastAnalytics, CommercialProfile } from '@/types';
-import { fetchProspects, fetchPipelineAnalytics, fetchForecastAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
+import { ActiveTab, Prospect, PipelineAnalytics, OperationalAnalytics, CommercialProfile } from '@/types';
+import { fetchProspects, fetchPipelineAnalytics, fetchOperationalAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
 import { createSession, getSession, logoutSession, type SessionUser } from '@/services/auth';
 import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase';
 import { getAuthErrorMessage } from '@/services/authErrors';
@@ -59,10 +59,21 @@ export function App() {
     qualification_rate: 0,
     closure_rate: 0,
   });
-  const [forecast, setForecast] = useState<ForecastAnalytics>({
-    this_month: 0,
-    next_month: 0,
-    q3_projection: 0,
+  const [operational, setOperational] = useState<OperationalAnalytics>({
+    leads_total: 0,
+    leads_uncontacted: 0,
+    leads_new_this_month: 0,
+    contacted_total: 0,
+    contacted_email: 0,
+    contacted_whatsapp: 0,
+    leads_replied: 0,
+    replied_email: 0,
+    replied_whatsapp: 0,
+    response_rate: 0,
+    whatsapp_conversations_active: 0,
+    whatsapp_conversations_total: 0,
+    dispatches_email_sent: 0,
+    dispatches_whatsapp_sent: 0,
   });
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -79,7 +90,7 @@ export function App() {
   const VIEW_SEO: Record<ActiveTab, { title: string; description: string }> = {
     dashboard: {
       title: 'Dashboard',
-      description: 'Visão geral comercial: prospects, leads, qualificados, taxa de qualificação e projeção de fechamento.',
+      description: 'Visão geral comercial: leads disponíveis, contatos por WhatsApp e email, respostas e conversas ativas.',
     },
     prospects: {
       title: 'Prospecção e CRM',
@@ -132,15 +143,15 @@ export function App() {
 
   const loadData = async () => {
     try {
-      const [prospectsData, analyticsData, forecastData, profileData] = await Promise.all([
+      const [prospectsData, analyticsData, operationalData, profileData] = await Promise.all([
         fetchProspects(),
         fetchPipelineAnalytics(),
-        fetchForecastAnalytics(),
+        fetchOperationalAnalytics(),
         fetchCommercialProfile(),
       ]);
       setProspects(prospectsData);
       setAnalytics(analyticsData);
-      setForecast(forecastData);
+      setOperational(operationalData);
       setCommercialProfile(profileData);
     } catch (err) {
       console.error('Error loading data:', err);
@@ -289,7 +300,7 @@ export function App() {
         <ExecutiveDashboardView
           prospects={prospects}
           analytics={analytics}
-          forecast={forecast}
+          operational={operational}
           onSelectProspect={(p) => setSelectedProspect(p)}
           onNavigateToTab={(tab) => setActiveTab(tab)}
         />

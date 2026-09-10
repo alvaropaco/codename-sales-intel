@@ -1,8 +1,8 @@
-import { 
-  Prospect, 
-  PipelineAnalytics, 
-  ForecastAnalytics, 
-  StatusBreakdownItem, 
+import {
+  Prospect,
+  PipelineAnalytics,
+  OperationalAnalytics,
+  StatusBreakdownItem,
   QualificationResult, 
   CreditRiskResult,
   WorkflowItem,
@@ -177,17 +177,29 @@ export async function fetchPipelineAnalytics(): Promise<PipelineAnalytics> {
   }
 }
 
-export async function fetchForecastAnalytics(): Promise<ForecastAnalytics> {
+export async function fetchOperationalAnalytics(): Promise<OperationalAnalytics> {
   try {
-    const res = await fetch(`${API_BASE}/analytics/forecast`);
-    if (!res.ok) throw new Error('Falha ao buscar forecast');
+    const res = await fetch(`${API_BASE}/analytics/operational`);
+    if (!res.ok) throw new Error('Falha ao buscar métricas operacionais');
     const json = await res.json();
     return json.data;
   } catch (error) {
+    console.error('API fetchOperationalAnalytics error:', error);
     return {
-      this_month: 0,
-      next_month: 0,
-      q3_projection: 0,
+      leads_total: 0,
+      leads_uncontacted: 0,
+      leads_new_this_month: 0,
+      contacted_total: 0,
+      contacted_email: 0,
+      contacted_whatsapp: 0,
+      leads_replied: 0,
+      replied_email: 0,
+      replied_whatsapp: 0,
+      response_rate: 0,
+      whatsapp_conversations_active: 0,
+      whatsapp_conversations_total: 0,
+      dispatches_email_sent: 0,
+      dispatches_whatsapp_sent: 0,
     };
   }
 }
