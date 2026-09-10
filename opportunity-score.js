@@ -8,26 +8,53 @@
  * aplica o guard `enrichmentSource !== 'nats.enrichment'`.
  *
  * Composição (pesos somam 100):
- *   situação cadastral ativa    15
- *   capital social              20
- *   idade do CNPJ               15
- *   porte (MEI/ME/EPP/outros)   10
- *   canais de contato           20  (email 10 + telefone 10)
- *   aderência ao perfil         20  (CNAE 8 · segmento 6 · localização 4 · porte alvo 2)
- * Sem perfil comercial configurado, o bloco de aderência recebe 10 (neutro),
- * em vez de zerar todos os leads de orgs sem onboarding.
+ *   situação cadastral ativa    10
+ *   capital social              15  (>= R$ 50 mil já pontua; abaixo disso pouco)
+ *   idade do CNPJ               10
+ *   porte (MEI/ME/EPP/outros)    5
+ *   canais de contato           15  (email 8 + telefone 7 — sem telefone, perde)
+ *   presença na internet        15  (site 6 · domínio do e-mail 5 · social/tech 4;
+ *                                    domínio de contabilidade (@contabilizei.com.br
+ *                                    e afins) pontua 0; provedor grátis 1; próprio 5)
+ *   estrutura societária        15  (>1 sócio 5 · nome do sócio na empresa 5 ·
+ *                                    nome fantasia distinto dos sócios 5)
+ *   aderência ao perfil         15  (CNAE 6 · segmento 5 · localização 3 · porte alvo 1)
+ *
+ * Sinais desconhecidos (ex.: site/social só existem no summary do pipeline
+ * NATS) recebem valor neutro (metade do bloco), em vez de zerar leads que
+ * apenas não passaram pela esteira. Sem perfil comercial configurado, o bloco
+ * de aderência recebe 8 (neutro).
  */
 
 const WEIGHTS = {
-  active: 15,
-  capital: 20,
-  age: 15,
-  size: 10,
-  contacts: 20,
-  fit: 20,
+  active: 10,
+  capital: 15,
+  age: 10,
+  size: 5,
+  contacts: 15,
+  presence: 15,
+  structure: 15,
+  fit: 15,
 };
 
-const NEUTRAL_FIT = 10; // sem perfil configurado
+const NEUTRAL_FIT = 8; // sem perfil configurado
+
+// Provedores gratuitos: e-mail existe, mas não indica marca digital própria.
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.com.br', 'outlook.com',
+  'outlook.com.br', 'live.com', 'live.com.br', 'msn.com', 'yahoo.com',
+  'yahoo.com.br', 'ymail.com', 'icloud.com', 'me.com', 'bol.com.br',
+  'uol.com.br', 'terra.com.br', 'ig.com.br', 'r7.com',
+]);
+
+// Contabilidade online que registra CNPJ em massa: o e-mail do lead fica no
+// domínio da contadora (ex.: @contabilizei.com.br), não da empresa.
+const ACCOUNTING_EMAIL_DOMAINS = new Set([
+  'contabilizei.com.br',
+  'contabilix.com.br',
+  'agilizacontabilidade.com',
+  'supercontabilidade.com',
+]);
 
 function normalizeText(value) {
   return String(value || '')
@@ -91,6 +118,107 @@ function ageYears(openedAt, data) {
   return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
 }
 
+/**
+ * Classifica o domínio do e-mail do lead:
+ *   'own'        domínio próprio (não é provedor grátis nem contabilidade)
+ *   'free'       provedor gratuito (gmail, hotmail, uol…)
+ *   'accounting' domínio de contabilidade online (contabilizei etc.)
+ *   null         sem e-mail utilizável
+ * Regex pega variações ("contabilidadeemfoco.com", "@meucontador.com.br").
+ */
+function classifyEmailDomain(email) {
+  const raw = String(email || '').trim().toLowerCase();
+  const domain = raw.includes('@') ? raw.split('@').pop() : raw;
+  if (!domain || !domain.includes('.') || /\s/.test(domain)) return null;
+  const bare = domain.replace(/^www\./, '');
+  if (ACCOUNTING_EMAIL_DOMAINS.has(bare)) return 'accounting';
+  if (/contab|contador/.test(bare)) return 'accounting';
+  if (FREE_EMAIL_DOMAINS.has(bare)) return 'free';
+  return 'own';
+}
+
+const PERSON_NAME_STOPWORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+const COMPANY_SUFFIX_TOKENS = new Set(['ltda', 'ltd', 'me', 'mei', 'epp', 'eireli', 'sa', 's', 'a', 'slu']);
+
+/** Tokens comparáveis de um nome (pessoa ou empresa), sem conectores/sufixos. */
+function nameTokens(value) {
+  return normalizeText(value)
+    .split(/\W+/)
+    .filter((t) => t.length >= 2)
+    .filter((t) => !PERSON_NAME_STOPWORDS.has(t) && !COMPANY_SUFFIX_TOKENS.has(t));
+}
+
+/** Nomes dos sócios: prefere cnpjPartners persistido, cai para o qsa cru. */
+function partnerNames(cnpjData, prospect) {
+  const stored = Array.isArray(prospect?.cnpjPartners) ? prospect.cnpjPartners : [];
+  const fromStored = stored.map((p) => p?.name || p?.nome).filter(Boolean);
+  if (fromStored.length > 0) return fromStored;
+  const qsa = Array.isArray(cnpjData?.qsa) ? cnpjData.qsa : [];
+  return qsa.map((p) => p?.nome_socio || p?.nome).filter(Boolean);
+}
+
+/** Algum sócio tem o nome citado no texto (razão social ou nome fantasia)?
+ *  Casa por token: 2+ tokens do sócio presentes bastam; sócio com nome de
+ *  um token só casa se ele aparecer inteiro. */
+function partnerNameInText(text, names) {
+  const textTokens = new Set(nameTokens(text));
+  if (textTokens.size === 0) return false;
+  return names.some((name) => {
+    const tokens = nameTokens(name);
+    if (tokens.length === 0) return false;
+    const matched = tokens.filter((t) => textTokens.has(t)).length;
+    return matched >= Math.min(2, tokens.length);
+  });
+}
+
+/** Bloco presença na internet (0–15). Sinais do pipeline NATS desconhecidos
+ *  recebem valor neutro; website_active=false e domínio de contabilidade
+ *  pontuam zero de fato. */
+function presenceBreakdown({ email, summary }) {
+  // site ativo: 6 · desconhecido: 3 · sem site (pipeline detectou): 0
+  const websiteActive = summary?.website_active;
+  const website = websiteActive === true ? 6 : websiteActive === false ? 0 : 3;
+
+  // domínio: próprio 5 · grátis 1 · contabilidade 0 · desconhecido 2
+  let domainClass = classifyEmailDomain(email);
+  if (domainClass == null && summary?.corporate_email === true) domainClass = 'own';
+  const domain = domainClass === 'own' ? 5
+    : domainClass === 'accounting' ? 0
+    : domainClass === 'free' ? 1
+    : 2;
+
+  // redes sociais/tecnologias/pessoas detectadas: quanto mais, mais pontos
+  let social = 2;
+  if (summary) {
+    const detected = [summary.social_platforms, summary.tech_count, summary.people]
+      .map(toNumberOrNull)
+      .filter((n) => n != null);
+    if (detected.length > 0) {
+      const positives = detected.filter((n) => n > 0).length;
+      social = positives === detected.length ? 4 : positives > 0 ? 2 : 0;
+    }
+  }
+
+  return { website, domain, social, total: website + domain + social };
+}
+
+/** Bloco estrutura societária (0–15). */
+function structureBreakdown({ names, companyName, tradeName }) {
+  const known = names.length > 0;
+
+  // >1 sócio: 5 · sócio único ou QSA desconhecido: 2
+  const multiPartner = !known ? 2 : names.length > 1 ? 5 : 2;
+
+  // razão social/nome fantasia citam o sócio: 5 · desconhecido: 2 · não: 0
+  const named = !known ? 2
+    : partnerNameInText(`${companyName || ''} ${tradeName || ''}`, names) ? 5 : 0;
+
+  // nome fantasia próprio, distinto do nome dos sócios: 5 · senão: 0
+  const distinctBrand = tradeName && !(known && partnerNameInText(tradeName, names)) ? 5 : 0;
+
+  return { multiPartner, named, distinctBrand, total: multiPartner + named + distinctBrand };
+}
+
 /** CNAE do lead ∈ CNAEs alvo, tolerante a formatação (compara só dígitos e
  *  aceita prefixo — perfis podem guardar código fiscal de 7 ou 6 dígitos). */
 function cnaeMatches(targetCnaes, cnpjData) {
@@ -134,7 +262,9 @@ function locationMatches(targetLocations, prospect) {
 /**
  * @param {object} input
  * @param {object} input.cnpjData   payload cru da BrasilAPI (ou cnpjRawData)
- * @param {object} input.prospect   linha do Prospect (city/state/industry/cnpjOpenedAt)
+ * @param {object} input.prospect   linha do Prospect (city/state/industry/cnpjOpenedAt/
+ *                                  cnpjEmail/cnpjPhones/cnpjPartners/tradeName/companyName/
+ *                                  enrichmentSummary)
  * @param {object|null} input.profile  CommercialSettings da org (ou null)
  * @returns {{ score: number, breakdown: Record<string, number> }}
  */
@@ -145,28 +275,42 @@ function computeOpportunityScore({ cnpjData, prospect, profile }) {
 
   const capital = toNumberOrNull(cnpjData?.capital_social) ?? 0;
   breakdown.capital =
-    capital >= 1_000_000 ? 20 :
-    capital >= 300_000 ? 16 :
-    capital >= 100_000 ? 12 :
-    capital >= 50_000 ? 8 :
+    capital >= 1_000_000 ? 15 :
+    capital >= 300_000 ? 13 :
+    capital >= 100_000 ? 10 :
+    capital >= 50_000 ? 7 :
     capital >= 10_000 ? 4 : 0;
 
   const years = ageYears(prospect?.cnpjOpenedAt, cnpjData);
   breakdown.age =
     years == null ? 0 :
-    years >= 10 ? 15 :
-    years >= 5 ? 12 :
-    years >= 2 ? 8 :
-    years >= 1 ? 4 : 2;
+    years >= 10 ? 10 :
+    years >= 5 ? 8 :
+    years >= 2 ? 5 :
+    years >= 1 ? 3 : 1;
 
-  // EPP (03) = 10 · não informado/demais (00) = 7 · ME (01)/MEI (05) = 5
-  const porteId = porteInfo(cnpjData).id;
-  breakdown.size = porteId === '03' ? 10 : porteId === '00' ? 7 : 5;
+  // EPP (03) = 5 · não informado/demais (00) = 3 · ME (01)/MEI (05) = 2
+  const porte = porteInfo(cnpjData);
+  breakdown.size = porte.id === '03' ? 5 : porte.id === '00' ? 3 : 2;
 
   const hasEmail = Boolean(cnpjData?.email || prospect?.cnpjEmail);
   const phones = (Array.isArray(prospect?.cnpjPhones) ? prospect.cnpjPhones : []).length ||
     [cnpjData?.ddd_telefone_1, cnpjData?.ddd_telefone_2, cnpjData?.telefone].filter(Boolean).length;
-  breakdown.contacts = (hasEmail ? 10 : 0) + (phones > 0 ? 10 : 0);
+  breakdown.contacts = (hasEmail ? 8 : 0) + (phones > 0 ? 7 : 0);
+
+  const summary = prospect?.enrichmentSummary && typeof prospect.enrichmentSummary === 'object'
+    ? prospect.enrichmentSummary
+    : null;
+  breakdown.presence = presenceBreakdown({
+    email: cnpjData?.email || prospect?.cnpjEmail,
+    summary,
+  }).total;
+
+  breakdown.structure = structureBreakdown({
+    names: partnerNames(cnpjData, prospect),
+    companyName: cnpjData?.razao_social || prospect?.companyName,
+    tradeName: cnpjData?.nome_fantasia || prospect?.tradeName,
+  }).total;
 
   const targetCnaes = profile?.targetCnaes || [];
   const targetSegments = profile?.targetSegments || [];
@@ -181,10 +325,10 @@ function computeOpportunityScore({ cnpjData, prospect, profile }) {
     const industry = cnpjData?.cnae_fiscal_descricao || prospect?.industry;
     breakdown.fit = Math.min(
       WEIGHTS.fit,
-      (cnaeMatches(targetCnaes, cnpjData) ? 8 : 0) +
-      (segmentMatches(targetSegments, industry) ? 6 : 0) +
-      (locationMatches(targetLocations, prospect) ? 4 : 0) +
-      (targetSizes.includes(porteInfo(cnpjData).size) ? 2 : 0)
+      (cnaeMatches(targetCnaes, cnpjData) ? 6 : 0) +
+      (segmentMatches(targetSegments, industry) ? 5 : 0) +
+      (locationMatches(targetLocations, prospect) ? 3 : 0) +
+      (targetSizes.includes(porte.size) ? 1 : 0)
     );
   }
 
@@ -195,10 +339,18 @@ function computeOpportunityScore({ cnpjData, prospect, profile }) {
 module.exports = {
   WEIGHTS,
   NEUTRAL_FIT,
+  FREE_EMAIL_DOMAINS,
+  ACCOUNTING_EMAIL_DOMAINS,
   computeOpportunityScore,
   isActive,
   porteInfo,
   cnaeMatches,
   segmentMatches,
   locationMatches,
+  classifyEmailDomain,
+  nameTokens,
+  partnerNames,
+  partnerNameInText,
+  presenceBreakdown,
+  structureBreakdown,
 };

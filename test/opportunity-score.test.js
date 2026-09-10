@@ -7,6 +7,10 @@ const {
   cnaeMatches,
   segmentMatches,
   locationMatches,
+  classifyEmailDomain,
+  presenceBreakdown,
+  structureBreakdown,
+  partnerNameInText,
 } = require('../opportunity-score');
 
 // Payload BrasilAPI representativo (campos usados pelo scoring).
@@ -38,13 +42,15 @@ const fullProfile = {
 test('lead aderente, ativo, capital alto e com contatos pontua alto', () => {
   const data = cnpjData({ cnae_fiscal_descricao: 'Consultoria em tecnologia da informação' });
   const { score, breakdown } = computeOpportunityScore({ cnpjData: data, prospect, profile: fullProfile });
-  assert.strictEqual(breakdown.active, 15);
-  assert.strictEqual(breakdown.capital, 16);
-  assert.strictEqual(breakdown.age, 15);
-  assert.strictEqual(breakdown.size, 10);
-  assert.strictEqual(breakdown.contacts, 20);
-  assert.strictEqual(breakdown.fit, 20);
-  assert.strictEqual(score, 96);
+  assert.strictEqual(breakdown.active, 10);
+  assert.strictEqual(breakdown.capital, 13);
+  assert.strictEqual(breakdown.age, 10);
+  assert.strictEqual(breakdown.size, 5);
+  assert.strictEqual(breakdown.contacts, 15);
+  assert.strictEqual(breakdown.presence, 10); // site/social desconhecidos (neutros) + domínio próprio
+  assert.strictEqual(breakdown.structure, 4); // QSA desconhecido (neutro)
+  assert.strictEqual(breakdown.fit, 15);
+  assert.strictEqual(score, 82);
 });
 
 test('cada dimensão contribui e lead fraco pontua baixo', () => {
@@ -64,10 +70,10 @@ test('cada dimensão contribui e lead fraco pontua baixo', () => {
     prospect: { city: null, state: null, cnpjOpenedAt: new Date() },
     profile: fullProfile,
   });
-  // MEI fora do porte alvo, sem contatos, suspensa, recém-aberta, sem aderência:
-  // só idade 2 + porte 5
+  // MEI fora do porte alvo, sem contatos, suspensa, recém-aberta, sem aderência
   assert.deepStrictEqual(breakdown.fit, 0);
-  assert.strictEqual(score, 7);
+  assert.deepStrictEqual(breakdown.contacts, 0);
+  assert.strictEqual(score, 14); // idade 1 + porte 2 + presença neutra 7 + estrutura neutra 4
 });
 
 test('sem perfil comercial, aderência recebe nota neutra', () => {
@@ -76,7 +82,7 @@ test('sem perfil comercial, aderência recebe nota neutra', () => {
     prospect,
     profile: null,
   });
-  assert.strictEqual(breakdown.fit, 10);
+  assert.strictEqual(breakdown.fit, 8);
 });
 
 test('score é limitado a 0–100', () => {
@@ -86,6 +92,140 @@ test('score é limitado a 0–100', () => {
     profile: fullProfile,
   });
   assert.ok(score <= 100 && score > 0);
+});
+
+test('capital acima de R$ 50 mil pontua mais que capital baixo', () => {
+  const bom = computeOpportunityScore({ cnpjData: cnpjData({ capital_social: 60_000 }), prospect, profile: null });
+  const baixo = computeOpportunityScore({ cnpjData: cnpjData({ capital_social: 5_000 }), prospect, profile: null });
+  assert.strictEqual(bom.breakdown.capital, 7);
+  assert.strictEqual(baixo.breakdown.capital, 0);
+  assert.ok(bom.score > baixo.score);
+});
+
+test('domínio próprio pontua mais que contabilidade e que provedor grátis', () => {
+  const run = (email) => computeOpportunityScore({
+    cnpjData: cnpjData({ email }),
+    prospect,
+    profile: null,
+  });
+  const proprio = run('contato@empresa.com');
+  const contabilidade = run('empresa.123@contabilizei.com.br');
+  const gratis = run('empresa@gmail.com');
+  const outroContabil = run('contato@contabilidademaria.com.br');
+  // domínio próprio 5 · grátis 1 · contabilidade 0
+  assert.strictEqual(proprio.breakdown.presence, 10);
+  assert.strictEqual(gratis.breakdown.presence, 6);
+  assert.strictEqual(contabilidade.breakdown.presence, 5);
+  assert.strictEqual(outroContabil.breakdown.presence, 5);
+  assert.ok(proprio.score > contabilidade.score);
+  assert.ok(gratis.score > contabilidade.score);
+});
+
+test('classifyEmailDomain classifica próprio, grátis, contabilidade e vazio', () => {
+  assert.strictEqual(classifyEmailDomain('contato@empresa.com.br'), 'own');
+  assert.strictEqual(classifyEmailDomain('a@gmail.com'), 'free');
+  assert.strictEqual(classifyEmailDomain('a@hotmail.com'), 'free');
+  assert.strictEqual(classifyEmailDomain('x@contabilizei.com.br'), 'accounting');
+  assert.strictEqual(classifyEmailDomain('x@meucontador.com'), 'accounting');
+  assert.strictEqual(classifyEmailDomain(''), null);
+  assert.strictEqual(classifyEmailDomain(null), null);
+});
+
+test('sem telefone e sem site pontuam menos que com eles', () => {
+  const comTudo = computeOpportunityScore({
+    cnpjData: cnpjData(),
+    prospect: { ...prospect, enrichmentSummary: { website_active: true } },
+    profile: null,
+  });
+  const semTelefone = computeOpportunityScore({
+    cnpjData: cnpjData({ ddd_telefone_1: null }),
+    prospect: { ...prospect, enrichmentSummary: { website_active: true } },
+    profile: null,
+  });
+  const semSite = computeOpportunityScore({
+    cnpjData: cnpjData(),
+    prospect: { ...prospect, enrichmentSummary: { website_active: false } },
+    profile: null,
+  });
+  assert.strictEqual(comTudo.breakdown.contacts, 15);
+  assert.strictEqual(semTelefone.breakdown.contacts, 8);
+  assert.strictEqual(semSite.breakdown.presence, comTudo.breakdown.presence - 6);
+  assert.ok(comTudo.score > semTelefone.score);
+  assert.ok(comTudo.score > semSite.score);
+});
+
+test('presença na internet: mais sinais do pipeline, mais pontos', () => {
+  assert.deepStrictEqual(
+    presenceBreakdown({ email: 'a@empresa.com', summary: { website_active: true, social_platforms: 3, tech_count: 2, people: 1 } }).total,
+    15,
+  );
+  // desconhecido = neutro (site 3 + domínio 2 + social 2)
+  assert.deepStrictEqual(presenceBreakdown({ email: null, summary: null }).total, 7);
+  // site fora do ar detectado + domínio de contabilidade = presença zero
+  assert.deepStrictEqual(
+    presenceBreakdown({ email: 'x@contabilizei.com.br', summary: { website_active: false, social_platforms: 0 } }).total,
+    0,
+  );
+});
+
+test('estrutura societária: >1 sócio, nome do sócio e fantasia distinta somam', () => {
+  assert.deepStrictEqual(
+    structureBreakdown({
+      names: ['João da Silva', 'Maria Souza'],
+      companyName: 'JOAO SILVA COMERCIO DE ALIMENTOS LTDA',
+      tradeName: 'SilvaFood',
+    }).total,
+    15,
+  );
+  // sócio único sem relação com a marca, mas fantasia própria: 2 + 0 + 5
+  assert.deepStrictEqual(
+    structureBreakdown({ names: ['João da Silva'], companyName: 'ACME TECNOLOGIA LTDA', tradeName: 'ACME Tech' }).total,
+    7,
+  );
+  // QSA desconhecido: neutro (2 + 2), sem fantasia: 0
+  assert.deepStrictEqual(
+    structureBreakdown({ names: [], companyName: 'ACME LTDA', tradeName: null }).total,
+    4,
+  );
+  // fantasia igual ao nome do sócio não ganha bônus de marca distinta
+  assert.deepStrictEqual(
+    structureBreakdown({ names: ['João da Silva'], companyName: 'JOAO SILVA ME', tradeName: 'João Silva' }).total,
+    7, // multi 2 + named 5 + distinct 0
+  );
+});
+
+test('empresa com dois sócios e nome do sócio pontua mais que anônima', () => {
+  const base = { capital_social: 100_000, email: 'contato@empresa.com' };
+  const familiar = computeOpportunityScore({
+    cnpjData: cnpjData({
+      ...base,
+      razao_social: 'JOAO SILVA COMERCIO LTDA',
+      nome_fantasia: 'SilvaTech',
+      qsa: [{ nome_socio: 'João da Silva' }, { nome_socio: 'Maria Souza' }],
+    }),
+    prospect,
+    profile: null,
+  });
+  const anonima = computeOpportunityScore({
+    cnpjData: cnpjData({
+      ...base,
+      razao_social: 'ACME TECNOLOGIA LTDA',
+      nome_fantasia: null,
+      qsa: [{ nome_socio: 'João da Silva' }],
+    }),
+    prospect,
+    profile: null,
+  });
+  assert.strictEqual(familiar.breakdown.structure, 15);
+  assert.strictEqual(anonima.breakdown.structure, 2); // sócio único 2 + sem match 0 + sem fantasia 0
+  assert.ok(familiar.score > anonima.score);
+});
+
+test('partnerNameInText casa nome do sócio ignorando conectores e sufixos', () => {
+  const names = ['João Pedro da Silva'];
+  assert.strictEqual(partnerNameInText('JOAO PEDRO SILVA COMERCIO LTDA', names), true);
+  assert.strictEqual(partnerNameInText('SILVA COMERCIO LTDA', names), false); // 1 token só não basta
+  assert.strictEqual(partnerNameInText('ACME TECNOLOGIA LTDA', names), false);
 });
 
 test('isActive aceita id 2 ou descrição "ATIVA"', () => {

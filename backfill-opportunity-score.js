@@ -49,8 +49,10 @@ async function main() {
     },
     select: {
       id: true, cnpj: true, orgId: true, opportunityScore: true,
+      companyName: true, tradeName: true,
       city: true, state: true, industry: true, cnpjOpenedAt: true,
-      cnpjEmail: true, cnpjPhones: true, cnpjRawData: true,
+      cnpjEmail: true, cnpjPhones: true, cnpjPartners: true,
+      enrichmentSummary: true, cnpjRawData: true,
     },
     ...(Number.isFinite(limit) ? { take: limit } : {}),
     orderBy: { createdAt: 'asc' },
