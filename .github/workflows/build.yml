@@ -15,6 +15,12 @@ name: build-and-deploy
 on:
   push:
     branches: [main]
+    # Monorepo: mudanças só nos serviços Python (ou docs) não rebuildam a
+    # imagem da plataforma. Cada serviço tem seu workflow dedicado.
+    paths-ignore:
+      - "services/**"
+      - "*.md"
+      - "docs/**"
   workflow_dispatch:
 
 env:

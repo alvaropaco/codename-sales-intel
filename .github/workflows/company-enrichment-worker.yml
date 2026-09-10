@@ -1,0 +1,133 @@
+# CI do serviço company-enrichment-worker (services/company-enrichment-worker).
+#
+# O repo standalone nunca teve CI; aqui entramos com um gate enxuto:
+#   - ruff + testes unitários (a suíte de integração depende de stack local
+#     via docker-compose e fica fora do CI por enquanto)
+#   - build das variantes default e -osint (BUILD_WITH_OSINT: BBOT+SpiderFoot)
+#   - publicação no GHCR apenas em tags enrichment-v* ou via workflow_dispatch
+#     (tags v* são exclusivas do cnpj-data-publisher neste monorepo)
+#
+# O k8s-infra (argocd/apps/company-enrichment-worker.yaml) puxa
+# ghcr.io/alvaropaco/company-enrichment-worker:<versão> e -osint.
+name: company-enrichment-worker-ci
+
+on:
+  pull_request:
+    paths:
+      - "services/company-enrichment-worker/**"
+      - ".github/workflows/company-enrichment-worker.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/company-enrichment-worker/**"
+      - ".github/workflows/company-enrichment-worker.yml"
+    tags: ["enrichment-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão a publicar (ex.: 0.3.1). Obrigatória no dispatch."
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/alvaropaco/company-enrichment-worker
+  WORKDIR: services/company-enrichment-worker
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: services/company-enrichment-worker
+
+jobs:
+  quality:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/company-enrichment-worker/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check src
+      - run: pytest tests/unit -q
+
+  docker:
+    name: Container image (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    needs: [quality]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - variant: default
+            build_osint: "false"
+            suffix: ""
+          - variant: osint
+            build_osint: "true"
+            suffix: "-osint"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # No push de tag enrichment-vX.Y.Z a versão é X.Y.Z; no dispatch vem do
+      # input; em PR/branch só buildamos (sem publicar).
+      - name: Derive version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/enrichment-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#enrichment-v}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="ci-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        working-directory: .
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/company-enrichment-worker
+          build-args: |
+            BUILD_WITH_OSINT=${{ matrix.build_osint }}
+          push: false
+          load: true
+          tags: company-enrichment-worker:ci${{ matrix.suffix }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      - name: Container runs as non-root
+        run: |
+          uid=$(docker run --rm --entrypoint id company-enrichment-worker:ci${{ matrix.suffix }} -u)
+          test "$uid" != "0" || { echo "container runs as root"; exit 1; }
+          echo "running as uid $uid"
+
+      - name: Log in to the registry
+        if: startsWith(github.ref, 'refs/tags/enrichment-v') || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish tagged image
+        if: startsWith(github.ref, 'refs/tags/enrichment-v') || github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: services/company-enrichment-worker
+          build-args: |
+            BUILD_WITH_OSINT=${{ matrix.build_osint }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}${{ matrix.suffix }}
+            ${{ env.IMAGE_NAME }}:latest${{ matrix.suffix }}
+          cache-from: type=gha,scope=${{ matrix.variant }}

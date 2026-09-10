@@ -1,0 +1,300 @@
+# CI do serviço cnpj-data-publisher (services/cnpj-data-publisher).
+# Portado do ci.yml do repo standalone; adaptado ao layout de monorepo:
+#   - working-directory em services/cnpj-data-publisher
+#   - imagem publicada com nome EXPLÍCITO ghcr.io/alvaropaco/cnpj-data-publisher
+#     (o ${{ github.repository }} do repo antigo viraria codename-sales-intel
+#     e quebraria o ArgoCD em k8s-infra/argocd/apps/cnpj-data-publisher.yaml)
+#   - push da imagem apenas em tags v* (exclusivas deste serviço no monorepo)
+name: cnpj-data-publisher-ci
+
+on:
+  pull_request:
+    paths:
+      - "services/cnpj-data-publisher/**"
+      - ".github/workflows/cnpj-data-publisher.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/cnpj-data-publisher/**"
+      - ".github/workflows/cnpj-data-publisher.yml"
+    tags: ["v*"]
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/alvaropaco/cnpj-data-publisher
+  WORKDIR: services/cnpj-data-publisher
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: services/cnpj-data-publisher
+
+jobs:
+  quality:
+    name: Lint, format and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/cnpj-data-publisher/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - run: mypy src
+
+  contracts:
+    name: JSON Schema contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install jsonschema
+      - name: Every schema compiles
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          from jsonschema import Draft202012Validator as V
+          failed = False
+          for p in sorted(pathlib.Path("contracts").glob("*.schema.json")):
+              try:
+                  V.check_schema(json.loads(p.read_text()))
+                  print("ok", p.name)
+              except Exception as exc:
+                  print("FAIL", p.name, exc); failed = True
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: v1 contracts are backwards compatible
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          python - <<'PY'
+          import json, pathlib, subprocess, sys
+
+          CONTRACTS = pathlib.Path("services/cnpj-data-publisher/contracts")
+
+          def base_version(rel):
+              try:
+                  blob = subprocess.check_output(
+                      ["git", "show", f"origin/${{ github.base_ref }}:{rel}"],
+                      stderr=subprocess.DEVNULL,
+                  )
+              except subprocess.CalledProcessError:
+                  return None
+              return json.loads(blob)
+
+          breaking = []
+          for p in sorted(CONTRACTS.glob("*-v1.schema.json")):
+              rel = str(p)
+              old = base_version(rel)
+              if old is None:
+                  continue
+              new = json.loads(p.read_text())
+              old_required = set(old.get("required", []))
+              new_required = set(new.get("required", []))
+              added = new_required - old_required
+              if added:
+                  breaking.append(f"{p.name}: new required fields {sorted(added)}")
+              old_data = old["properties"]["data"].get("required", [])
+              new_data = new["properties"]["data"].get("required", [])
+              added_data = set(new_data) - set(old_data)
+              if added_data:
+                  breaking.append(f"{p.name}: new required data fields {sorted(added_data)}")
+
+          if breaking:
+              print("v1 contracts must stay backwards compatible; create v2 instead:")
+              for item in breaking:
+                  print(" -", item)
+              sys.exit(1)
+          print("contracts are compatible")
+          PY
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/cnpj-data-publisher/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/unit -q --cov --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: services/cnpj-data-publisher/coverage.xml
+
+  integration:
+    name: Integration and E2E tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: cnpj
+          POSTGRES_USER: cnpj
+          POSTGRES_PASSWORD: cnpj
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cnpj"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://cnpj:cnpj@localhost:5432/cnpj
+      TEST_NATS_URL: nats://localhost:4222
+      DATABASE_URL: postgresql+psycopg://cnpj:cnpj@localhost:5432/cnpj
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/cnpj-data-publisher/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 \
+            nats:2.10-alpine --jetstream --http_port 8222
+          for i in $(seq 1 30); do
+            if wget --spider -q http://localhost:8222/healthz; then
+              echo "nats is ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "nats did not become ready"; docker logs nats; exit 1
+      - run: alembic upgrade head
+      - run: pytest tests/integration -q
+      - run: pytest tests/e2e -q
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-latest
+    needs: [quality, unit]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/cnpj-data-publisher
+          push: false
+          load: true
+          tags: cnpj-data-publisher:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container runs as non-root
+        run: |
+          uid=$(docker run --rm --entrypoint id cnpj-data-publisher:ci -u)
+          test "$uid" != "0" || { echo "container runs as root"; exit 1; }
+          echo "running as uid $uid"
+
+      - name: CLI is functional
+        run: docker run --rm cnpj-data-publisher:ci version
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.33.0
+        with:
+          image-ref: cnpj-data-publisher:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Log in to the registry
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish tagged image
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v6
+        with:
+          context: services/cnpj-data-publisher
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.1
+      - run: helm dependency update services/cnpj-data-publisher/helm/cnpj-data-publisher
+      - run: helm lint services/cnpj-data-publisher/helm/cnpj-data-publisher
+      - run: helm lint services/cnpj-data-publisher/helm/cnpj-data-publisher -f services/cnpj-data-publisher/helm/cnpj-data-publisher/values-k3s.yaml
+      - run: helm template ci services/cnpj-data-publisher/helm/cnpj-data-publisher > /tmp/default.yaml
+      - run: helm template ci services/cnpj-data-publisher/helm/cnpj-data-publisher -f services/cnpj-data-publisher/helm/cnpj-data-publisher/values-k3s.yaml > /tmp/k3s.yaml
+      - run: helm template ci services/cnpj-data-publisher/helm/cnpj-data-publisher -f services/cnpj-data-publisher/helm/cnpj-data-publisher/values-production.yaml.example > /tmp/prod.yaml
+
+      - name: Manifests satisfy the security requirements
+        run: |
+          pip install pyyaml
+          python - <<'PY'
+          import sys, yaml
+
+          failures = []
+          for path in ("/tmp/default.yaml", "/tmp/k3s.yaml", "/tmp/prod.yaml"):
+              for doc in yaml.safe_load_all(open(path)):
+                  if not doc or doc.get("metadata", {}).get("labels", {}).get(
+                      "app.kubernetes.io/name"
+                  ) != "cnpj-data-publisher":
+                      continue
+                  kind = doc["kind"]
+                  if kind in ("Deployment", "Job"):
+                      templates = [doc["spec"]["template"]]
+                  elif kind == "CronJob":
+                      templates = [doc["spec"]["jobTemplate"]["spec"]["template"]]
+                  else:
+                      continue
+
+                  for tpl in templates:
+                      name = doc["metadata"]["name"]
+                      pod = tpl["spec"]
+                      container = pod["containers"][0]
+                      sec = container.get("securityContext", {})
+                      pod_sec = pod.get("securityContext", {})
+                      if not pod_sec.get("runAsNonRoot"):
+                          failures.append(f"{name}: runAsNonRoot is not set")
+                      if sec.get("allowPrivilegeEscalation") is not False:
+                          failures.append(f"{name}: allowPrivilegeEscalation is not false")
+                      if not sec.get("readOnlyRootFilesystem"):
+                          failures.append(f"{name}: readOnlyRootFilesystem is not set")
+                      if sec.get("capabilities", {}).get("drop") != ["ALL"]:
+                          failures.append(f"{name}: capabilities are not dropped")
+                      for env in container.get("env", []):
+                          if env["name"] in ("DATABASE_URL", "S3_SECRET_KEY") and "value" in env:
+                              failures.append(f"{name}: {env['name']} is inlined")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit(1)
+          print("all rendered manifests satisfy the security requirements")
+          PY
