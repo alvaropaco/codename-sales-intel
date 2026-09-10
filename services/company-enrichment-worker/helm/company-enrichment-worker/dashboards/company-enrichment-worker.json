@@ -1,0 +1,304 @@
+{
+  "annotations": { "list": [ { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard" } ] },
+  "editable": true,
+  "graphTooltip": 1,
+  "title": "Company Enrichment Worker",
+  "uid": "company-enrichment-worker",
+  "tags": ["company-enrichment", "nats", "enrichment"],
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" },
+        "hide": 0
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(enrichment_available_slots, namespace)",
+        "refresh": 2,
+        "includeAll": false,
+        "current": { "text": "company-enrichment", "value": "company-enrichment" }
+      },
+      {
+        "name": "pod",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(enrichment_available_slots{namespace=\"$namespace\"}, pod)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Overview", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100 },
+    {
+      "id": 1, "type": "stat", "title": "Jobs completed (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_jobs_completed_total{namespace=\"$namespace\"}[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Jobs failed (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.001 } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_jobs_failed_total{namespace=\"$namespace\"}[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Active jobs",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] } } },
+      "targets": [ { "expr": "sum(enrichment_active_jobs{namespace=\"$namespace\", pod=~\"$pod\"})", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Free slots",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } } },
+      "targets": [ { "expr": "sum(enrichment_available_slots{namespace=\"$namespace\", pod=~\"$pod\"})", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "NATS pending backlog",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 1000 } ] } } },
+      "targets": [ { "expr": "max(nats_pending_messages{namespace=\"$namespace\"})", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Ready worker pods",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } } },
+      "targets": [ { "expr": "count(count by (pod) (enrichment_available_slots{namespace=\"$namespace\"}))", "refId": "A" } ]
+    },
+
+    { "type": "row", "title": "Throughput & Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }, "id": 101 },
+    {
+      "id": 10, "type": "timeseries", "title": "Job throughput by status (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } } } },
+      "targets": [
+        { "expr": "sum(rate(enrichment_jobs_total{namespace=\"$namespace\"}[5m])) by (status)", "legendFormat": "{{status}}", "refId": "A" },
+        { "expr": "sum(rate(enrichment_jobs_completed_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "completed(persisted)", "refId": "B" },
+        { "expr": "sum(rate(enrichment_jobs_failed_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "failed", "refId": "C" }
+      ]
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Job duration (p50 / p90 / p99)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(enrichment_job_duration_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.90, sum(rate(enrichment_job_duration_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))", "legendFormat": "p90", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum(rate(enrichment_job_duration_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Capacity: active jobs vs free slots",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "sum(enrichment_active_jobs{namespace=\"$namespace\"})", "legendFormat": "active", "refId": "A" },
+        { "expr": "sum(enrichment_available_slots{namespace=\"$namespace\"})", "legendFormat": "free slots", "refId": "B" }
+      ]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "NATS pending messages (backlog)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "max(nats_pending_messages{namespace=\"$namespace\"}) by (consumer)", "legendFormat": "{{consumer}}", "refId": "A" } ]
+    },
+
+    { "type": "row", "title": "Providers", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }, "id": 102 },
+    {
+      "id": 20, "type": "timeseries", "title": "Provider request rate",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_provider_requests_total{namespace=\"$namespace\"}[5m])) by (provider)", "legendFormat": "{{provider}}", "refId": "A" } ]
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "Provider failure rate",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_provider_failures_total{namespace=\"$namespace\"}[5m])) by (provider, error_code)", "legendFormat": "{{provider}} / {{error_code}}", "refId": "A" } ]
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "Provider latency p90",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } } },
+      "targets": [ { "expr": "histogram_quantile(0.90, sum(rate(enrichment_provider_latency_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le, provider))", "legendFormat": "{{provider}}", "refId": "A" } ]
+    },
+
+    { "type": "row", "title": "AI Gateway & Discovery", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 }, "id": 103 },
+    {
+      "id": 30, "type": "timeseries", "title": "AI requests / failures rate",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "sum(rate(enrichment_ai_requests_total{namespace=\"$namespace\"}[5m])) by (model)", "legendFormat": "req {{model}}", "refId": "A" },
+        { "expr": "sum(rate(enrichment_ai_failures_total{namespace=\"$namespace\"}[5m])) by (model)", "legendFormat": "fail {{model}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 31, "type": "timeseries", "title": "LLM tokens rate (in+out)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_ai_tokens_total{namespace=\"$namespace\"}[5m])) by (model)", "legendFormat": "{{model}}", "refId": "A" } ]
+    },
+    {
+      "id": 32, "type": "timeseries", "title": "Domains found vs websites validated (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "sum(rate(enrichment_domains_found_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "domains found", "refId": "A" },
+        { "expr": "sum(rate(enrichment_websites_found_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "websites validated", "refId": "B" }
+      ]
+    },
+    {
+      "id": 33, "type": "timeseries", "title": "FlareSolverr fallback rate",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "sum(rate(enrichment_flaresolverr_requests_total{namespace=\"$namespace\"}[5m]))", "legendFormat": "requests", "refId": "A" },
+        { "expr": "sum(rate(enrichment_flaresolverr_fallback_total{namespace=\"$namespace\"}[5m])) by (url_kind)", "legendFormat": "fallback {{url_kind}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 34, "type": "timeseries", "title": "Success ratio (completed / received)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 5 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_jobs_completed_total{namespace=\"$namespace\"}[15m])) / clamp_min(sum(rate(enrichment_jobs_total{namespace=\"$namespace\", status=\"requested\"}[15m])), 0.0001)", "legendFormat": "success ratio", "refId": "A" } ]
+    },
+
+    { "type": "row", "title": "OSINT (BBOT & SpiderFoot)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 }, "id": 200 },
+    {
+      "id": 201, "type": "stat", "title": "OSINT scans (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 49 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_scans_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 202, "type": "stat", "title": "OSINT failures (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 49 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.001 } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_scans_failed_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 203, "type": "stat", "title": "Scan success ratio",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 49 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "green", "value": 0.95 } ] } } },
+      "targets": [ { "expr": "1 - (sum(rate(enrichment_osint_scans_failed_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[15m])) / clamp_min(sum(rate(enrichment_osint_scans_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[15m])), 0.0001))", "refId": "A" } ]
+    },
+    {
+      "id": 204, "type": "stat", "title": "Events ingested (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 49 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_events_ingested_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[5m]))", "refId": "A" } ]
+    },
+    {
+      "id": 205, "type": "stat", "title": "Events per scan (yield)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 49 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "yellow", "value": null }, { "color": "green", "value": 10 } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_events_ingested_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[15m])) / clamp_min(sum(rate(enrichment_osint_scans_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[15m])), 0.0001)", "refId": "A" } ]
+    },
+    {
+      "id": 206, "type": "stat", "title": "OSINT directives (rate)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 49 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] } } },
+      "targets": [ { "expr": "sum(rate(enrichment_worker_directives_completed_total{namespace=\"$namespace\", worker_type=~\"bbot|spiderfoot\"}[5m]))", "refId": "A" } ]
+    },
+
+    {
+      "id": 210, "type": "timeseries", "title": "OSINT scan throughput by tool",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 53 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_scans_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[5m])) by (tool)", "legendFormat": "{{tool}}", "refId": "A" } ]
+    },
+    {
+      "id": 211, "type": "timeseries", "title": "OSINT scan failures by tool",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 53 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_scans_failed_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[5m])) by (tool)", "legendFormat": "{{tool}}", "refId": "A" } ]
+    },
+    {
+      "id": 212, "type": "timeseries", "title": "OSINT events ingested by tool",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 53 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_osint_events_ingested_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[5m])) by (tool)", "legendFormat": "{{tool}}", "refId": "A" } ]
+    },
+
+    {
+      "id": 213, "type": "timeseries", "title": "OSINT scan duration (p50 / p90)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 61 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(enrichment_worker_duration_seconds_bucket{namespace=\"$namespace\", worker_type=~\"bbot|spiderfoot\"}[5m])) by (le, worker_type))", "legendFormat": "{{worker_type}} p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.90, sum(rate(enrichment_worker_duration_seconds_bucket{namespace=\"$namespace\", worker_type=~\"bbot|spiderfoot\"}[5m])) by (le, worker_type))", "legendFormat": "{{worker_type}} p90", "refId": "B" }
+      ]
+    },
+    {
+      "id": 214, "type": "timeseries", "title": "OSINT directives by status",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 61 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_worker_directives_total{namespace=\"$namespace\", worker_type=~\"bbot|spiderfoot\"}[5m])) by (worker_type, status)", "legendFormat": "{{worker_type}}/{{status}}", "refId": "A" } ]
+    },
+
+    {
+      "id": 215, "type": "timeseries", "title": "OSINT directive failures by error code",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 69 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum(rate(enrichment_worker_directives_failed_total{namespace=\"$namespace\", worker_type=~\"bbot|spiderfoot\"}[5m])) by (worker_type, error_code)", "legendFormat": "{{worker_type}}/{{error_code}}", "refId": "A" } ]
+    },
+    {
+      "id": 216, "type": "timeseries", "title": "Scan success ratio by tool",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 69 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 5 } } },
+      "targets": [ { "expr": "1 - (sum by (tool) (rate(enrichment_osint_scans_failed_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[15m])) / clamp_min(sum by (tool) (rate(enrichment_osint_scans_total{namespace=\"$namespace\", tool=~\"bbot|spiderfoot\"}[15m])), 0.0001))", "legendFormat": "{{tool}}", "refId": "A" } ]
+    },
+
+    {
+      "id": 217, "type": "timeseries", "title": "NATS backlog per OSINT consumer",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 77 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "max(nats_pending_messages{namespace=\"$namespace\", consumer=~\"enrichment-(bbot|spiderfoot)\"}) by (consumer)", "legendFormat": "{{consumer}}", "refId": "A" } ]
+    }
+  ]
+}

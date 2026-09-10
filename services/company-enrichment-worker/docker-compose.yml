@@ -1,0 +1,70 @@
+# Local development/testing only. NEVER used for production (production = Helm -> K8s).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: enrichment
+      POSTGRES_PASSWORD: enrichment
+      POSTGRES_DB: enrichment
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enrichment -d enrichment"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8222/healthz | grep -q ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Worker in mock mode for the critical E2E durability slice (plan §45/§48).
+  worker:
+    build: .
+    command: ["python", "-m", "company_enrichment"]
+    environment: &worker_env
+      DATABASE_URL: postgresql+asyncpg://enrichment:enrichment@postgres:5432/enrichment
+      NATS_URL: nats://nats:4222
+      ENRICHMENT_MOCK_MODE: "true"
+      WORKER_CONCURRENCY: "10"
+      WORKER_ID: "local-worker"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    profiles: ["worker"]
+
+  migrate:
+    build: .
+    command: ["python", "scripts/run_migrations.py"]
+    environment: *worker_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["worker"]
+
+  publish:
+    build: .
+    command: ["python", "scripts/publish_request.py", "--nats-url", "nats://nats:4222", "--count", "5"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    profiles: ["test"]
+
+  verify:
+    build: .
+    command: ["python", "scripts/verify_completion.py", "--nats-url", "nats://nats:4222", "--expect", "5"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    profiles: ["test"]

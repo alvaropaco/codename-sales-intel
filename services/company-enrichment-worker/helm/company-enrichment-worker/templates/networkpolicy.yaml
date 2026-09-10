@@ -1,0 +1,79 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "company-enrichment-worker.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "company-enrichment-worker.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "company-enrichment-worker.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Health/metrics only reachable within the cluster (ClusterIP). No external traffic.
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # NATS (legal-nats)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.natsNamespace }}
+      ports:
+        - protocol: TCP
+          port: 4222
+    # Worker persistence PostgreSQL (legal-postgres)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.postgresNamespace }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    # CNPJ warehouse PostgreSQL (cnpj-postgres) for firmographics
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.cnpjPostgresNamespace }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    # SearXNG (monitoring)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.searxngNamespace }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # AI Gateway (LiteLLM)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.aiGatewayNamespace }}
+      ports:
+        - protocol: TCP
+          port: 4000
+    # Public internet egress (enrichment providers: DNS/RDAP/direct web).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+{{- end }}

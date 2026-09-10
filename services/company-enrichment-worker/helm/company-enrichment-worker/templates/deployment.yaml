@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "company-enrichment-worker.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "company-enrichment-worker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "company-enrichment-worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "company-enrichment-worker.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 90
+      serviceAccountName: {{ include "company-enrichment-worker.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{ .Values.podSecurityContext | toYaml | nindent 8 }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: NATS_URL
+              value: {{ .Values.existingServices.nats.url }}
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: WORKER_TYPES
+              value: {{ .Values.worker.types | default "core" }}
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.worker.concurrency | quote }}
+            - name: WORKER_HEARTBEAT_SECONDS
+              value: {{ .Values.worker.heartbeatSeconds | quote }}
+            - name: WORKER_LEASE_SECONDS
+              value: {{ .Values.worker.leaseSeconds | quote }}
+            - name: WORKER_LEASE_TAKEOVER_STALE_SECONDS
+              value: {{ .Values.worker.leaseTakeoverStaleSeconds | quote }}
+            - name: SHUTDOWN_GRACE_SECONDS
+              value: {{ .Values.worker.shutdownGraceSeconds | quote }}
+            - name: ENRICHMENT_MOCK_MODE
+              value: {{ .Values.worker.mockMode | quote }}
+            - name: GRAPH_MAX_DEPTH
+              value: {{ .Values.graph.maxDepth | quote }}
+            - name: GRAPH_MAX_DIRECTIVES
+              value: {{ .Values.graph.maxDirectives | quote }}
+            - name: GRAPH_MAX_FACTS
+              value: {{ .Values.graph.maxFacts | quote }}
+            - name: GRAPH_LEASE_SECONDS
+              value: {{ .Values.worker.leaseSeconds | quote }}
+            - name: BBOT_TIMEOUT_SECONDS
+              value: {{ .Values.graph.bbotTimeoutSeconds | quote }}
+            - name: BBOT_MAX_EVENTS
+              value: {{ .Values.graph.bbotMaxEvents | quote }}
+            - name: SPIDERFOOT_ENABLED
+              value: {{ .Values.graph.spiderfootEnabled | quote }}
+            - name: NATS_FETCH_BATCH_SIZE
+              value: {{ .Values.nats.fetchBatchSize | quote }}
+            - name: NATS_MAX_ACK_PENDING
+              value: {{ .Values.nats.maxAckPending | quote }}
+            - name: NATS_STREAM
+              value: {{ .Values.nats.streamName }}
+            - name: NATS_CONSUMER_NAME
+              value: {{ .Values.nats.consumerName }}
+            - name: STREAM_SUBJECTS
+              value: {{ .Values.nats.subjects }}
+            - name: CRAWLER_MAX_PAGES
+              value: {{ .Values.crawler.maxPages | quote }}
+            - name: CRAWLER_MAX_DEPTH
+              value: {{ .Values.crawler.maxDepth | quote }}
+            - name: CRAWLER_TIMEOUT_SECONDS
+              value: {{ .Values.crawler.timeoutSeconds | quote }}
+            - name: CRAWLER_MAX_RESPONSE_BYTES
+              value: {{ .Values.crawler.maxResponseBytes | quote }}
+            - name: FLARESOLVERR_URL
+              value: {{ .Values.existingServices.flaresolverrUrl | quote }}
+            - name: FLARESOLVERR_MAX_CONCURRENCY
+              value: {{ .Values.flaresolverr.maxConcurrency | quote }}
+            - name: FLARESOLVERR_TIMEOUT_SECONDS
+              value: {{ .Values.flaresolverr.timeoutSeconds | quote }}
+            - name: SEARXNG_URL
+              value: {{ .Values.existingServices.searxngUrl | quote }}
+            - name: AI_GATEWAY_URL
+              value: {{ .Values.existingServices.aiGatewayUrl | quote }}
+            - name: ENRICHMENT_MODEL_PRIMARY
+              value: {{ .Values.ai.modelPrimary }}
+            - name: ENRICHMENT_MODEL_FALLBACK_1
+              value: {{ .Values.ai.modelFallback1 }}
+            - name: ENRICHMENT_MODEL_FALLBACK_2
+              value: {{ .Values.ai.modelFallback2 }}
+            - name: LLM_MAX_INPUT_CHARS
+              value: {{ .Values.ai.maxInputChars | quote }}
+          {{- if .Values.infisical.enabled }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.infisical.managedSecretName }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources: {{ .Values.resources | toYaml | nindent 12 }}
+          securityContext: {{ .Values.containerSecurityContext | toYaml | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}

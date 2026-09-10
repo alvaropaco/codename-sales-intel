@@ -1,0 +1,43 @@
+{{- if .Values.monitoring.alerts.enabled }}
+{{- $ns := .Values.monitoring.alerts.namespace | default .Release.Namespace }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "company-enrichment-worker.fullname" . }}-osint
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "company-enrichment-worker.labels" . | nindent 4 }}
+    # Picked up by the kube-prometheus-stack ruleSelector.
+    release: {{ .Values.monitoring.prometheusRelease }}
+spec:
+  groups:
+    - name: company-enrichment-osint
+      rules:
+        - alert: EnrichmentOSINTScanFailureRateHigh
+          expr: |
+            (
+              sum by (tool) (rate(enrichment_osint_scans_failed_total{namespace="{{ $ns }}", tool=~"bbot|spiderfoot"}[5m]))
+              /
+              clamp_min(sum by (tool) (rate(enrichment_osint_scans_total{namespace="{{ $ns }}", tool=~"bbot|spiderfoot"}[5m])), 0.0001)
+            ) > {{ .Values.monitoring.alerts.osintFailureRateThreshold }}
+          for: {{ .Values.monitoring.alerts.osintFailureRateFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "OSINT scan failure rate high ({{`{{ $labels.tool }}`}})"
+            description: >
+              {{`{{ $labels.tool }}`}} failure rate is {{`{{ $value | humanizePercentage }}`}}
+              over the last 5m (threshold {{ .Values.monitoring.alerts.osintFailureRateThreshold }}).
+        - alert: EnrichmentOSINTBacklogHigh
+          expr: |
+            max by (consumer) (nats_pending_messages{namespace="{{ $ns }}", consumer=~"enrichment-(bbot|spiderfoot)"})
+            > {{ .Values.monitoring.alerts.osintBacklogThreshold }}
+          for: {{ .Values.monitoring.alerts.osintBacklogFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "OSINT consumer backlog high ({{`{{ $labels.consumer }}`}})"
+            description: >
+              Consumer {{`{{ $labels.consumer }}`}} has {{`{{ $value }}`}} pending messages
+              (threshold {{ .Values.monitoring.alerts.osintBacklogThreshold }}).
+{{- end }}

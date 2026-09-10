@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "company-enrichment-worker.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "company-enrichment-worker.labels" . | nindent 4 }}
+data:
+  # Non-secret configuration only. Secrets come from Infisical (see infisical-secret.yaml).
+  WORKER_CONCURRENCY: {{ .Values.worker.concurrency | quote }}
+  WORKER_HEARTBEAT_SECONDS: {{ .Values.worker.heartbeatSeconds | quote }}
+  WORKER_LEASE_SECONDS: {{ .Values.worker.leaseSeconds | quote }}
+  SHUTDOWN_GRACE_SECONDS: {{ .Values.worker.shutdownGraceSeconds | quote }}
+  NATS_FETCH_BATCH_SIZE: {{ .Values.nats.fetchBatchSize | quote }}
+  NATS_MAX_ACK_PENDING: {{ .Values.nats.maxAckPending | quote }}
+  NATS_STREAM: {{ .Values.nats.streamName }}
+  NATS_CONSUMER_NAME: {{ .Values.nats.consumerName }}
+  STREAM_SUBJECTS: {{ .Values.nats.subjects }}
+  CRAWLER_MAX_PAGES: {{ .Values.crawler.maxPages | quote }}
+  CRAWLER_MAX_DEPTH: {{ .Values.crawler.maxDepth | quote }}
+  CRAWLER_TIMEOUT_SECONDS: {{ .Values.crawler.timeoutSeconds | quote }}
+  CRAWLER_MAX_RESPONSE_BYTES: {{ .Values.crawler.maxResponseBytes | quote }}
+  FLARESOLVERR_MAX_CONCURRENCY: {{ .Values.flaresolverr.maxConcurrency | quote }}
+  FLARESOLVERR_TIMEOUT_SECONDS: {{ .Values.flaresolverr.timeoutSeconds | quote }}
+  AI_GATEWAY_URL: {{ .Values.existingServices.aiGatewayUrl | quote }}
+  SEARXNG_URL: {{ .Values.existingServices.searxngUrl | quote }}
+  FLARESOLVERR_URL: {{ .Values.existingServices.flaresolverrUrl | quote }}
+  ENRICHMENT_MODEL_PRIMARY: {{ .Values.ai.modelPrimary }}
+  ENRICHMENT_MODEL_FALLBACK_1: {{ .Values.ai.modelFallback1 }}
+  ENRICHMENT_MODEL_FALLBACK_2: {{ .Values.ai.modelFallback2 }}
+  LLM_MAX_INPUT_CHARS: {{ .Values.ai.maxInputChars | quote }}

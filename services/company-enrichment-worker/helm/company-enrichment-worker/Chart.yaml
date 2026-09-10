@@ -1,0 +1,21 @@
+apiVersion: v2
+name: company-enrichment-worker
+description: Distributed company enrichment worker consuming NATS JetStream (event-driven, no business REST API)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - enrichment
+  - nats
+  - jetstream
+  - worker
+  - queue
+
+home: https://github.com/alvaropaco/codename-sales-intel/tree/main/services/company-enrichment-worker
+sources:
+  - https://github.com/alvaropaco/codename-sales-intel/tree/main/services/company-enrichment-worker
+
+# No dependency charts: NATS/PostgreSQL/Infisical/SearXNG/FlareSolverr/LiteLLM
+# already exist on the cluster and are referenced by service names, never duplicated.
+dependencies: []

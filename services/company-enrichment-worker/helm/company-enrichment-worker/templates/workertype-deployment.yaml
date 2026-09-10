@@ -1,0 +1,200 @@
+# Per-worker-type Deployments (multi-worker OSINT expansion).
+#
+# When `.Values.workerTypes` is non-empty, one Deployment is rendered per
+# worker type, each with its own replica count, WORKER_TYPES env, resource
+# requests and HPA. When it is empty, the main worker deployment runs the
+# legacy `core` pipeline (backward compatible).
+#
+# Example:
+#   workerTypes:
+#     orchestrator: { replicas: 2, concurrency: 10 }
+#     registry:     { replicas: 2, concurrency: 10 }
+#     bbot:         { replicas: 3, concurrency: 2 }
+#     social:       { replicas: 4, concurrency: 8 }
+#     contacts:     { replicas: 4, concurrency: 8 }
+#     people:       { replicas: 2, concurrency: 8 }
+#     relationships:{ replicas: 2, concurrency: 10 }
+#     financial:    { replicas: 2, concurrency: 10 }
+#
+{{- range $type, $cfg := .Values.workerTypes }}
+{{- $enabled := default true $cfg.enabled }}
+{{- if $enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "company-enrichment-worker.fullname" $ }}-{{ $type }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "company-enrichment-worker.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $type }}
+spec:
+  replicas: {{ default 1 $cfg.replicas }}
+  selector:
+    matchLabels:
+      {{- include "company-enrichment-worker.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $type }}
+  template:
+    metadata:
+      labels:
+        {{- include "company-enrichment-worker.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $type }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 90
+      serviceAccountName: {{ include "company-enrichment-worker.fullname" $ }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{ $.Values.podSecurityContext | toYaml | nindent 8 }}
+      containers:
+        - name: worker
+          image: "{{ default $.Values.image.repository (dig "image" "repository" nil $cfg) }}:{{ default $.Values.image.tag (dig "image" "tag" nil $cfg) }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: NATS_URL
+              value: {{ $.Values.existingServices.nats.url }}
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: WORKER_TYPES
+              value: {{ default $type $cfg.types }}
+            - name: WORKER_CONCURRENCY
+              value: {{ default $.Values.worker.concurrency $cfg.concurrency | quote }}
+            - name: WORKER_HEARTBEAT_SECONDS
+              value: {{ $.Values.worker.heartbeatSeconds | quote }}
+            - name: WORKER_LEASE_SECONDS
+              value: {{ $.Values.worker.leaseSeconds | quote }}
+            - name: WORKER_LEASE_TAKEOVER_STALE_SECONDS
+              value: {{ $.Values.worker.leaseTakeoverStaleSeconds | quote }}
+            - name: SHUTDOWN_GRACE_SECONDS
+              value: {{ $.Values.worker.shutdownGraceSeconds | quote }}
+            - name: GRAPH_MAX_DEPTH
+              value: {{ default 2 (dig "graph" "maxDepth" 2 $cfg) | quote }}
+            - name: GRAPH_MAX_DIRECTIVES
+              value: {{ default 50 (dig "graph" "maxDirectives" 50 $cfg) | quote }}
+            - name: GRAPH_MAX_FACTS
+              value: {{ default 200 (dig "graph" "maxFacts" 200 $cfg) | quote }}
+            - name: GRAPH_LEASE_SECONDS
+              value: {{ $.Values.worker.leaseSeconds | quote }}
+            - name: NATS_FETCH_BATCH_SIZE
+              value: {{ $.Values.nats.fetchBatchSize | quote }}
+            - name: NATS_MAX_ACK_PENDING
+              value: {{ $.Values.nats.maxAckPending | quote }}
+            - name: NATS_STREAM
+              value: {{ $.Values.nats.streamName }}
+            - name: NATS_CONSUMER_NAME
+              value: {{ printf "enrichment-%s" $type }}
+            - name: STREAM_SUBJECTS
+              value: {{ $.Values.nats.subjects }}
+            - name: GRAPH_SUBJECT_REQUESTED
+              value: {{ default "enrichment.company.graph.requested.v1" $.Values.graph.subjectRequested }}
+            - name: GRAPH_SUBJECT_COMPLETED
+              value: {{ default "enrichment.company.graph.completed.v1" $.Values.graph.subjectCompleted }}
+            - name: GRAPH_SUBJECT_PARTIAL
+              value: {{ default "enrichment.company.graph.partial.v1" $.Values.graph.subjectPartial }}
+            - name: SEARXNG_URL
+              value: {{ $.Values.existingServices.searxngUrl | quote }}
+            - name: OBSCURA_ENABLED
+              value: {{ default "true" (dig "obscura" "enabled" "true" $cfg) | quote }}
+            - name: OBSCURA_TIMEOUT_SECONDS
+              value: {{ default 30 (dig "obscura" "timeoutSeconds" 30 $cfg) | quote }}
+            - name: OBSCURA_MAX_CONCURRENCY
+              value: {{ default 3 (dig "obscura" "maxConcurrency" 3 $cfg) | quote }}
+            - name: BBOT_TIMEOUT_SECONDS
+              value: {{ default 300 (dig "bbot" "timeoutSeconds" 300 $cfg) | quote }}
+            - name: BBOT_MAX_EVENTS
+              value: {{ default 2000 (dig "bbot" "maxEvents" 2000 $cfg) | quote }}
+            - name: SPIDERFOOT_ENABLED
+              value: {{ default "true" (dig "spiderfoot" "enabled" "true" $cfg) | quote }}
+            - name: SPIDERFOOT_TIMEOUT_SECONDS
+              value: {{ default 600 (dig "spiderfoot" "timeoutSeconds" 600 $cfg) | quote }}
+            - name: SPIDERFOOT_MODULES
+              value: {{ default "sfp_crt,sfp_viewdns,sfp_whois" (dig "spiderfoot" "modules" "sfp_crt,sfp_viewdns,sfp_whois" $cfg) | quote }}
+          {{- if $.Values.infisical.enabled }}
+          envFrom:
+            - secretRef:
+                name: {{ $.Values.infisical.managedSecretName }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources: {{ default $.Values.resources $cfg.resources | toYaml | nindent 12 }}
+          securityContext: {{ $.Values.containerSecurityContext | toYaml | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if or (eq $type "bbot") (eq $type "spiderfoot") }}
+            # OSINT tools (bbot/spiderfoot) write config + logs under $HOME;
+            # the root filesystem is read-only, so give them a writable home.
+            - name: home
+              mountPath: /home/appuser
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if or (eq $type "bbot") (eq $type "spiderfoot") }}
+        - name: home
+          emptyDir: {}
+        {{- end }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}
+{{- if and $enabled (dig "autoscaling" "enabled" false $cfg) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "company-enrichment-worker.fullname" $ }}-{{ $type }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "company-enrichment-worker.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $type }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "company-enrichment-worker.fullname" $ }}-{{ $type }}
+  minReplicas: {{ dig "autoscaling" "minReplicas" 1 $cfg }}
+  maxReplicas: {{ dig "autoscaling" "maxReplicas" 10 $cfg }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ dig "autoscaling" "targetUtilization" 70 $cfg }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 60
+{{- end }}
+{{- end }}
+{{- end }}

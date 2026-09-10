@@ -1,0 +1,199 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/alvaropaco/company-enrichment-worker
+  tag: 0.3.1
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-pull
+nameOverride: ""
+fullnameOverride: ""
+
+existingServices:
+  nats:
+    url: nats://legal-nats.laweragent.svc.cluster.local:4222
+    creds: ""
+  databaseUrl: ""
+  cnpjDatabaseUrl: ""
+  searxngUrl: "http://searxng.monitoring.svc.cluster.local:8080"
+  flaresolverrUrl: ""
+  aiGatewayUrl: "http://litellm-gateway.ai-gateway.svc.cluster.local:4000"
+  aiGatewayApiKey: ""
+
+infisical:
+  enabled: true
+  hostAPI: "http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api"
+  resyncInterval: 60
+  credentialsSecretName: infisical-universal-auth-credentials
+  credentialsSecretNamespace: laweragent
+  projectId: "eec0ce55-fcce-47b7-9f7d-f0e11cc5cc61"
+  envSlug: prod
+  secretsPath: "/company-enrichment"
+  managedSecretName: company-enrichment-secrets
+
+nats:
+  streamName: ENRICHMENT
+  consumerName: enrichment-worker
+  subjects: "enrichment.>"
+  fetchBatchSize: 20
+  maxAckPending: 100
+
+worker:
+  types: core
+  concurrency: 10
+  heartbeatSeconds: 15
+  leaseSeconds: 60
+  leaseTakeoverStaleSeconds: 90
+  shutdownGraceSeconds: 60
+  mockMode: false
+
+graph:
+  maxDepth: 2
+  maxDirectives: 50
+  maxFacts: 200
+  bbotTimeoutSeconds: 300
+  bbotMaxEvents: 2000
+  spiderfootEnabled: true
+  subjectRequested: enrichment.company.graph.requested.v1
+  subjectCompleted: enrichment.company.completed.v1
+  subjectPartial: enrichment.company.partial.v1
+
+workerTypes:
+  graph:
+    types: "orchestrator,registry,domain,contacts,tech,financial,people,relationships,social,validator"
+    replicas: 1
+    concurrency: 5
+    resources:
+      requests: { cpu: "50m", memory: "256Mi" }
+      limits: { cpu: "1", memory: "1Gi" }
+  bbot:
+    types: "bbot"
+    replicas: 1
+    concurrency: 2
+    image:
+      repository: ghcr.io/alvaropaco/company-enrichment-worker
+      tag: 0.3.1-osint
+    resources:
+      requests: { cpu: "50m", memory: "256Mi" }
+      limits: { cpu: "2", memory: "2Gi" }
+  spiderfoot:
+    types: "spiderfoot"
+    replicas: 1
+    concurrency: 1
+    image:
+      repository: ghcr.io/alvaropaco/company-enrichment-worker
+      tag: 0.3.1-osint
+    resources:
+      requests: { cpu: "50m", memory: "256Mi" }
+      limits: { cpu: "1", memory: "2Gi" }
+  persister:
+    types: "persister"
+    replicas: 1
+    concurrency: 10
+    resources:
+      requests: { cpu: "50m", memory: "256Mi" }
+      limits: { cpu: "1", memory: "1Gi" }
+
+bbot:
+  timeoutSeconds: 300
+  maxEvents: 2000
+
+spiderfoot:
+  enabled: true
+  timeoutSeconds: 600
+  modules: "sfp_crt,sfp_viewdns,sfp_whois"
+
+crawler:
+  maxPages: 30
+  maxDepth: 3
+  timeoutSeconds: 15
+  maxResponseBytes: "5000000"
+
+flaresolverr:
+  maxConcurrency: 3
+  timeoutSeconds: 60
+
+ai:
+  modelPrimary: gpt-4.1-mini
+  modelFallback1: deepseek-v4-flash-0731
+  modelFallback2: kimi-k2.6
+  maxInputChars: 30000
+
+service:
+  type: ClusterIP
+  port: 8080
+
+monitoring:
+  prometheusRelease: monitoring-stack
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+  dashboard:
+    enabled: true
+    sidecarLabel: grafana_dashboard
+    sidecarLabelValue: "1"
+    namespace: ""
+  alerts:
+    enabled: true
+    namespace: ""
+    osintFailureRateThreshold: 0.25
+    osintFailureRateFor: 5m
+    osintBacklogThreshold: 100
+    osintBacklogFor: 10m
+
+serviceAccount:
+  create: true
+  name: ""
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 20
+  cpu:
+    targetUtilization: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  natsNamespace: laweragent
+  postgresNamespace: laweragent
+  cnpjPostgresNamespace: cnpj-data
+  searxngNamespace: monitoring
+  aiGatewayNamespace: ai-gateway
+
+migration:
+  enabled: false
+  image:
+    repository: ghcr.io/alvaropaco/company-enrichment-worker
+    tag: 0.3.1
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
