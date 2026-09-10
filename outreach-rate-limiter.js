@@ -123,7 +123,11 @@ async function checkLimit(prisma, emailAccount_id, cfg) {
   });
 
   if (sentCount >= dailyCap) {
-    return { allowed: false, retryIn: 24 * 60 * 60 * 1000 };
+    // O contador diário zera à meia-noite do servidor, antes da janela
+    // reabrir — reagendar para o INÍCIO DA PRÓXIMA JANELA em vez de +24h
+    // fixas (o retry fixo quicava fora da janela e a mensagem ficava presa
+    // em SCHEDULED, competindo com o requeue de boot sem ordem garantida).
+    return { allowed: false, retryIn: msUntilNextAllowedWindow(limit) };
   }
 
   // Count last hour
