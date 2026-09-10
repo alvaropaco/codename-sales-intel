@@ -114,6 +114,8 @@ COPY whatsapp-workers.js ./
 COPY reengagement-agent.js ./
 COPY reengagement-reply.js ./
 COPY org-context.js ./
+COPY llm-client.js ./
+COPY ai-campaign.js ./
 COPY b2base-context.js ./
 COPY metrics.js ./
 COPY package.json ./
