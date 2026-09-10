@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Building,
   Building2,
+  Check,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -9,6 +10,7 @@ import {
   Download,
   Eye,
   MapPin,
+  Minus,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -28,6 +30,7 @@ import { cnaeLabel } from '@/data/cnaeTaxonomy';
 import {
   fetchDiscoveryCandidates,
   importDiscoveredCompany,
+  importDiscoveredCompaniesBulk,
 } from '@/services/api';
 
 interface ProspectsDirectoryViewProps {
@@ -80,6 +83,29 @@ function newDiscoverySeed() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+// Checkbox quadrado no estilo das demais telas (sem componente de UI próprio).
+const DiscoveryCheckbox: React.FC<{
+  checked: boolean;
+  indeterminate?: boolean;
+  onClick: () => void;
+  title: string;
+}> = ({ checked, indeterminate, onClick, title }) => (
+  <button
+    type="button"
+    role="checkbox"
+    aria-checked={indeterminate ? 'mixed' : checked}
+    onClick={onClick}
+    title={title}
+    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
+      checked || indeterminate
+        ? 'border-emerald-600 bg-emerald-600 text-white'
+        : 'border-slate-300 bg-white hover:border-emerald-500 dark:border-slate-500 dark:bg-transparent'
+    }`}
+  >
+    {checked ? <Check className="h-3 w-3" /> : indeterminate ? <Minus className="h-3 w-3" /> : null}
+  </button>
+);
+
 export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   prospects,
   searchQuery,
@@ -114,6 +140,10 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [discoveryError, setDiscoveryError] = useState('');
   const [isImporting, setIsImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState('');
+  // Seleção em lote da tabela "Leads descobertos agora" (CNPJs da página atual).
+  const [selectedDiscovery, setSelectedDiscovery] = useState<Set<string>>(new Set());
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  const [bulkSummary, setBulkSummary] = useState('');
 
   // CNAEs do perfil comercial (código IBGE de 7 dígitos, como a taxonomia salva).
   const profileCnaeCodes = useMemo(
@@ -143,6 +173,9 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
     const cnpj = cnpjFilter.replace(/\D/g, '').trim() || undefined;
     const result = await fetchDiscoveryCandidates({ segment, cnaes: selectedCnaes ?? undefined, location, cnpj, page, pageSize: DISCOVERY_PAGE_SIZE, seed });
     setDiscovered(result.companies);
+    // A lista trocou (busca/página/seed): seleção anterior fica obsoleta.
+    setSelectedDiscovery(new Set());
+    setBulkSummary('');
     setDiscoveryCriteria(result.criteria);
     setDiscoveryMessage(result.message || '');
     setDiscoveryError(result.mcpError || '');
@@ -205,6 +238,12 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
       await onRefresh();
       const remaining = discovered.filter((c) => c.cnpj !== company.cnpj);
       setDiscovered(remaining);
+      setSelectedDiscovery((prev) => {
+        if (!prev.has(company.cnpj)) return prev;
+        const next = new Set(prev);
+        next.delete(company.cnpj);
+        return next;
+      });
       if (!remaining.length && discoveryPage > 1) {
         void loadDiscovery(discoveryPage - 1);
       }
@@ -212,6 +251,62 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
       setImportError(error instanceof Error ? error.message : 'Não foi possível adicionar o lead.');
     } finally {
       setIsImporting(null);
+    }
+  };
+
+  const toggleDiscoveryLead = (cnpj: string) => {
+    setSelectedDiscovery((prev) => {
+      const next = new Set(prev);
+      if (next.has(cnpj)) next.delete(cnpj);
+      else next.add(cnpj);
+      return next;
+    });
+  };
+
+  // "Selecionar todos": marca/desmarca todos os leads listados na página atual.
+  const toggleAllDiscoveryLeads = () => {
+    setSelectedDiscovery((prev) => {
+      const allSelected = discovered.length > 0 && discovered.every((c) => prev.has(c.cnpj));
+      return allSelected ? new Set() : new Set(discovered.map((c) => c.cnpj));
+    });
+  };
+
+  const allDiscoverySelected = discovered.length > 0 && discovered.every((c) => selectedDiscovery.has(c.cnpj));
+  const someDiscoverySelected = !allDiscoverySelected && discovered.some((c) => selectedDiscovery.has(c.cnpj));
+
+  const handleBulkImport = async () => {
+    const selected = discovered.filter((c) => selectedDiscovery.has(c.cnpj));
+    if (!selected.length || isBulkImporting) return;
+    setIsBulkImporting(true);
+    setImportError('');
+    setBulkSummary('');
+    try {
+      const summary = await importDiscoveredCompaniesBulk(selected);
+      await onRefresh();
+      // Sai da lista tudo que foi processado (importado ou já existente); só
+      // permanecem os que falharam, para o vendedor tentar novamente.
+      const failedCnpjs = new Set(summary.failures.map((f) => f.cnpj));
+      const remaining = discovered.filter((c) => !selectedDiscovery.has(c.cnpj) || failedCnpjs.has(c.cnpj));
+      setDiscovered(remaining);
+      setSelectedDiscovery(new Set(failedCnpjs));
+      if (!remaining.length && discoveryPage > 1) {
+        void loadDiscovery(discoveryPage - 1);
+      }
+      const parts: string[] = [];
+      if (summary.importedCount) {
+        parts.push(`${summary.importedCount} ${summary.importedCount === 1 ? 'lead adicionado' : 'leads adicionados'} à sua base e em enriquecimento`);
+      }
+      if (summary.alreadyExists) {
+        parts.push(`${summary.alreadyExists} ${summary.alreadyExists === 1 ? 'lead já estava' : 'leads já estavam'} na sua base`);
+      }
+      if (summary.limitReached) {
+        parts.push(summary.limitMessage || 'limite do plano atingido');
+      }
+      setBulkSummary(parts.join(' · ') || 'Nenhum lead novo para adicionar.');
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Não foi possível adicionar os leads selecionados.');
+    } finally {
+      setIsBulkImporting(false);
     }
   };
 
@@ -424,6 +519,37 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
             </p>
           )}
           {discoveryMessage && !discoveryError && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{discoveryMessage}</p>}
+          {bulkSummary && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-bold text-emerald-700">{bulkSummary}</p>}
+
+          {selectedDiscovery.size > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+              <span className="text-xs font-bold text-emerald-800 dark:text-emerald-200">
+                {selectedDiscovery.size} {selectedDiscovery.size === 1 ? 'lead selecionado' : 'leads selecionados'} para enriquecimento
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => setSelectedDiscovery(new Set())}
+                  variant="ghost"
+                  size="sm"
+                  disabled={isBulkImporting}
+                  className="h-8 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                >
+                  Limpar
+                </Button>
+                <Button
+                  onClick={handleBulkImport}
+                  disabled={isBulkImporting}
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700"
+                >
+                  <UserPlus className={`h-3.5 w-3.5 ${isBulkImporting ? 'animate-pulse' : ''}`} />
+                  {isBulkImporting
+                    ? 'Adicionando...'
+                    : `Adicionar ${selectedDiscovery.size} ${selectedDiscovery.size === 1 ? 'lead selecionado' : 'leads selecionados'}`}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {isLoadingDiscovery ? (
             <div className="mt-4 space-y-2">
@@ -437,6 +563,14 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-slate-100 bg-slate-50 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
                     <tr>
+                      <th className="w-10 px-4 py-3">
+                        <DiscoveryCheckbox
+                          checked={allDiscoverySelected}
+                          indeterminate={someDiscoverySelected}
+                          onClick={toggleAllDiscoveryLeads}
+                          title="Selecionar todos os leads desta página"
+                        />
+                      </th>
                       <th className="px-4 py-3">Lead</th>
                       <th className="px-4 py-3">Segmento</th>
                       <th className="px-4 py-3">Localização</th>
@@ -447,6 +581,13 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
                   <tbody className="divide-y divide-slate-100 dark:divide-white/10">
                     {discovered.map((company) => (
                       <tr key={company.cnpj} className="transition hover:bg-emerald-50/40 dark:hover:bg-emerald-500/5">
+                        <td className="px-4 py-3">
+                          <DiscoveryCheckbox
+                            checked={selectedDiscovery.has(company.cnpj)}
+                            onClick={() => toggleDiscoveryLead(company.cnpj)}
+                            title={`Selecionar ${company.legalName}`}
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">

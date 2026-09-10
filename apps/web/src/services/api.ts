@@ -425,6 +425,42 @@ export async function importDiscoveredCompany(data: {
   return { prospect: json.data, alreadyExists: json.alreadyExists || false };
 }
 
+export interface BulkImportSummary {
+  requested: number;
+  importedCount: number;
+  imported: string[];
+  alreadyExists: number;
+  failures: { cnpj: string; error: string }[];
+  limitReached: boolean;
+  limitMessage: string;
+}
+
+export async function importDiscoveredCompaniesBulk(companies: DiscoveredCompany[]): Promise<BulkImportSummary> {
+  const res = await fetch(`${API_BASE}/discovery/import-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      companies: companies.map((c) => ({
+        cnpj: c.cnpj,
+        legalName: c.legalName,
+        tradeName: c.tradeName || null,
+        industry: c.industry || null,
+        status: c.status || 'active',
+        email: c.email || null,
+        city: c.city || null,
+        state: c.state || null,
+        openingDate: c.openingDate || null,
+        legalNature: c.legalNature || null,
+      })),
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao importar leads em lote');
+  }
+  return json.data;
+}
+
 export async function enrichProspectViaMcp(id: string): Promise<Prospect> {
   const res = await fetch(`${API_BASE}/prospects/${id}/enrich-mcp`, {
     method: 'POST',

@@ -2211,98 +2211,172 @@ app.get('/api/discovery/candidates', async (req, res) => {
   }
 });
 
-// POST /api/discovery/import - persist a discovered company as a Prospect
-app.post('/api/discovery/import', async (req, res) => {
-  try {
-    const { cnpj, legalName, tradeName, industry, status, email, city, state, openingDate, legalNature } = req.body || {};
-    if (!cnpj || !legalName) {
-      return res.status(400).json({ success: false, error: 'CNPJ and company name required' });
-    }
+/**
+ * Importa uma empresa descoberta (MCP-CNPJ) como Prospect do org e dispara a
+ * esteira de enriquecimento (NATS ou fallback síncrono BrasilAPI) — mesma
+ * rota usada pelo import individual e pelo bulk.
+ * Retorna { prospect, alreadyExists, plan }; alreadyExists=true quando o CNPJ
+ * já estava na base do org (nada é criado nem re-enriquecido).
+ * Lança 403/PLAN_LIMIT_REACHED quando o plano não tem mais cota de leads.
+ */
+async function importDiscoveredCompanyForOrg(orgId, data) {
+  const { cnpj, legalName, tradeName, industry, status, email, city, state, openingDate, legalNature } = data || {};
+  if (!cnpj || !legalName) {
+    const err = new Error('CNPJ and company name required');
+    err.status = 400;
+    throw err;
+  }
 
-    const orgId = await requireRequestOrgId(req);
-    const normalizedCnpj = String(cnpj).replace(/\D/g, '');
-    const plan = await getOrgPlan(orgId);
+  const normalizedCnpj = String(cnpj).replace(/\D/g, '');
+  const plan = await getOrgPlan(orgId);
 
-    // Verifica duplicidade DENTRO do org do usuário (não globalmente).
-    let prospect = await prisma.prospect.findFirst({ where: { cnpj: normalizedCnpj, orgId } });
-    if (prospect) {
-      return res.json({
-        success: true,
-        data: redactProspectForPlan(formatEnrichedProspect(prospect), plan),
-        alreadyExists: true,
-        timestamp: new Date().toISOString(),
+  // Verifica duplicidade DENTRO do org do usuário (não globalmente).
+  const existing = await prisma.prospect.findFirst({ where: { cnpj: normalizedCnpj, orgId } });
+  if (existing) {
+    return { prospect: existing, alreadyExists: true, plan };
+  }
+
+  // Plano: garante que o trial ainda pode captar mais um lead antes do create.
+  await assertCanCaptureLead(orgId);
+
+  // Trial: o client só conhece valores MASCARADOS desses campos (a resposta
+  // de discovery os mascara), então não podemos gravá-los como se fossem
+  // reais — a esteira de enriquecimento re-preenche com dados verdadeiros.
+  let importEmail = email;
+  let importOpeningDate = openingDate;
+  let importLegalNature = legalNature;
+  if (plan !== 'premium') {
+    const sanitized = stripMaskedIncomingFields({ email, openingDate, legalNature });
+    importEmail = sanitized.email;
+    importOpeningDate = sanitized.openingDate;
+    importLegalNature = sanitized.legalNature;
+  }
+
+  let prospect = await prisma.prospect.create({
+    data: {
+      cnpj: normalizedCnpj,
+      companyName: legalName || tradeName || normalizedCnpj,
+      tradeName: tradeName || null,
+      industry: industry || null,
+      city: city || null,
+      state: state || null,
+      cnpjEmail: importEmail || null,
+      cnpjOpenedAt: importOpeningDate ? new Date(importOpeningDate) : null,
+      cnpjLegalNature: importLegalNature || null,
+      status: status === 'active' ? 'prospect' : 'lead',
+      opportunityScore: 60,
+      // Não marcamos como 'enriched': a esteira de enriquecimento (NATS) ou o
+      // fallback síncrono BrasilAPI é quem completa firmografia + scoring.
+      enrichmentStatus: 'pending',
+      orgId,
+    },
+  });
+
+  // Empresas descobertas também entram na esteira de enriquecimento.
+  let enriched = prospect;
+  if (natsEnrichment.isNatsEnabled()) {
+    const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+    if (eventId) {
+      enriched = await prisma.prospect.update({
+        where: { id: prospect.id },
+        data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
       });
-    }
-
-    // Plano: garante que o trial ainda pode captar mais um lead antes do create.
-    await assertCanCaptureLead(orgId);
-
-    // Trial: o client só conhece valores MASCARADOS desses campos (a resposta
-    // de discovery os mascara), então não podemos gravá-los como se fossem
-    // reais — a esteira de enriquecimento re-preenche com dados verdadeiros.
-    let importEmail = email;
-    let importOpeningDate = openingDate;
-    let importLegalNature = legalNature;
-    if (plan !== 'premium') {
-      const sanitized = stripMaskedIncomingFields({ email, openingDate, legalNature });
-      importEmail = sanitized.email;
-      importOpeningDate = sanitized.openingDate;
-      importLegalNature = sanitized.legalNature;
-    }
-
-    prospect = await prisma.prospect.create({
-      data: {
-        cnpj: normalizedCnpj,
-        companyName: legalName || tradeName || normalizedCnpj,
-        tradeName: tradeName || null,
-        industry: industry || null,
-        city: city || null,
-        state: state || null,
-        cnpjEmail: importEmail || null,
-        cnpjOpenedAt: importOpeningDate ? new Date(importOpeningDate) : null,
-        cnpjLegalNature: importLegalNature || null,
-        status: status === 'active' ? 'prospect' : 'lead',
-        opportunityScore: 60,
-        // Não marcamos como 'enriched': a esteira de enriquecimento (NATS) ou o
-        // fallback síncrono BrasilAPI é quem completa firmografia + scoring.
-        enrichmentStatus: 'pending',
-        orgId,
-      },
-    });
-
-    // Empresas descobertas também entram na esteira de enriquecimento.
-    let enriched = prospect;
-    if (natsEnrichment.isNatsEnabled()) {
-      const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-      if (eventId) {
-        enriched = await prisma.prospect.update({
-          where: { id: prospect.id },
-          data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
-        });
-        // Complemento: hidrata firmografia (telefones/sócios) via BrasilAPI em
-        // paralelo, sem sobrescrever o scoring da esteira NATS.
-        hydrateFirmographics(prisma, enriched).catch((err) => {
-          console.error('[firmographics] erro ao hidratar (import):', err.message);
-        });
-      } else {
-        enriched = await enrichProspectWithCnpj(prisma, prospect);
-      }
+      // Complemento: hidrata firmografia (telefones/sócios) via BrasilAPI em
+      // paralelo, sem sobrescrever o scoring da esteira NATS.
+      hydrateFirmographics(prisma, enriched).catch((err) => {
+        console.error('[firmographics] erro ao hidratar (import):', err.message);
+      });
     } else {
       enriched = await enrichProspectWithCnpj(prisma, prospect);
     }
+  } else {
+    enriched = await enrichProspectWithCnpj(prisma, prospect);
+  }
 
-    res.json({
+  return { prospect: enriched, alreadyExists: false, plan };
+}
+
+// POST /api/discovery/import - persist a discovered company as a Prospect
+app.post('/api/discovery/import', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const { prospect, alreadyExists, plan } = await importDiscoveredCompanyForOrg(orgId, req.body || {});
+
+    const payload = {
       success: true,
-      data: redactProspectForPlan(formatEnrichedProspect(enriched), plan),
-      alreadyExists: false,
-      enrichment: { status: enriched.enrichmentStatus, source: enriched.enrichmentSource },
+      data: redactProspectForPlan(formatEnrichedProspect(prospect), plan),
+      alreadyExists,
       timestamp: new Date().toISOString(),
-    });
+    };
+    if (!alreadyExists) {
+      payload.enrichment = { status: prospect.enrichmentStatus, source: prospect.enrichmentSource };
+    }
+    res.json(payload);
   } catch (error) {
     if (error.code === 'PLAN_LIMIT_REACHED' || error.status === 403) {
       return res.status(403).json({ success: false, error: error.message, code: 'PLAN_LIMIT_REACHED' });
     }
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/discovery/import-bulk - persiste em lote as empresas selecionadas
+// na tela "Leads descobertos agora" (checkbox "selecionar todos"). Cada lead
+// passa pela mesma esteira do import individual (persist + enriquecimento),
+// em sequência para não martelar o serviço público de CNPJ. Para no primeiro
+// estouro de cota do plano e devolve o resumo parcial.
+app.post('/api/discovery/import-bulk', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const companies = Array.isArray(req.body?.companies) ? req.body.companies : [];
+    if (!companies.length) {
+      return res.status(400).json({ success: false, error: 'Nenhuma empresa recebida para importar.' });
+    }
+    if (companies.length > 50) {
+      return res.status(400).json({ success: false, error: 'Máximo de 50 leads por lote.' });
+    }
+
+    const imported = [];
+    let alreadyExists = 0;
+    const failures = [];
+    let limitReached = false;
+    let limitMessage = '';
+
+    for (const company of companies) {
+      try {
+        const { prospect, alreadyExists: existed } = await importDiscoveredCompanyForOrg(orgId, company);
+        if (existed) {
+          alreadyExists += 1;
+        } else {
+          imported.push(prospect.cnpj);
+        }
+      } catch (error) {
+        if (error.code === 'PLAN_LIMIT_REACHED' || error.status === 403) {
+          limitReached = true;
+          limitMessage = error.message;
+          break;
+        }
+        console.error('[discovery/import-bulk] falha ao importar CNPJ:', error.message);
+        failures.push({ cnpj: String(company?.cnpj || ''), error: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        requested: companies.length,
+        importedCount: imported.length,
+        imported,
+        alreadyExists,
+        failures,
+        limitReached,
+        limitMessage,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 
