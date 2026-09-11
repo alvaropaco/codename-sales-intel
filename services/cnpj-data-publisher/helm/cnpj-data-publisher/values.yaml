@@ -20,14 +20,43 @@ ingestor:
   schedule: "0 4 15 * *"
   timeZone: "America/Sao_Paulo"
   concurrencyPolicy: Forbid
+  # Skip tolerance: if the controller missed the schedule (node down at 04:00),
+  # still run as long as we are within 1h of it. Beyond that, wait for next month.
+  startingDeadlineSeconds: 3600
+  # Hard ceiling for the whole chained job (ingest + embed): 48h.
+  activeDeadlineSeconds: 172800
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
   backoffLimit: 2
   snapshot: latest
+  force: false
+  # Embedding chain (default): the job runs `monthly` = ingest then embed +
+  # IVFFlat index, exiting non-zero while rows remain pending so backoff
+  # resumes the backlog. Set false to run ingest only.
+  embed:
+    enabled: true
+    createIndex: true
   extraArgs: []
   nodeSelector: {}
   tolerations: []
   affinity: {}
+
+# --- Email notifications (monthly job outcome) ---
+# SMTP_PASSWORD is injected from a pre-created secret; every other setting
+# lands in the ConfigMap. Create the secret out-of-band, e.g.:
+#   kubectl -n <ns> create secret generic cnpj-publisher-notify \
+#     --from-literal=smtp-password='...'
+notification:
+  enabled: false
+  smtpHost: ""
+  smtpPort: 587
+  smtpUser: ""
+  smtpFrom: ""
+  smtpStartTls: true
+  notifyTo: []                # e.g. ["ops@example.com"]
+  smtpPasswordSecret:
+    name: cnpj-publisher-notify
+    key: smtp-password
 
 # --- Outbox publisher Deployment ---
 outboxPublisher:
@@ -83,9 +112,10 @@ sink:
     key: database-url
 
 # --- Embedding backfill CronJob (semantic search) ---
-# Runs `cnpj-data-publisher embed` to populate companies.embedding from the
-# in-cluster embeddings endpoint. Disabled by default; enable once the sink is
-# populated and EMBEDDING_BASE_URL points at your gateway.
+# REPAIR/BACKFILL TOOL ONLY: the monthly chain (ingestor.embed.enabled) already
+# embeds right after each successful ingest. Enable this only to catch up a
+# backlog outside the monthly window — running both at once is safe (only NULL
+# rows are written) but doubles the load on the embeddings endpoint.
 embedder:
   enabled: false
   schedule: "0 6 15 * *"   # a couple hours after the monthly ingest

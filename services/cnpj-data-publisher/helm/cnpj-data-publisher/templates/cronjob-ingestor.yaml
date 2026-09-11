@@ -12,11 +12,17 @@ spec:
   timeZone: {{ . | quote }}
   {{- end }}
   concurrencyPolicy: {{ .Values.ingestor.concurrencyPolicy }}
+  {{- with .Values.ingestor.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ . }}
+  {{- end }}
   successfulJobsHistoryLimit: {{ .Values.ingestor.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.ingestor.failedJobsHistoryLimit }}
   jobTemplate:
     spec:
       backoffLimit: {{ .Values.ingestor.backoffLimit }}
+      {{- with .Values.ingestor.activeDeadlineSeconds }}
+      activeDeadlineSeconds: {{ . }}
+      {{- end }}
       template:
         metadata:
           labels:
@@ -38,13 +44,36 @@ spec:
               ports:
                 - name: metrics
                   containerPort: {{ .Values.config.metricsPort }}
+              {{- if .Values.ingestor.embed.enabled }}
+              # Monthly chain: ingest, then embed + coverage report in the
+              # same pod. `monthly` exits non-zero if any stage fails or rows
+              # remain pending, so backoffLimit retries converge the backlog
+              # (both stages are idempotent/resumable).
+              args:
+                - monthly
+                - --snapshot
+                - {{ .Values.ingestor.snapshot | quote }}
+                {{- if .Values.ingestor.embed.createIndex }}
+                - --create-index
+                {{- end }}
+                {{- if .Values.ingestor.force }}
+                - --force
+                {{- end }}
+                {{- with .Values.ingestor.extraArgs }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- else }}
               args:
                 - ingest
                 - --snapshot
                 - {{ .Values.ingestor.snapshot | quote }}
+                {{- if .Values.ingestor.force }}
+                - --force
+                {{- end }}
                 {{- with .Values.ingestor.extraArgs }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
+              {{- end }}
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}
               env:

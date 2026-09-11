@@ -70,6 +70,10 @@ def test_embedder_backfills_and_resumes(monkeypatch: pytest.MonkeyPatch) -> None
     again = embedder_mod.Embedder().run()
     assert again.rows_embedded == 0
 
+    # Coverage reflects the same population the run selects from.
+    coverage = embedder_mod.Embedder().coverage()
+    assert coverage == {"total": 5, "embedded": 5, "pending": 0}
+
     # IVFFlat index creation works once vectors exist.
     embedder_mod.Embedder().create_index()
     with engine.connect() as conn:

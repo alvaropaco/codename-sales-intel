@@ -69,3 +69,21 @@ data:
   HEALTH_PORT: {{ .Values.config.healthPort | quote }}
   OTEL_ENABLED: {{ .Values.config.otelEnabled | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterOtlpEndpoint | quote }}
+
+  {{- if .Values.notification.enabled }}
+  NOTIFY_EMAIL_ENABLED: "true"
+  SMTP_HOST: {{ .Values.notification.smtpHost | quote }}
+  SMTP_PORT: {{ .Values.notification.smtpPort | default 587 | quote }}
+  {{- with .Values.notification.smtpUser }}
+  SMTP_USER: {{ . | quote }}
+  {{- end }}
+  SMTP_STARTTLS: {{ .Values.notification.smtpStartTls | default true | quote }}
+  {{- with .Values.notification.smtpFrom }}
+  SMTP_FROM: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.notification.notifyTo }}
+  NOTIFY_EMAIL_TO: {{ join "," . | quote }}
+  {{- end }}
+  {{- else }}
+  NOTIFY_EMAIL_ENABLED: "false"
+  {{- end }}

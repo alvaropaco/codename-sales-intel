@@ -109,6 +109,13 @@ inlined, so they stay out of the rendered manifests (spec section 32).
       name: {{ .Values.sink.databaseUrlSecret.name }}
       key: {{ .Values.sink.databaseUrlSecret.key | default "database-url" }}
 {{- end }}
+{{- if and .Values.notification.enabled .Values.notification.smtpPasswordSecret }}
+- name: SMTP_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.notification.smtpPasswordSecret.name }}
+      key: {{ .Values.notification.smtpPasswordSecret.key | default "smtp-password" }}
+{{- end }}
 {{- end }}
 
 {{- define "cnpj-data-publisher.envFrom" -}}

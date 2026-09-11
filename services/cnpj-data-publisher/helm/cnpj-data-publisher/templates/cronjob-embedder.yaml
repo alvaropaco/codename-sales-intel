@@ -43,6 +43,9 @@ spec:
                 {{- if .Values.embedder.createIndex }}
                 - --create-index
                 {{- end }}
+                {{- if .Values.notification.enabled }}
+                - --notify
+                {{- end }}
                 {{- with .Values.embedder.extraArgs }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}

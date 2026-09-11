@@ -29,6 +29,7 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_SKIPPED = 0  # SKIPPED is not a failure (spec section 28)
 EXIT_LOCKED = 3
+EXIT_EMBED_INCOMPLETE = 4  # embedding finished with pending NULL rows
 
 
 def _bootstrap(component: str) -> None:
@@ -289,17 +290,16 @@ def cleanup(
 
 
 # ---------------------------------------------------------------------
-@app.command()
-def embed(
-    create_index: Annotated[
-        bool,
-        typer.Option("--create-index", help="Create the HNSW index after backfilling."),
-    ] = False,
-) -> None:
-    """Backfill semantic-search embeddings for the analytical sink table."""
-    _bootstrap("embedder")
-    _serve_metrics()
+def _run_embed_stage(*, snapshot_version: str | None, create_index: bool, notify: bool) -> None:
+    """Embed pending rows, report coverage, e-mail the outcome.
 
+    Shared by the ``embed`` (repair) and ``monthly`` (CronJob chain)
+    commands. Exits with EXIT_EMBED_INCOMPLETE when rows remain pending so
+    the Kubernetes job is marked failed and its backoff resumes later —
+    embedding only touches NULL rows, so the retry continues where this
+    run stopped.
+    """
+    from cnpj_data_publisher.notifications import NotificationService
     from cnpj_data_publisher.processing.embedder import Embedder, EmbeddingError
 
     try:
@@ -311,9 +311,96 @@ def embed(
         console.print(f"[red]embedding failed:[/red] {exc}")
         raise typer.Exit(EXIT_ERROR) from exc
 
+    coverage = embedder.coverage()
     console.print(
-        f"[green]embedded[/green] {result.rows_embedded} rows in {result.batches} batches"
+        f"[green]embedded[/green] {result.rows_embedded} rows in {result.batches} batches; "
+        f"coverage {coverage['embedded']}/{coverage['total']} "
+        f"(pending {coverage['pending']})"
     )
+
+    if notify and (result.rows_embedded > 0 or coverage["pending"] > 0):
+        NotificationService().send_embed_report(
+            version=snapshot_version or "latest",
+            rows_embedded=result.rows_embedded,
+            batches=result.batches,
+            coverage=coverage,
+        )
+
+    if coverage["pending"] > 0:
+        console.print(f"[red]embedding incomplete:[/red] {coverage['pending']} rows still pending")
+        raise typer.Exit(EXIT_EMBED_INCOMPLETE)
+
+
+# ---------------------------------------------------------------------
+@app.command()
+def embed(
+    create_index: Annotated[
+        bool,
+        typer.Option("--create-index", help="Create the IVFFlat index after backfilling."),
+    ] = False,
+    notify: Annotated[
+        bool,
+        typer.Option("--notify", help="E-mail the coverage report when work was done."),
+    ] = False,
+    snapshot_version: Annotated[
+        str,
+        typer.Option(
+            "--snapshot-version", help="Snapshot this table was loaded from (for the report)."
+        ),
+    ] = "",
+) -> None:
+    """Backfill semantic-search embeddings for the analytical sink table (repair tool)."""
+    _bootstrap("embedder")
+    _serve_metrics()
+    _run_embed_stage(
+        snapshot_version=snapshot_version or None,
+        create_index=create_index,
+        notify=notify,
+    )
+
+
+# ---------------------------------------------------------------------
+@app.command()
+def monthly(
+    snapshot: Annotated[str, typer.Option(help="Snapshot version or 'latest'.")] = "latest",
+    force: Annotated[bool, typer.Option("--force", help="Re-ingest even if COMPLETED.")] = False,
+    create_index: Annotated[
+        bool,
+        typer.Option(
+            "--create-index/--no-create-index", help="Build the IVFFlat index after embedding."
+        ),
+    ] = True,
+    skip_embed: Annotated[
+        bool, typer.Option("--skip-embed", help="Ingest only (no embedding stage).")
+    ] = False,
+) -> None:
+    """Monthly CronJob entrypoint: ingest, then embed + coverage report.
+
+    The ingest step already e-mails success/failure on its own. The embedding
+    stage runs right after a successful ingest (a skip falls through fast —
+    it is a no-op when no rows are pending) and e-mails its coverage report
+    when work was done or rows remain pending.
+    """
+    _bootstrap("ingestor")
+    _serve_metrics()
+
+    from cnpj_data_publisher.pipeline import IngestFailed, IngestLocked, IngestPipeline
+
+    try:
+        result = IngestPipeline(requested_snapshot=snapshot, force=force).run()
+    except IngestFailed as exc:
+        console.print(f"[red]ingest failed[/red] at {exc.stage}: {exc.code} — {exc}")
+        raise typer.Exit(EXIT_ERROR) from exc
+    except IngestLocked as exc:
+        console.print(f"[red]ingest locked:[/red] {exc}")
+        raise typer.Exit(EXIT_LOCKED) from exc
+
+    console.print(f"[green]ingest {result.status}[/green] {result.snapshot_version}")
+    if skip_embed:
+        return
+
+    version = result.snapshot_version if result.status == "COMPLETED" else None
+    _run_embed_stage(snapshot_version=version, create_index=create_index, notify=True)
 
 
 # ---------------------------------------------------------------------

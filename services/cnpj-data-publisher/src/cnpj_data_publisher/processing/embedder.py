@@ -175,6 +175,29 @@ class Embedder:
         logger.info("embedding_completed", rows_embedded=total, batches=batches)
         return EmbedResult(rows_embedded=total, batches=batches)
 
+    # -- coverage ------------------------------------------------------------
+    def coverage(self) -> dict[str, int]:
+        """Embedding coverage over the same population the run selects from.
+
+        ``pending > 0`` after a run without a row cap means the backfill did
+        not finish (endpoint outage, OOM, …) — callers use this to fail the
+        job so the CronJob retry resumes the remaining rows.
+        """
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    f"""
+                    SELECT count(*) AS total,
+                           count(*) FILTER (WHERE embedding IS NULL) AS pending
+                    FROM {self.table}
+                    WHERE search_text IS NOT NULL
+                    """
+                )
+            ).one()
+        total = int(row[0])
+        pending = int(row[1])
+        return {"total": total, "pending": pending, "embedded": total - pending}
+
     def create_index(self) -> None:
         """Create an IVFFlat index for cosine similarity once vectors exist.
 

@@ -170,6 +170,19 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = ""
 
+    # --- Email notifications (monthly job outcome) -----------------------
+    # Master switch plus SMTP relay description. The password comes from an
+    # env var injected from a Kubernetes secret (never from the ConfigMap).
+    notify_email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    smtp_from: str = ""
+    # Comma-separated recipient list.
+    notify_email_to: str = ""
+
     # ------------------------------------------------------------------
     # Validators
     # ------------------------------------------------------------------

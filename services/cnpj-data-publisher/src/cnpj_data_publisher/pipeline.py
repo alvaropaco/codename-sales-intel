@@ -8,6 +8,7 @@ Drives the documented stage machine:
 
 from __future__ import annotations
 
+import sys
 import time
 import traceback
 import uuid
@@ -30,6 +31,7 @@ from cnpj_data_publisher.database.session import (
     session_scope,
 )
 from cnpj_data_publisher.logging import get_logger
+from cnpj_data_publisher.notifications import NotificationService
 from cnpj_data_publisher.outbox.service import OutboxService
 from cnpj_data_publisher.processing.canonical_snapshot import (
     CanonicalSnapshotBuilder,
@@ -78,6 +80,7 @@ class IngestPipeline:
         self.force = force
         self.correlation_id = str(uuid.uuid4())
         self.stats: dict[str, Any] = {}
+        self.discovered_version: str | None = None
 
     # -- helpers ----------------------------------------------------------
     def _stage(self, name: str) -> Any:
@@ -111,15 +114,35 @@ class IngestPipeline:
                     )
                 except Exception:
                     metrics.snapshot_runs_total.labels(status="FAILED").inc()
+                    self._notify_failure()
                     raise
         finally:
             lock_session.close()
 
         metrics.snapshot_runs_total.labels(status="COMPLETED").inc()
+        self.stats["total_seconds"] = time.perf_counter() - started
         metrics.snapshot_run_duration_seconds.labels(stage="total").observe(
             time.perf_counter() - started
         )
+        NotificationService().send_ingest_success(
+            version=result.snapshot_version, statistics=self.stats
+        )
         return result
+
+    # -- notifications -------------------------------------------------------
+    def _notify_failure(self) -> None:
+        """Best-effort failure e-mail. Never masks the original exception."""
+        exc_info = sys.exc_info()[1]
+        if isinstance(exc_info, IngestFailed):
+            stage, code, message = exc_info.stage, exc_info.code, str(exc_info)
+        else:
+            stage, code, message = "UNEXPECTED", "UNEXPECTED", str(exc_info or "")
+        NotificationService().send_ingest_failure(
+            version=self.discovered_version or self.requested,
+            stage=stage,
+            code=code,
+            message=message,
+        )
 
     def _run_locked(self) -> IngestResult:
         # --- DISCOVERED ---------------------------------------------------
@@ -127,6 +150,7 @@ class IngestPipeline:
             info = self._discover()
 
         version = info.version
+        self.discovered_version = version
         self.settings.ensure_dirs(version)
 
         with session_scope() as session:
@@ -183,6 +207,11 @@ class IngestPipeline:
                     "UNEXPECTED",
                     f"{exc}\n{traceback.format_exc()}",
                 )
+                # Unexpected errors must be observable on NATS too, not only
+                # on job logs — consumers key their alerts on this event.
+                OutboxService(session).enqueue_ingest_failed(
+                    version, "UNEXPECTED", "UNEXPECTED", str(exc), self.correlation_id
+                )
             raise
 
         with session_scope() as session:
@@ -221,11 +250,13 @@ class IngestPipeline:
         self._set_status(version, SnapshotStatus.DOWNLOADING)
         downloads_dir = self.settings.downloads_dir(version)
         downloader = Downloader(downloads_dir)
+        download_started = time.perf_counter()
         with self._stage("download"):
             try:
                 downloader.download_all(list(info.files))
             except Exception as exc:
                 raise IngestFailed("DOWNLOADING", str(exc), "DOWNLOAD_FAILED") from exc
+        self.stats["download_seconds"] = time.perf_counter() - download_started
 
         problems = downloader.verify_all()
         if problems:
