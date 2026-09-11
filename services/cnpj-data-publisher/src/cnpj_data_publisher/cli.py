@@ -309,6 +309,10 @@ def _run_embed_stage(*, snapshot_version: str | None, create_index: bool, notify
             embedder.create_index()
     except EmbeddingError as exc:
         console.print(f"[red]embedding failed:[/red] {exc}")
+        if notify:
+            NotificationService().send_embed_failure(
+                version=snapshot_version or "latest", message=str(exc)
+            )
         raise typer.Exit(EXIT_ERROR) from exc
 
     coverage = embedder.coverage()

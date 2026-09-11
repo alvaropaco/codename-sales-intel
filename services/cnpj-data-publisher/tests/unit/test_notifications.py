@@ -148,6 +148,16 @@ def test_embed_report_success_and_incomplete(enabled: None) -> None:  # noqa: AR
     assert "2 pendentes" in FakeSMTP.last["Subject"]
 
 
+def test_embed_failure_email(enabled: None) -> None:  # noqa: ARG001
+    sent = NotificationService().send_embed_failure(
+        version="2026-08", message="EMBEDDING_BASE_URL is not configured"
+    )
+    assert sent is True
+    assert "❌" in FakeSMTP.last["Subject"]
+    assert "embedding FALHOU" in FakeSMTP.last["Subject"]
+    assert "EMBEDDING_BASE_URL" in FakeSMTP.last.get_body(preferencelist=("plain",)).get_content()
+
+
 def test_smtp_failure_is_swallowed(enabled: None) -> None:  # noqa: ARG001
     FakeSMTP.fail = smtplib.SMTPException("relay down")
     sent = NotificationService().send_ingest_failure(

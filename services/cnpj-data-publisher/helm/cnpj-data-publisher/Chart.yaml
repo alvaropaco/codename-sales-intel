@@ -2,7 +2,7 @@ apiVersion: v2
 name: cnpj-data-publisher
 description: Publishes Brazilian CNPJ open-data company events to NATS JetStream
 type: application
-version: 0.1.1
+version: 0.1.2
 appVersion: "0.1.0"
 keywords:
   - cnpj

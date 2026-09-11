@@ -78,6 +78,14 @@ spec:
                 {{- toYaml .Values.securityContext | nindent 16 }}
               env:
                 {{- include "cnpj-data-publisher.envVars" . | nindent 16 }}
+                {{- if .Values.ingestor.embed.enabled }}
+                {{- /* The chained `monthly` runs the embed stage in this pod,
+                        so it needs the same endpoint settings as the repair
+                        embedder CronJob. */}}
+                {{- with .Values.embedder.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+                {{- end }}
               envFrom:
                 {{- include "cnpj-data-publisher.envFrom" . | nindent 16 }}
               resources:

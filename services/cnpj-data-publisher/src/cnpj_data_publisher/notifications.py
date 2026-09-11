@@ -78,6 +78,15 @@ class NotificationService:
         subject = f"[cnpj-data-publisher] ❌ ingestão {version or '?'} FALHOU em {stage}"
         return self._send(subject, self._render(rows, footer=self._footer()))
 
+    def send_embed_failure(self, *, version: str, message: str) -> bool:
+        rows: list[tuple[str, object]] = [
+            ("Snapshot base", version),
+            ("Estágio", "EMBEDDING"),
+            ("Mensagem", (message or "")[:1500]),
+        ]
+        subject = f"[cnpj-data-publisher] ❌ embedding FALHOU ({version})"
+        return self._send(subject, self._render(rows, footer=self._footer()))
+
     def send_embed_report(
         self, *, version: str, rows_embedded: int, batches: int, coverage: dict[str, int]
     ) -> bool:
