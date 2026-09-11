@@ -57,10 +57,9 @@ ENV VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN} \
     VITE_FIREBASE_STORAGE_BUCKET=${VITE_FIREBASE_STORAGE_BUCKET} \
     VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
 
-# Install root workspace deps (apps/*)
+# Install root workspace deps (apps/web)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
-COPY apps/api/package.json apps/api/
 RUN pnpm install --frozen-lockfile
 
 # Copy source (skips .env, node_modules, dist via .dockerignore)
