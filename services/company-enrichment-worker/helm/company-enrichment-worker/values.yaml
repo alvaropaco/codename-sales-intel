@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/alvaropaco/company-enrichment-worker
-  tag: 0.3.1
+  tag: 0.3.2
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
@@ -73,7 +73,7 @@ workerTypes:
     concurrency: 2
     image:
       repository: ghcr.io/alvaropaco/company-enrichment-worker
-      tag: 0.3.1-osint
+      tag: 0.3.2-osint
     resources:
       requests: { cpu: "50m", memory: "256Mi" }
       limits: { cpu: "2", memory: "2Gi" }
@@ -83,7 +83,7 @@ workerTypes:
     concurrency: 1
     image:
       repository: ghcr.io/alvaropaco/company-enrichment-worker
-      tag: 0.3.1-osint
+      tag: 0.3.2-osint
     resources:
       requests: { cpu: "50m", memory: "256Mi" }
       limits: { cpu: "1", memory: "2Gi" }
@@ -178,7 +178,7 @@ migration:
   enabled: false
   image:
     repository: ghcr.io/alvaropaco/company-enrichment-worker
-    tag: 0.3.1
+    tag: 0.3.2
 
 podSecurityContext:
   runAsNonRoot: true
