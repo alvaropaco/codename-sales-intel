@@ -20,6 +20,12 @@ class Settings(BaseSettings):
         default="enrichment-worker", validation_alias="NATS_CONSUMER_NAME"
     )
     nats_stream: str = Field(default="ENRICHMENT", validation_alias="NATS_STREAM")
+    # Cap de storage do stream ENRICHMENT. Sem isso o update_stream de boot
+    # reabre o limite para ilimitado e o stream pode drenar o storage global
+    # do servidor NATS (max_file). O default cobre ~250x o uso observado.
+    nats_stream_max_bytes: int = Field(
+        default=1_073_741_824, validation_alias="NATS_STREAM_MAX_BYTES"
+    )
 
     # --- Subjects ---
     stream_subjects: str = Field(default="enrichment.company.>", validation_alias="STREAM_SUBJECTS")

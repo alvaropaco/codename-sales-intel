@@ -83,6 +83,7 @@ class JetStreamPublisher:
             discard=DiscardPolicy.OLD,
             duplicate_window=self.settings.nats_stream_duplicate_window_hours * 3600,
             max_age=self.settings.nats_stream_max_age_days * 24 * 3600,
+            max_bytes=self.settings.nats_stream_max_bytes,
             num_replicas=self.settings.nats_stream_replicas,
         )
 

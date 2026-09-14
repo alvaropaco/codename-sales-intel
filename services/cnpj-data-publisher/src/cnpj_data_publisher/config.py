@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     nats_subject_prefix: str = "company.br.cnpj"
     nats_stream_replicas: int = 1
     nats_stream_max_age_days: int = 30
+    # Cap de storage do stream BRAZIL_COMPANY_EVENTS. Sem max_bytes o
+    # update_stream de boot reabre o limite para ilimitado e, estourando o
+    # max_file do servidor, TODOS os publishes JetStream passam a falhar.
+    nats_stream_max_bytes: int = 10_737_418_240
     nats_stream_duplicate_window_hours: int = 24
     nats_connect_timeout_seconds: int = 10
 

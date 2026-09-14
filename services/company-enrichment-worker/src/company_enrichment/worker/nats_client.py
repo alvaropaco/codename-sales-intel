@@ -52,6 +52,7 @@ class NATSClient:
             "name": self._settings.nats_stream,
             "subjects": subjects,
             "max_age": 7 * 24 * 3600,  # 7 days retention
+            "max_bytes": self._settings.nats_stream_max_bytes,
             "storage": "file",
             "num_replicas": 1,
         }
