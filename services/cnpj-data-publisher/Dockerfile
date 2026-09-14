@@ -36,7 +36,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/usr/local/bin:${PATH}" \
     STORAGE_LOCAL_PATH=/data
 
+# Upgrade OS packages to current security patches: o scan de CVEs do CI
+# falha em CVE HIGH/CRITICAL de pacotes do base image sem isso.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tini libpq5 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
