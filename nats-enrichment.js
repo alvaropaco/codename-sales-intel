@@ -81,6 +81,12 @@ const NATS_STREAM = process.env.NATS_STREAM || 'ENRICHMENT';
 const NATS_DURABLE = process.env.NATS_DURABLE || 'b2base-results';
 const NATS_REQUEST_SUBJECT = process.env.NATS_REQUEST_SUBJECT || 'enrichment.company.requested.v1';
 const NATS_COMPLETED_SUBJECT = process.env.NATS_COMPLETED_SUBJECT || 'enrichment.company.completed.v1';
+// O worker publica resumos terminais em dois subjects pelo status final
+// (graph_director._emit_company_result / job_runner): COMPLETED -> completed.v1,
+// PARTIAL -> partial.v1. Sem consumir o partial.v1, leads com resultado parcial
+// ficam presos em "pending" para sempre.
+const NATS_PARTIAL_SUBJECT = process.env.NATS_PARTIAL_SUBJECT || 'enrichment.company.partial.v1';
+const NATS_PARTIAL_DURABLE = process.env.NATS_PARTIAL_DURABLE || `${NATS_DURABLE}-partial`;
 const NATS_DLQ_SUBJECT = process.env.NATS_DLQ_SUBJECT || 'enrichment.company.dlq.v1';
 const NATS_BATCH = parseInt(process.env.NATS_BATCH || '20', 10);
 const NATS_FETCH_TIMEOUT_MS = parseInt(process.env.NATS_FETCH_TIMEOUT_MS || '5000', 10);
@@ -295,8 +301,26 @@ async function persistEnrichmentResult(prisma, result) {
 }
 
 // ---------------------------------------------------------------------------
-// CONSUMER — enrichment.company.completed.v1 (durável, idempotente)
+// CONSUMERS — enrichment.company.{completed,partial}.v1 (duráveis, idempotentes)
 // ---------------------------------------------------------------------------
+// Garante o consumer durável (cria se não existir). Um durable por subject:
+// o JetStream (2.x) só aceita um filter_subject por consumer.
+async function ensureResultConsumer(jsm, durable, subject) {
+  try {
+    await jsm.consumers.info(NATS_STREAM, durable);
+    console.log(`[nats] consumer durável já existe: ${durable}`);
+  } catch (_e) {
+    await jsm.consumers.add(NATS_STREAM, {
+      durable_name: durable,
+      filter_subject: subject,
+      ack_policy: 'explicit',
+      ack_wait: NATS_ACK_WAIT_S * 1000 * 1000 * 1000, // nanoseconds
+      max_deliver: 5,
+    });
+    console.log(`[nats] consumer durável criado: ${durable}`);
+  }
+}
+
 async function startEnrichmentConsumer(prisma) {
   if (!isNatsEnabled()) {
     console.log('[nats] consumer desabilitado (NATS_ENABLED=false).');
@@ -308,52 +332,45 @@ async function startEnrichmentConsumer(prisma) {
     const js = nc.jetstream();
     const jsm = await nc.jetstreamManager();
 
-    // Garante o consumer durável exclusivo (cria se não existir).
-    try {
-      await jsm.consumers.info(NATS_STREAM, NATS_DURABLE);
-      console.log(`[nats] consumer durável já existe: ${NATS_DURABLE}`);
-    } catch (_e) {
-      await jsm.consumers.add(NATS_STREAM, {
-        durable_name: NATS_DURABLE,
-        filter_subject: NATS_COMPLETED_SUBJECT,
-        ack_policy: 'explicit',
-        ack_wait: NATS_ACK_WAIT_S * 1000 * 1000 * 1000, // nanoseconds
-        max_deliver: 5,
-      });
-      console.log(`[nats] consumer durável criado: ${NATS_DURABLE}`);
-    }
+    await ensureResultConsumer(jsm, NATS_DURABLE, NATS_COMPLETED_SUBJECT);
+    await ensureResultConsumer(jsm, NATS_PARTIAL_DURABLE, NATS_PARTIAL_SUBJECT);
 
     _consumerRunning = true;
     console.log(`[nats] consumindo ${NATS_COMPLETED_SUBJECT} (durável=${NATS_DURABLE})`);
+    console.log(`[nats] consumindo ${NATS_PARTIAL_SUBJECT} (durável=${NATS_PARTIAL_DURABLE})`);
 
-    // Loop de consumo em pull. Roda em background e reconecta sozinho.
-    (async function consumeLoop() {
-      while (_consumerRunning) {
-        try {
-          const info = await jsm.consumers.info(NATS_STREAM, NATS_DURABLE);
-          const consumer = js.consumers.getPullConsumerFor(info);
-          const msgs = await consumer.fetch({ max_messages: NATS_BATCH, expires: NATS_FETCH_TIMEOUT_MS });
-          for await (const m of msgs) {
-            try {
-              const result = jc.decode(m.data);
-              await persistEnrichmentResult(prisma, result);
-              await m.ack();            // ACK somente após persistir
-            } catch (err) {
-              console.error('[nats] erro ao processar mensagem:', (err && (err.stack || err.message)) || String(err));
+    // Loops de consumo em pull. Rodam em background e reconectam sozinhos.
+    const runConsumeLoop = (durable) => {
+      (async function consumeLoop() {
+        while (_consumerRunning) {
+          try {
+            const info = await jsm.consumers.info(NATS_STREAM, durable);
+            const consumer = js.consumers.getPullConsumerFor(info);
+            const msgs = await consumer.fetch({ max_messages: NATS_BATCH, expires: NATS_FETCH_TIMEOUT_MS });
+            for await (const m of msgs) {
               try {
-                await m.nak();          // reentrega se falhar
-              } catch (_) { /* ignora */ }
+                const result = jc.decode(m.data);
+                await persistEnrichmentResult(prisma, result);
+                await m.ack();            // ACK somente após persistir
+              } catch (err) {
+                console.error('[nats] erro ao processar mensagem:', (err && (err.stack || err.message)) || String(err));
+                try {
+                  await m.nak();          // reentrega se falhar
+                } catch (_) { /* ignora */ }
+              }
+            }
+          } catch (err) {
+            // Timeout/sem mensagens é normal; apenas segue o loop.
+            if (!(err && (String(err.message).includes('timeout') || String(err.message).includes('nothing') || err.code === '404'))) {
+              console.error(`[nats] erro no loop do consumer ${durable}:`, err.message);
+              await new Promise((r) => setTimeout(r, 2000));
             }
           }
-        } catch (err) {
-          // Timeout/sem mensagens é normal; apenas segue o loop.
-          if (!(err && (String(err.message).includes('timeout') || String(err.message).includes('nothing') || err.code === '404'))) {
-            console.error('[nats] erro no loop do consumer:', err.message);
-            await new Promise((r) => setTimeout(r, 2000));
-          }
         }
-      }
-    })();
+      })();
+    };
+    runConsumeLoop(NATS_DURABLE);
+    runConsumeLoop(NATS_PARTIAL_DURABLE);
   } catch (error) {
     console.error('[nats] falha ao iniciar consumer:', error.message);
   }
@@ -404,4 +421,6 @@ module.exports = {
   NATS_URL,
   NATS_STREAM,
   NATS_DURABLE,
+  NATS_PARTIAL_DURABLE,
+  NATS_PARTIAL_SUBJECT,
 };
