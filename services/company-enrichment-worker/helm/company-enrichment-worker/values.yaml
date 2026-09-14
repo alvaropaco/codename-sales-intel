@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/alvaropaco/company-enrichment-worker
-  tag: 0.3.2
+  tag: 0.3.3
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
@@ -73,17 +73,19 @@ workerTypes:
     concurrency: 2
     image:
       repository: ghcr.io/alvaropaco/company-enrichment-worker
-      tag: 0.3.2-osint
+      tag: 0.3.3-osint
     resources:
       requests: { cpu: "50m", memory: "256Mi" }
       limits: { cpu: "2", memory: "2Gi" }
   spiderfoot:
     types: "spiderfoot"
     replicas: 1
-    concurrency: 1
+    # Scans sao I/O-bound; 3 slots absorvem dominios patologicos sem
+    # bloquear a fila inteira (antes: 1 slot congelava o pipeline).
+    concurrency: 3
     image:
       repository: ghcr.io/alvaropaco/company-enrichment-worker
-      tag: 0.3.2-osint
+      tag: 0.3.3-osint
     resources:
       requests: { cpu: "50m", memory: "256Mi" }
       limits: { cpu: "1", memory: "2Gi" }
@@ -101,7 +103,9 @@ bbot:
 
 spiderfoot:
   enabled: true
-  timeoutSeconds: 600
+  # 300s: dominios patologicos (CT logs gigantes) falham mais cedo e liberam
+  # o slot; o diretor ainda tem o backstop de 900s por directive.
+  timeoutSeconds: 300
   modules: "sfp_crt,sfp_viewdns,sfp_whois"
 
 crawler:
@@ -178,7 +182,7 @@ migration:
   enabled: false
   image:
     repository: ghcr.io/alvaropaco/company-enrichment-worker
-    tag: 0.3.2
+    tag: 0.3.3
 
 podSecurityContext:
   runAsNonRoot: true
