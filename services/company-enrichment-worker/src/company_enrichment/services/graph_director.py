@@ -265,7 +265,7 @@ class GraphDirector:
                 self._execute_capability(directive_event, job),
                 timeout=self._directive_hard_timeout_seconds,
             )
-        except TimeoutError as exc:
+        except TimeoutError:
             log.warning(
                 "directive_hard_timeout", worker_type=directive_event.worker_type,
                 entity=directive_event.entity.entity_key, case_id=str(directive_event.case_id),
