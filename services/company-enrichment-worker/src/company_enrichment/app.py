@@ -180,6 +180,7 @@ class App:
                     lease_seconds=self._settings.graph_lease_seconds,
                     subject_completed=self._settings.graph_subject_completed,
                     subject_partial=self._settings.graph_subject_partial,
+                    directive_hard_timeout_seconds=self._settings.directive_hard_timeout_seconds,
                 )
 
             self._graph_worker = GraphModeWorker(

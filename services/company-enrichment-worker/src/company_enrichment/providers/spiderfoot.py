@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import tempfile
 from dataclasses import dataclass
 from typing import Any
@@ -145,6 +146,10 @@ class SpiderFootProvider(Provider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                # Own process group: sf.py spawns multiprocessing children that
+                # must die together with it on timeout (killpg), otherwise the
+                # orphan keeps running and wedges the worker's scan slot.
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             shutil.rmtree(home, ignore_errors=True)
@@ -156,8 +161,7 @@ class SpiderFootProvider(Provider):
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout_seconds)
         except TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
+            self._kill_tree(proc)
             raise ProviderError("SPIDERFOOT_TIMEOUT", "spiderfoot scan timed out", transient=True) from exc
         finally:
             shutil.rmtree(home, ignore_errors=True)
@@ -191,6 +195,18 @@ class SpiderFootProvider(Provider):
                 if len(events) >= self._max_events:
                     break
         return events
+
+    @staticmethod
+    def _kill_tree(proc: asyncio.subprocess.Process) -> None:
+        """Kill the scan and its whole process group (sf.py spawns children)."""
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
 
     @staticmethod
     def _parse_item(item: dict[str, Any]) -> SpiderFootEvent | None:

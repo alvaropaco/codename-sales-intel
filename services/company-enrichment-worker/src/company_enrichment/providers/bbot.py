@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -157,6 +158,8 @@ class BbotProvider(Provider):
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Own process group so the timeout kills bbot and its children.
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise ProviderError(
@@ -167,8 +170,7 @@ class BbotProvider(Provider):
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout_seconds)
         except TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
+            self._kill_tree(proc)
             raise ProviderError("BBOT_TIMEOUT", "bbot scan timed out", transient=True) from exc
         if proc.returncode not in (0, 1):
             detail = (stderr or b"").decode(errors="replace")[:500]
@@ -181,6 +183,18 @@ class BbotProvider(Provider):
                 if len(events) >= self._max_events:
                     break
         return events
+
+    @staticmethod
+    def _kill_tree(proc: asyncio.subprocess.Process) -> None:
+        """Kill the scan and its whole process group (bbot spawns children)."""
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
 
     def _build_command(self, target: str) -> list[str]:
         cmd = [self._binary, "-t", target, "--json", "-om", "stdout"]

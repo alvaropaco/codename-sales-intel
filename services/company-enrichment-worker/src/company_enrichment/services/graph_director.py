@@ -88,6 +88,7 @@ class GraphDirector:
         lease_seconds: int = 60,
         subject_completed: str = "enrichment.company.completed.v1",
         subject_partial: str = "enrichment.company.partial.v1",
+        directive_hard_timeout_seconds: int = 900,
     ) -> None:
         self._repo = graph_repo
         self._publish = publish_fn
@@ -101,6 +102,7 @@ class GraphDirector:
         self._seeder = CompanySeedPlanner()
         self._worker_id = worker_id
         self._lease_seconds = lease_seconds
+        self._directive_hard_timeout_seconds = directive_hard_timeout_seconds
         self._locks: dict[uuid.UUID, asyncio.Lock] = {}
 
     # ---------------------------------------------------------------- requests
@@ -256,7 +258,26 @@ class GraphDirector:
         ).inc()
         start = time.monotonic()
         try:
-            outcome = await self._execute_capability(directive_event, job)
+            # Hard backstop: capabilities bound their own subprocess timeouts,
+            # but a hung scan (ex.: sf.py com arquivo gigante) nunca retorna.
+            # Sem este teto o directive prende o slot — e o caso — para sempre.
+            outcome = await asyncio.wait_for(
+                self._execute_capability(directive_event, job),
+                timeout=self._directive_hard_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            log.warning(
+                "directive_hard_timeout", worker_type=directive_event.worker_type,
+                entity=directive_event.entity.entity_key, case_id=str(directive_event.case_id),
+                timeout_seconds=self._directive_hard_timeout_seconds,
+            )
+            await self._fail_directive(
+                job,
+                directive_event,
+                "CAPABILITY_TIMEOUT",
+                f"capability exceeded {self._directive_hard_timeout_seconds}s hard timeout",
+            )
+            return
         except Exception as exc:  # noqa: BLE001
             log.exception(
                 "directive_failed", worker_type=directive_event.worker_type, error=str(exc)

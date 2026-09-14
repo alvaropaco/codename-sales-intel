@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     nats_stream_max_bytes: int = Field(
         default=1_073_741_824, validation_alias="NATS_STREAM_MAX_BYTES"
     )
+    # Último anteparo contra capability presa (ex.: scan OSINT em domínio
+    # patológico que sobrevive aos timeouts internos do provider): marca a
+    # directive como FAILED e deixa o caso terminar (PARTIAL).
+    directive_hard_timeout_seconds: int = Field(
+        default=900, validation_alias="DIRECTIVE_HARD_TIMEOUT_SECONDS"
+    )
 
     # --- Subjects ---
     stream_subjects: str = Field(default="enrichment.company.>", validation_alias="STREAM_SUBJECTS")
