@@ -97,6 +97,7 @@ COPY firebase-auth.js ./
 COPY admin.js ./
 COPY mcp-cnpj.js ./
 COPY cnpj-enrichment.js ./
+COPY csv-import.js ./
 COPY nats-enrichment.js ./
 COPY csv-import.js ./
 COPY enrichment-graph.js ./
