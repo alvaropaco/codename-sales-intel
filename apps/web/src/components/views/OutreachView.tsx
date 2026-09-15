@@ -990,7 +990,7 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                       </span>
                       <span className="truncate font-semibold">{prospect.companyName}</span>
                       <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">
-                        {prospect.cnpj}
+                        {prospect.cnpj || 'sem CNPJ'}
                       </span>
                     </button>
                   );

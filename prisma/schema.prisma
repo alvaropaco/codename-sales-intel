@@ -29,6 +29,7 @@ model Organization {
   prospects Prospect[]
   activities Activity[]
   workflows Workflow[]
+  enrichmentRequests EnrichmentRequest[]
   commercialSettings CommercialSettings?
 }
 
@@ -81,7 +82,15 @@ model User {
 
 model Prospect {
   id                    String   @id @default(cuid())
-  cnpj                  String   @unique
+  // ── Identidade e chaves de enriquecimento ──────────────────────────────
+  // A identidade do lead é o `id`; o CNPJ é apenas UMA das chaves que os
+  // pipelines de enriquecimento conseguem consumir (domain é a outra). Leads
+  // importados sem CNPJ ficam com cnpj null e status 'lead' até terem uma
+  // chave (informada pelo usuário ou resolvida contra a base RFB).
+  cnpj                  String?
+  taxIdType             String?  @default("br_cnpj") // br_cnpj | us_ein | eu_vat | ...
+  domain                String?                      // site — chave universal de enriquecimento B2B
+  importKey             String?                      // dedup idempotente de imports (email ou nome+cidade)
   companyName           String
   tradeName             String?
   status                String   @default("prospect") // prospect, qualified, lead
@@ -112,14 +121,40 @@ model Prospect {
   orgId                 String
   organization          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   activities            Activity[]
+  enrichmentRequests    EnrichmentRequest[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
-  
+
+  // Unicidade POR ORG (não global): dois clientes do B2Base podem prospectar
+  // a mesma empresa. cnpj null não conflita (Postgres trata NULL como distinto).
+  @@unique([orgId, cnpj])
+  @@unique([orgId, importKey])
   @@index([orgId])
   @@index([status])
   @@index([createdAt])
   @@index([enrichedAt])
   @@index([enrichmentStatus])
+}
+
+// Ledger de pedidos de enriquecimento: correlaciona o event_id publicado no
+// NATS com o prospect/org de origem. O resultado volta com request_event_id,
+// o que permite rotear corretamente mesmo com o mesmo CNPJ em vários orgs
+// (e dá auditoria do que foi pedido a cada provider).
+model EnrichmentRequest {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  orgId      String
+  prospectId String
+  cnpj       String?
+  taxIdType  String?
+  provider   String   @default("nats.br_cnpj.v1")
+  createdAt  DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  prospect     Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@index([prospectId])
+  @@index([orgId])
 }
 
 model Activity {
@@ -156,7 +191,7 @@ model Workflow {
 // garantindo que a mesma mensagem at-least-once não duplique dados.
 model CnpjEnrichment {
   id               String    @id @default(cuid())
-  companyId        String                       // prospect.id enviado como company_id
+  companyId        String                       // uuid determinístico derivado do CNPJ
   cnpj             String
   enrichmentVersion Int     @default(1)
   requestEventId   String?
@@ -175,12 +210,19 @@ model CnpjEnrichment {
   cnpjLegalNature  String?
   score            Int?
   rawPayload       Json?
+  // Rastreabilidade do org/prospect atendido (preenchido quando o resultado
+  // foi correlacionado via ledger EnrichmentRequest). O log em si é por
+  // empresa: a idempotência POR PROSPECT fica na enrichmentVersion do Prospect.
+  orgId            String?
+  prospectId       String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@unique([companyId, enrichmentVersion])
   @@index([cnpj])
   @@index([status])
+  @@index([orgId])
+  @@index([prospectId])
 }
 
 // ============================================================================

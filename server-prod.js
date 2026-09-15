@@ -53,6 +53,7 @@ const {
   formatEnrichedProspect
 } = require('./cnpj-enrichment');
 const natsEnrichment = require('./nats-enrichment');
+const csvImport = require('./csv-import');
 const enrichmentGraph = require('./enrichment-graph');
 const firebaseAuth = require('./firebase-auth');
 const adminAuth = require('./admin');
@@ -83,7 +84,7 @@ const metrics = require('./metrics');
 app.use('/__/auth', firebaseAuth.createFirebaseAuthHandlerProxy());
 // verify captura o body bruto: a verificação de assinatura do webhook do
 // Stripe (stripe-billing) precisa do payload exato como foi enviado.
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use(express.json({ limit: '2mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(firebaseAuth.cookieParserMiddleware);
 
 // Global error handling middleware
@@ -1254,6 +1255,9 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
 // card entra a partir de "Novas oportunidades" (lead), o enriquecimento roda,
 // e ao CONCLUIR o card avança automaticamente para "Prontas para contato"
 // (qualified). Regras:
+//   - lead → prospect: exige CNPJ — é a chave que os pipelines de
+//     enriquecimento consomem (lead importado sem CNPJ "se forma" quando o
+//     usuário informa o identificador).
 //   - prospect → qualified: bloqueado enquanto o enriquecimento não teve
 //     conclusão (null/pending). Estados terminais (enriched/partial/
 //     unavailable/error) permitem avanço manual (escape para dados legados
@@ -1262,6 +1266,11 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
 //     um pipeline que já rodou e não pode ser "desfeito".
 
 function stageTransitionError(previousStatus, nextStatus, prospect) {
+  if (nextStatus === 'prospect' && previousStatus !== 'prospect') {
+    if (!prospect.cnpj) {
+      return 'Informe o CNPJ do lead antes de movê-lo para "Em Qualificação" — ele é a chave do enriquecimento.';
+    }
+  }
   if (nextStatus === 'qualified') {
     const concluded = prospect.enrichmentStatus && prospect.enrichmentStatus !== 'pending';
     if (!concluded) {
@@ -1300,10 +1309,40 @@ app.put('/api/prospects/:id', async (req, res) => {
     if (!previous) return res.status(404).json({ success: false, error: 'Prospect not found' });
     const plan = await getOrgPlan(orgId);
 
-    // Regras de transição do kanban (fonte da verdade server-side)
-    const nextStatus = req.body && req.body.status;
+    const body = req.body || {};
+
+    // CNPJ: normaliza para dígitos (vazio → null) e valida DV. Preencher o
+    // CNPJ de um lead importado sem identificador é a "formatura" — combinado
+    // com a mudança de estágio abaixo, dispara a esteira de enriquecimento.
+    let effectiveCnpj = previous.cnpj;
+    if (body.cnpj !== undefined) {
+      const digits = String(body.cnpj || '').replace(/\D/g, '');
+      if (!digits) {
+        body.cnpj = null;
+        body.taxIdType = null;
+        effectiveCnpj = null;
+      } else {
+        if (digits.length !== 14 || !csvImport.isValidCnpj(digits)) {
+          const err = new Error('CNPJ inválido — confira os dígitos (incluindo os verificadores).');
+          err.status = 422;
+          err.code = 'INVALID_CNPJ';
+          throw err;
+        }
+        body.cnpj = digits;
+        if (!body.taxIdType) body.taxIdType = 'br_cnpj';
+        effectiveCnpj = digits;
+      }
+    }
+
+    // Regras de transição do kanban (fonte da verdade server-side). A checagem
+    // usa o CNPJ EFETIVO pós-update: "informar CNPJ + mover para Em
+    // Qualificação" na mesma requisição é permitido.
+    const nextStatus = body.status;
     if (nextStatus && nextStatus !== previous.status) {
-      const transitionError = stageTransitionError(previous.status, nextStatus, previous);
+      const transitionError = stageTransitionError(previous.status, nextStatus, {
+        ...previous,
+        cnpj: effectiveCnpj,
+      });
       if (transitionError) {
         const err = new Error(transitionError);
         err.status = 422;
@@ -1314,7 +1353,7 @@ app.put('/api/prospects/:id', async (req, res) => {
 
     const prospect = await prisma.prospect.update({
       where: { id: req.params.id },
-      data: req.body
+      data: body
     });
 
     // Dispara enriquecimento quando o lead entra na esteira de "Em Qualificação"
@@ -1385,7 +1424,7 @@ app.post('/api/prospects/bulk', async (req, res) => {
       // os permitidos — devolve `skipped` para a UI explicar o que ficou.
       const current = await prisma.prospect.findMany({
         where: { id: { in: ids }, orgId },
-        select: { id: true, status: true, enrichmentStatus: true },
+        select: { id: true, status: true, enrichmentStatus: true, cnpj: true },
       });
       const allowed = current.filter((p) => !stageTransitionError(p.status, status, p));
       const skipped = current.length - allowed.length;
@@ -1428,6 +1467,196 @@ app.post('/api/prospects/bulk', async (req, res) => {
     }
 
     return res.status(400).json({ success: false, error: 'Ação em lote inválida.' });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/prospects/import-csv — importação de leads via CSV.
+// O arquivo chega como texto no corpo; a IA (csv-import.js) entende a
+// ESTRUTURA da planilha (mapeia colunas → modelo Prospect, com fallback
+// heurístico), e a normalização dos valores é determinística. CNPJ é a chave
+// de enriquecimento principal mas é OPCIONAL: linhas sem CNPJ (e sem chave)
+// são cadastradas como 'lead' com enrichmentStatus 'unavailable' — ficam
+// contactáveis e entram na esteira assim que o CNPJ for informado. Linhas com
+// CNPJ entram como 'prospect' e disparam o pipeline (NATS; fallback síncrono
+// BrasilAPI serializado em background no dev). A resposta traz o relatório
+// completo: mapeamento usado, importados, duplicados, falhas por linha.
+app.post('/api/prospects/import-csv', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const csv = typeof req.body?.csv === 'string' ? req.body.csv : '';
+    if (!csv.trim()) {
+      return res.status(400).json({ success: false, error: 'Envie o conteúdo do arquivo CSV.' });
+    }
+    if (csv.length > csvImport.MAX_CSV_CHARS) {
+      return res.status(413).json({ success: false, error: 'Arquivo muito grande (limite de 2MB).' });
+    }
+
+    const parsed = csvImport.parseCsv(csv);
+    if (!parsed.headers.length) {
+      return res.status(400).json({ success: false, error: 'Não foi possível ler o cabeçalho do CSV.' });
+    }
+    if (!parsed.records.length) {
+      return res.status(400).json({ success: false, error: 'O CSV não possui linhas de dados.' });
+    }
+
+    const { mapping, source: mappingSource, notes: mappingNotes } = await csvImport.resolveMapping(
+      parsed.headers,
+      parsed.records
+    );
+
+    // Monta os registros normalizados. Numeração da linha segue a planilha
+    // (cabeçalho = linha 1), para o usuário achar o problema no arquivo.
+    // Dedup dentro do arquivo: CNPJ para quem tem; importKey (e-mail ou
+    // nome+cidade) para leads sem CNPJ.
+    const staged = [];
+    const failures = [];
+    const warnings = [];
+    const seenCnpjs = new Set();
+    const seenKeys = new Set();
+    parsed.records.forEach((row, idx) => {
+      const rowNumber = idx + 2;
+      const { record, issues } = csvImport.buildRecord(row, mapping);
+      if (!record) {
+        failures.push({ row: rowNumber, cnpj: null, reason: issues[0] || 'Linha inválida' });
+        return;
+      }
+      if (record.cnpj && seenCnpjs.has(record.cnpj)) {
+        failures.push({ row: rowNumber, cnpj: record.cnpj, reason: 'CNPJ duplicado no arquivo' });
+        return;
+      }
+      const importKey = csvImport.computeImportKey(record);
+      if (!record.cnpj && importKey && seenKeys.has(importKey)) {
+        failures.push({ row: rowNumber, cnpj: null, reason: 'Lead duplicado no arquivo (mesmo nome/e-mail)' });
+        return;
+      }
+      if (record.cnpj) seenCnpjs.add(record.cnpj);
+      if (importKey) seenKeys.add(importKey);
+      if (issues.length) {
+        warnings.push({ row: rowNumber, cnpj: record.cnpj, messages: issues });
+      }
+      staged.push({ ...record, importKey });
+    });
+
+    const plan = await getOrgPlan(orgId);
+    let importedCount = 0;
+    let importedWithoutCnpj = 0;
+    let alreadyExists = 0;
+    let limitReached = false;
+    let limitMessage = '';
+
+    // Dev sem NATS: serializa os fallbacks BrasilAPI em background para a
+    // resposta HTTP voltar rápido sem martelar o serviço público.
+    let enrichChain = Promise.resolve();
+    const enqueueFallbackEnrichment = (prospect) => {
+      enrichChain = enrichChain
+        .then(() => enrichProspectWithCnpj(prisma, prospect))
+        .catch((err) =>
+          console.error(`[csv-import] erro ao enriquecer prospect ${prospect.id}:`, err.message)
+        );
+    };
+
+    for (const record of staged) {
+      try {
+        // Duplicidade dentro do org (mesma política do import de discovery):
+        // por CNPJ quando existe; por importKey para leads sem identificador.
+        const existing = record.cnpj
+          ? await prisma.prospect.findFirst({ where: { cnpj: record.cnpj, orgId } })
+          : await prisma.prospect.findFirst({ where: { importKey: record.importKey, orgId } });
+        if (existing) {
+          alreadyExists++;
+          continue;
+        }
+        await assertCanCaptureLead(orgId);
+
+        let prospect = await prisma.prospect.create({
+          data: {
+            cnpj: record.cnpj,
+            taxIdType: record.taxIdType,
+            domain: record.domain,
+            importKey: record.importKey,
+            companyName: record.companyName,
+            tradeName: record.tradeName,
+            industry: record.industry,
+            city: record.city,
+            state: record.state,
+            cnpjEmail: record.cnpjEmail,
+            ...(record.cnpjPhones ? { cnpjPhones: record.cnpjPhones } : {}),
+            employees: record.employees,
+            revenueEstimate: record.revenueEstimate,
+            // Com CNPJ: entra direto na esteira de qualificação/enriquecimento.
+            // Sem CNPJ: 'lead' (Novas oportunidades), pendente de chave.
+            status: record.cnpj ? 'prospect' : 'lead',
+            opportunityScore: 60,
+            enrichmentStatus: record.cnpj ? 'pending' : 'unavailable',
+            ...(record.cnpj ? {} : { enrichmentSource: 'csv_import' }),
+            orgId,
+          },
+        });
+        importedCount++;
+        if (!record.cnpj) importedWithoutCnpj++;
+
+        if (record.cnpj && natsEnrichment.isNatsEnabled()) {
+          const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
+          if (eventId) {
+            prospect = await prisma.prospect.update({
+              where: { id: prospect.id },
+              data: {
+                enrichmentStatus: 'pending',
+                enrichmentSource: 'nats.enrichment',
+                enrichmentError: null,
+              },
+            });
+            // Complemento firmográfico (telefones/sócios) em paralelo, sem
+            // sobrescrever o scoring da esteira NATS.
+            hydrateFirmographics(prisma, prospect).catch((err) =>
+              console.error(`[csv-import] erro ao hidratar firmografia ${prospect.id}:`, err.message)
+            );
+          } else {
+            enqueueFallbackEnrichment(prospect);
+          }
+        } else if (record.cnpj) {
+          enqueueFallbackEnrichment(prospect);
+        }
+      } catch (error) {
+        if (error.code === 'PLAN_LIMIT_REACHED' || error.status === 403) {
+          limitReached = true;
+          limitMessage = error.message;
+          break;
+        }
+        // CNPJ já cadastrado em outro org (unicidade por org não conflita aqui;
+        // P2002 agora só ocorre na corrida entre imports simultâneos).
+        if (error.code === 'P2002') {
+          alreadyExists++;
+          continue;
+        }
+        console.error(`[csv-import] falha ao importar linha (cnpj=${record.cnpj}):`, error.message);
+        failures.push({ row: null, cnpj: record.cnpj, reason: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        requested: parsed.records.length,
+        delimiter: parsed.delimiter,
+        truncated: parsed.truncated,
+        maxRows: csvImport.MAX_IMPORT_ROWS,
+        mapping,
+        mappingSource,
+        mappingNotes,
+        importedCount,
+        importedWithoutCnpj,
+        alreadyExists,
+        failures,
+        warnings,
+        limitReached,
+        limitMessage,
+      },
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     const status = error && error.status ? error.status : 500;
     res.status(status).json({ success: false, error: error.message });

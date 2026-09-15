@@ -9,6 +9,7 @@ import {
   ChevronsRight,
   Download,
   Eye,
+  FileUp,
   MapPin,
   Minus,
   RefreshCw,
@@ -32,6 +33,7 @@ import {
   importDiscoveredCompany,
   importDiscoveredCompaniesBulk,
 } from '@/services/api';
+import { CsvImportModal } from '@/components/modals/CsvImportModal';
 
 interface ProspectsDirectoryViewProps {
   prospects: Prospect[];
@@ -144,6 +146,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
   const [selectedDiscovery, setSelectedDiscovery] = useState<Set<string>>(new Set());
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [bulkSummary, setBulkSummary] = useState('');
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
 
   // CNAEs do perfil comercial (código IBGE de 7 dígitos, como a taxonomia salva).
   const profileCnaeCodes = useMemo(
@@ -434,6 +437,16 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
           <Button onClick={onRefresh} variant="outline" size="sm" className="h-9 gap-1.5 text-xs font-semibold border-slate-200 dark:border-border text-slate-700 dark:text-foreground hover:bg-slate-50 dark:hover:bg-accent">
             <RefreshCw className="h-3.5 w-3.5" />
             Atualizar sugestões
+          </Button>
+
+          <Button
+            onClick={() => setIsCsvModalOpen(true)}
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs font-semibold border-slate-200 dark:border-border text-slate-700 dark:text-foreground hover:bg-slate-50 dark:hover:bg-accent"
+          >
+            <FileUp className="h-3.5 w-3.5" />
+            Importar CSV
           </Button>
 
           <Button onClick={handleExportList} variant="outline" size="sm" className="h-9 gap-1.5 text-xs font-semibold border-slate-200 dark:border-border text-slate-700 dark:text-foreground hover:bg-slate-50 dark:hover:bg-accent">
@@ -887,6 +900,12 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
           </div>
         </CardContent>
       </Card>
+
+      <CsvImportModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        onSuccess={onRefresh}
+      />
     </div>
   );
 };

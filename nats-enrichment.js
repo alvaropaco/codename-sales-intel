@@ -145,6 +145,12 @@ async function requestEnrichment(prisma, prospectOrId) {
 
   const eventId = randomUUID();
   const cnpj = normalizeCnpj(prospect.cnpj);
+  // Sem chave de enriquecimento não há o que pedir — o caller cai no fallback
+  // (que marca unavailable). Leads importados sem CNPJ ficam nesse caso.
+  if (!cnpj) {
+    console.log(`[nats] prospect ${prospect.id} sem CNPJ; ignorando pedido de enriquecimento`);
+    return null;
+  }
   // O worker valida `company_id` como UUID (Pydantic uuid.UUID). O id do
   // Prospect é um CUID, então derivamos um UUID estável do CNPJ.
   const companyId = deterministicCompanyId(cnpj);
@@ -179,6 +185,18 @@ async function requestEnrichment(prisma, prospectOrId) {
       { headers: hdr, timeout: 5000 }
     );
     console.log(`[nats] pedido publicado ${NATS_REQUEST_SUBJECT} company=${companyId} cnpj=${cnpj} event=${eventId}`);
+    // Ledger: correlaciona event_id → prospect/org. O resultado volta com
+    // request_event_id e o roteamento funciona mesmo com o mesmo CNPJ em
+    // vários orgs. Falha no ledger não desfaz o pedido (fallback por CNPJ).
+    await prisma.enrichmentRequest.create({
+      data: {
+        eventId,
+        orgId: prospect.orgId,
+        prospectId: prospect.id,
+        cnpj,
+        taxIdType: prospect.taxIdType || 'br_cnpj',
+      },
+    }).catch((err) => console.error(`[nats] falha ao registrar ledger de ${eventId}: ${err.message}`));
     return eventId;
   } catch (error) {
     console.error(`[nats] falha ao publicar pedido para ${companyId}: ${error.message}`);
@@ -210,6 +228,35 @@ async function persistEnrichmentResult(prisma, result) {
     throw new Error('Enrichment result sem company_id nem cnpj — impossível persistir');
   }
 
+  // Correlação com o Prospect ANTES de persistir (a linha do log leva a
+  // rastreabilidade). Preferimos o ledger (request_event_id → prospect), que
+  // funciona mesmo com o mesmo CNPJ cadastrado em vários orgs; o fallback por
+  // CNPJ cobre eventos publicados antes do ledger existir.
+  let prospect = null;
+  if (requestEventId) {
+    const ledgerRow = await prisma.enrichmentRequest
+      .findUnique({ where: { eventId: requestEventId } })
+      .catch(() => null);
+    if (ledgerRow) {
+      prospect = await prisma.prospect.findUnique({ where: { id: ledgerRow.prospectId } });
+    }
+  }
+  if (!prospect && cnpj) {
+    const candidates = await prisma.prospect.findMany({
+      where: { cnpj },
+      orderBy: { createdAt: 'desc' },
+      take: 2,
+      select: { id: true, orgId: true, status: true, enrichmentVersion: true },
+    });
+    if (candidates.length > 1) {
+      console.warn(
+        `[nats] CNPJ ${cnpj} existe em ${candidates.length} orgs e o evento não tem ledger — ` +
+        `aplicando no prospect mais recente; o ledger de requests roteia sem ambiguidade.`
+      );
+    }
+    prospect = candidates[0] || null;
+  }
+
   // Registra/upsert idempotente. Se já existe com a mesma (companyId, version),
   // mantemos os dados originais (não sobrescreve com duplicata).
   const existing = await prisma.cnpjEnrichment.findUnique({
@@ -228,6 +275,8 @@ async function persistEnrichmentResult(prisma, result) {
       errorMessage: summary.error_message || null,
       score: toIntOrNull(summary.commercial_potential),
       rawPayload: result,
+      orgId: prospect?.orgId || null,
+      prospectId: prospect?.id || null,
     },
     update: {
       // Nunca sobrescreve dados válidos já persistidos com campo undefined/null.
@@ -236,16 +285,13 @@ async function persistEnrichmentResult(prisma, result) {
         errorCode: summary.error_code || null,
         errorMessage: summary.error_message || null,
       } : {}),
+      // Completa a rastreabilidade quando o resultado chegou sem ledger e o
+      // fallback por CNPJ encontrou o prospect.
+      ...(!existing?.prospectId && prospect ? { orgId: prospect.orgId, prospectId: prospect.id } : {}),
     },
   });
 
   // Aplica no Prospect apenas se for um resultado mais novo do que o aplicado.
-  // Correlacionamos por CNPJ (único), pois o `company_id` do pipeline é um UUID
-  // derivado do CNPJ (não é o id CUID do Prospect).
-  const prospect = cnpj
-    ? await prisma.prospect.findUnique({ where: { cnpj } })
-    : null;
-
   if (prospect) {
     const appliedVersion = prospect.enrichmentVersion || 0;
     if (status === 'COMPLETED' || status === 'PARTIAL') {

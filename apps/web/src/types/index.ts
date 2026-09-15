@@ -42,7 +42,11 @@ export interface EnrichmentSummary {
 
 export interface Prospect {
   id: string;
-  cnpj: string;
+  /** CNPJ (chave de enriquecimento no BR) — null em leads importados sem identificador */
+  cnpj: string | null;
+  taxIdType?: string | null;
+  /** site/domínio — segunda chave universal de enriquecimento B2B */
+  domain?: string | null;
   companyName: string;
   industry?: string | null;
   employees?: number | null;

@@ -103,7 +103,16 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                     {prospect.companyName}
                   </h3>
                   <p className="text-xs font-mono text-muted-foreground">
-                    {formatCNPJ(prospect.cnpj)}
+                    {prospect.cnpj ? (
+                      formatCNPJ(prospect.cnpj)
+                    ) : (
+                      <span
+                        className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-500 dark:text-amber-300"
+                        title="Lead sem CNPJ — informe o identificador para habilitar o enriquecimento"
+                      >
+                        CNPJ pendente
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -443,7 +452,7 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
         </div>
       </div>
 
-      {showGraph && (
+      {showGraph && prospect.cnpj && (
         <EnrichmentGraphModal
           cnpj={prospect.cnpj}
           companyName={prospect.companyName}

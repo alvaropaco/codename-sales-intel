@@ -474,6 +474,53 @@ export async function importDiscoveredCompaniesBulk(companies: DiscoveredCompany
   return json.data;
 }
 
+// ── Importação de leads via CSV (IA entende a estrutura da planilha) ───────
+
+export interface CsvImportFailure {
+  row: number | null;
+  cnpj: string | null;
+  reason: string;
+}
+
+export interface CsvImportWarning {
+  row: number;
+  cnpj: string;
+  messages: string[];
+}
+
+export interface CsvImportResult {
+  requested: number;
+  delimiter: string;
+  truncated: boolean;
+  maxRows: number;
+  mapping: Record<string, string | null>;
+  mappingSource: 'ai' | 'heuristic' | 'ai+heuristic';
+  mappingNotes?: string;
+  importedCount: number;
+  importedWithoutCnpj: number;
+  alreadyExists: number;
+  failures: CsvImportFailure[];
+  warnings: CsvImportWarning[];
+  limitReached: boolean;
+  limitMessage: string;
+}
+
+export async function importLeadsCsv(csv: string): Promise<CsvImportResult> {
+  const res = await fetch(`${API_BASE}/prospects/import-csv`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csv }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    const error = new Error(json.error || 'Erro ao importar CSV');
+    (error as Error & { code?: string }).code = json.code;
+    (error as Error & { mapping?: Record<string, string | null> }).mapping = json.mapping;
+    throw error;
+  }
+  return json.data;
+}
+
 export async function enrichProspectViaMcp(id: string): Promise<Prospect> {
   const res = await fetch(`${API_BASE}/prospects/${id}/enrich-mcp`, {
     method: 'POST',
