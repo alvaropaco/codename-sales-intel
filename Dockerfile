@@ -99,7 +99,6 @@ COPY mcp-cnpj.js ./
 COPY cnpj-enrichment.js ./
 COPY csv-import.js ./
 COPY nats-enrichment.js ./
-COPY csv-import.js ./
 COPY enrichment-graph.js ./
 COPY gmail-api.js ./
 COPY gmail-auth.js ./
