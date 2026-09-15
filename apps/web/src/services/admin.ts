@@ -1,0 +1,134 @@
+// ─── Serviço da área administrativa (admin) ───────────────────────────────
+// Autenticação BÁSICA (login/senha do Infisical), independente do Firebase.
+const API_BASE = '/api/admin';
+
+export interface AdminMe {
+  username: string;
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string | null;
+  phone: string | null;
+  role: string;
+  sessionVersion: number;
+  createdAt: string;
+  updatedAt: string;
+  orgId: string;
+  organization: {
+    id: string;
+    name: string;
+    plan: 'trial' | 'premium';
+    cnpj: string | null;
+  } | null;
+}
+
+export interface AdminOrgRow {
+  id: string;
+  name: string;
+  cnpj: string | null;
+  plan: 'trial' | 'premium';
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  stripePlanStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _count: { users: number; prospects: number };
+  users: Array<{ id: string; email: string; name: string | null }>;
+}
+
+export interface AdminSummary {
+  users: number;
+  orgs: number;
+  trials: number;
+  premiums: number;
+  prospects: number;
+}
+
+export interface Paged<T> {
+  data: T[];
+  meta: { total: number; limit: number; skip: number };
+}
+
+/** Configura estado "não autenticado/no admin" e evita o guard global pular. */
+export async function adminLogin(
+  username: string,
+  password: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ username, password }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Falha no login do admin. Verifique usuário e senha.');
+  }
+}
+
+export async function adminLogout(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch {
+    // best effort
+  }
+}
+
+export async function adminMe(): Promise<AdminMe | null> {
+  try {
+    const res = await fetch(`${API_BASE}/me`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.success ? (json.data as AdminMe) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function adminSummary(): Promise<AdminSummary> {
+  const res = await fetch(`${API_BASE}/summary`, { credentials: 'include' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar resumo');
+  return json.data as AdminSummary;
+}
+
+export async function adminUsers(q = '', limit = 200): Promise<Paged<AdminUserRow>> {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  params.set('limit', String(limit));
+  const res = await fetch(`${API_BASE}/users?${params.toString()}`, { credentials: 'include' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar usuários');
+  return json as Paged<AdminUserRow>;
+}
+
+export async function adminOrgs(q = '', plan = '', limit = 200): Promise<Paged<AdminOrgRow>> {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (plan) params.set('plan', plan);
+  params.set('limit', String(limit));
+  const res = await fetch(`${API_BASE}/orgs?${params.toString()}`, { credentials: 'include' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao carregar contas');
+  return json as Paged<AdminOrgRow>;
+}
+
+export async function adminSetOrgPlan(
+  orgId: string,
+  plan: 'trial' | 'premium'
+): Promise<AdminOrgRow> {
+  const res = await fetch(`${API_BASE}/orgs/${encodeURIComponent(orgId)}/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ plan }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao alterar o plano');
+  return json.data as AdminOrgRow;
+}

@@ -55,6 +55,7 @@ const {
 const natsEnrichment = require('./nats-enrichment');
 const enrichmentGraph = require('./enrichment-graph');
 const firebaseAuth = require('./firebase-auth');
+const adminAuth = require('./admin');
 
 // ─── Outreach modules ─────────────────────────────────────────────
 const gmailAuth = require('./gmail-auth');
@@ -103,6 +104,16 @@ app.use(express.static('public'));
 // /api/auth/* é público (login/logout/resolver sessão); todo o restante de /api
 // exige um cookie de sessão válido emitido após a verificação do Firebase ID token.
 app.use('/api/auth', firebaseAuth.createAuthRouter(prisma));
+// Área administrativa — autenticação BÁSICA com login/senha do Infisical
+// (env ADMIN_USERNAME/ADMIN_PASSWORD), independente do Firebase. Registrado
+// ANTES do guard global de /api porque usa o próprio cookie de sessão admin.
+// Desligado (fail-closed) se ADMIN_USERNAME/ADMIN_PASSWORD não estiverem setadas.
+if (adminAuth.isAdminEnabled()) {
+  app.use('/api/admin', adminAuth.createAdminRouter(prisma));
+  console.log('[admin] área administrativa habilitada em /api/admin');
+} else {
+  console.warn('[admin] ADMIN_USERNAME/ADMIN_PASSWORD não configuradas — admin DESLIGADO');
+}
 // Webhook do Stripe: PÚBLICO — autenticado por assinatura HMAC própria, não
 // por sessão. Precisa ser registrado antes do guard global de /api abaixo.
 app.post('/api/webhooks/stripe', async (req, res) => {

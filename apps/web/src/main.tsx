@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { AdminApp } from './components/admin/AdminApp';
 import './index.css';
 import './services/authGuard';
 
@@ -37,7 +38,7 @@ class RuntimeErrorBoundary extends React.Component<React.PropsWithChildren, { er
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <RuntimeErrorBoundary>
-      <App />
+      {window.location.pathname === '/admin' ? <AdminApp /> : <App />}
     </RuntimeErrorBoundary>
   </React.StrictMode>
 );

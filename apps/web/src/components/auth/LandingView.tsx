@@ -607,6 +607,11 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin }) => {
                   </a>
                 </li>
                 <li>
+                  <a href="/admin" className="transition hover:text-white">
+                    Admin
+                  </a>
+                </li>
+                <li>
                   <a href="mailto:contato@b2base.net" className="transition hover:text-white">
                     contato@b2base.net
                   </a>

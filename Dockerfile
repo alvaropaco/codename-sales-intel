@@ -23,6 +23,10 @@
 #   SESSION_SECRET     >= 32 chars (signs the session cookie)
 #   SESSION_COOKIE_SECURE  true when serving via HTTPS
 #   AUTH_ALLOWED_DOMAINS    optional corporate domain allowlist (comma separated)
+#   ADMIN_USERNAME     (opcional) habilita a área admin (/admin) com auth básica
+#   ADMIN_PASSWORD     (opcional) senha do admin — guarde no Infisical path /b2base
+#   ADMIN_COOKIE_NAME  (opcional) nome do cookie admin (default b2base_admin_session)
+#   ADMIN_SESSION_TTL_HOURS (opcional) vida da sessão admin em horas (default 12)
 # ============================================================================
 
 # ── Stage 1: Build (install deps + build Vite web + generate Prisma) ──────
@@ -90,6 +94,7 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy app runtime files
 COPY server-prod.js ./
 COPY firebase-auth.js ./
+COPY admin.js ./
 COPY mcp-cnpj.js ./
 COPY cnpj-enrichment.js ./
 COPY nats-enrichment.js ./
