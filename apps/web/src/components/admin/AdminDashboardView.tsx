@@ -12,6 +12,9 @@ import {
   ArrowLeft,
   Loader2,
   CheckCircle2,
+  AlertTriangle,
+  Wallet,
+  X,
 } from 'lucide-react';
 import {
   adminUsers,
@@ -19,9 +22,11 @@ import {
   adminSetOrgPlan,
   adminSummary,
   adminLogout,
+  adminOrgBilling,
   type AdminUserRow,
   type AdminOrgRow,
   type AdminSummary,
+  type StripeBillingSnapshot,
 } from '@/services/admin';
 
 type Tab = 'users' | 'orgs';
@@ -51,6 +56,57 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
   const [busyOrg, setBusyOrg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [billingDetail, setBillingDetail] = useState<{
+    org: AdminOrgRow;
+    billing: StripeBillingSnapshot | null;
+    loading: boolean;
+  } | null>(null);
+
+  const openBilling = async (org: AdminOrgRow) => {
+    setBillingDetail({ org, billing: org.billingLive || null, loading: !org.billingLive });
+    if (!org.billingLive) {
+      try {
+        const data = await adminOrgBilling(org.id);
+        setBillingDetail((prev) =>
+          prev && prev.org.id === org.id ? { org, billing: data.billing, loading: false } : prev
+        );
+      } catch (err) {
+        setBillingDetail((prev) =>
+          prev && prev.org.id === org.id
+            ? { org, billing: { configured: false, hasSubscription: false }, loading: false }
+            : prev
+        );
+        setError(err instanceof Error ? err.message : 'Erro ao consultar pagamento');
+      }
+    }
+  };
+
+  const paymentBadge = (org: AdminOrgRow) => {
+    const live = org.billingLive && org.billingLive.snapshot;
+    const status = live ? live.status : org.stripePlanStatus;
+    if (!status) {
+      return org.stripeSubscriptionId ? (
+        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-bold text-sky-300">
+          Assinatura
+        </span>
+      ) : null;
+    }
+    const map: Record<string, { label: string; cls: string }> = {
+      active: { label: 'Pagamento OK', cls: 'bg-emerald-500/15 text-emerald-300' },
+      trialing: { label: 'Em trial', cls: 'bg-sky-500/15 text-sky-300' },
+      past_due: { label: 'Pagamento Atrasado', cls: 'bg-red-500/15 text-red-300' },
+      unpaid: { label: 'Pagamento NÃO pago', cls: 'bg-red-500/20 text-red-300' },
+      canceled: { label: 'Cancelado', cls: 'bg-slate-500/15 text-slate-300' },
+      incomplete: { label: 'Pagamento pendente', cls: 'bg-amber-500/15 text-amber-300' },
+    };
+    const m = map[status] || { label: status, cls: 'bg-slate-500/15 text-slate-300' };
+    return (
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${m.cls}`}>
+        {!live && status === 'past_due' ? null : null}
+        {m.label}
+      </span>
+    );
+  };
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -257,11 +313,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
                         {org.plan === 'premium' ? <Sparkles className="h-3 w-3" /> : <CreditCard className="h-3 w-3" />}
                         {org.plan === 'premium' ? 'Premium' : 'Trial'}
                       </span>
-                      {org.stripeSubscriptionId && (
-                        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-bold text-sky-300">
-                          Stripe: {org.stripePlanStatus || 'assinatura'}
-                        </span>
-                      )}
+                      {paymentBadge(org)}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
                       <span>CNPJ: {org.cnpj || '—'}</span>
@@ -283,6 +335,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {org.stripeSubscriptionId && (
+                      <button
+                        onClick={() => openBilling(org)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 transition hover:bg-white/10"
+                      >
+                        <Wallet className="h-3.5 w-3.5" /> Pagamento
+                      </button>
+                    )}
                     {org.plan === 'premium' ? (
                       <button
                         onClick={() => handleTogglePlan(org)}
@@ -353,6 +413,135 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
           </div>
         )}
       </main>
+
+      {/* Modal: detalhes de pagamento (Stripe) */}
+      {billingDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-black">Pagamento · {billingDetail.org.name}</h2>
+              <button
+                onClick={() => setBillingDetail(null)}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
+                aria-label="Fechar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {billingDetail.loading ? (
+              <div className="flex items-center justify-center py-16 text-sm font-semibold text-slate-400">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Consultando Stripe…
+              </div>
+            ) : (
+              <BillingDetailContent billing={billingDetail.billing} />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+}
+
+function BillingDetailContent({ billing }: { billing: StripeBillingSnapshot | null }) {
+  const s = billing && billing.snapshot;
+  if (!billing) {
+    return <p className="text-sm text-slate-400">Sem dados de cobrança.</p>;
+  }
+  if (!billing.configured) {
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>Stripe não configurado no servidor (STRIPE_SECRET_KEY ausente).</span>
+      </div>
+    );
+  }
+  if (!billing.hasSubscription) {
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-slate-500/30 bg-slate-500/10 px-4 py-3 text-sm text-slate-300">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>Esta conta não possui assinatura Stripe ativa (trial).</span>
+      </div>
+    );
+  }
+  if (!s) {
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>Não foi possível consultar o Stripe: {billing.error || 'erro desconhecido'}.</span>
+      </div>
+    );
+  }
+
+  const statusLabel: Record<string, string> = {
+    active: 'Ativo',
+    trialing: 'Em trial',
+    past_due: 'Atrasado',
+    unpaid: 'Não pago',
+    canceled: 'Cancelado',
+    incomplete: 'Pendente',
+  };
+  const statusCls: Record<string, string> = {
+    active: 'bg-emerald-500/15 text-emerald-300',
+    trialing: 'bg-sky-500/15 text-sky-300',
+    past_due: 'bg-red-500/15 text-red-300',
+    unpaid: 'bg-red-500/20 text-red-300',
+    canceled: 'bg-slate-500/15 text-slate-300',
+    incomplete: 'bg-amber-500/15 text-amber-300',
+  };
+  const fmtBRL = (n: number | null) =>
+    n == null ? '—' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: (s.plan.currency || 'BRL').toUpperCase() }).format(n);
+  const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR') : '—');
+
+  const rows: Array<[string, React.ReactNode]> = [
+    ['Status', <span key="s" className={`rounded-full px-2 py-0.5 text-xs font-bold ${statusCls[s.status] || 'bg-slate-500/15 text-slate-300'}`}>{statusLabel[s.status] || s.status}</span>],
+    ['Período atual', <span key="p">{fmtDate(s.currentPeriod.start)} → {fmtDate(s.currentPeriod.end)}</span>],
+    [
+      'Plano',
+      <span key="pl">
+        {fmtBRL(s.plan.amount)}{s.plan.interval ? ` / ${s.plan.interval === 'month' ? 'mês' : s.plan.interval}` : ''}
+        {s.plan.nickname ? ` · ${s.plan.nickname}` : ''}
+      </span>,
+    ],
+    [
+      'Cartão',
+      <span key="c">
+        {s.paymentMethod && s.paymentMethod.brand
+          ? `${s.paymentMethod.brand} •••• ${s.paymentMethod.last4} (${String(s.paymentMethod.expMonth).padStart(2, '0')}/${s.paymentMethod.expYear})`
+          : '—'}
+      </span>,
+    ],
+    ['Renovação automática', <span key="r">{s.cancelAtPeriodEnd ? 'Cancelada no fim do período' : 'Ativa'}</span>],
+  ];
+
+  if (s.lastInvoice) {
+    rows.push(['Última fatura', <span key="l">{s.lastInvoice.number || s.lastInvoice.id}</span>]);
+    rows.push(['Status da fatura', <span key="li">{s.lastInvoice.status}</span>]);
+    rows.push(['Valor da fatura', <span key="lv">{fmtBRL(s.lastInvoice.amountDue)}</span>]);
+    rows.push(['Pago', <span key="lp">{fmtBRL(s.lastInvoice.amountPaid)}</span>]);
+  }
+  if (s.customer && s.customer.delinquent) {
+    rows.push(['Inadimplência', <span key="d" className="font-bold text-red-300">Sim (cliente inadimplente)</span>]);
+  }
+
+  return (
+    <div className="space-y-2.5">
+      {rows.map(([k, v]) => (
+        <div key={k} className="flex items-start justify-between gap-4 border-b border-white/5 pb-2.5 text-sm">
+          <span className="text-slate-400">{k}</span>
+          <span className="text-right font-semibold text-white">{v}</span>
+        </div>
+      ))}
+      {s.lastInvoice?.hostedInvoiceUrl && (
+        <a
+          href={s.lastInvoice.hostedInvoiceUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-white transition hover:bg-white/10"
+        >
+          Ver fatura no Stripe <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
+        </a>
+      )}
+    </div>
+  );
+}

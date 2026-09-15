@@ -147,6 +147,120 @@ function requireAdmin(req, res, next) {
 }
 
 /**
+ * Busca no STRIPE API o status de pagamento AO VIVO de um org com assinatura.
+ * Usado pelo admin para verificar pagamento em tempo real — não depende só do
+ * cache `stripePlanStatus` (que pode estar defasado). Tolerante a falhas:
+ * se o Stripe não estiver configurado ou a chamada falhar, devolve snapshot
+ * null com motivo em `error` (o admin segue útil sem derrubar a listagem).
+ */
+async function fetchStripeBillingSnapshot(prisma, org) {
+  const noBilling = { configured: false, hasSubscription: false, snapshot: null };
+  try {
+    const billing = require('./stripe-billing');
+    if (!billing.isBillingConfigured()) return noBilling;
+    if (!org.stripeSubscriptionId) {
+      return { configured: true, hasSubscription: false, snapshot: null };
+    }
+    const stripe = billing.getStripe();
+    // Timeout total (5s): a listagem de orgs chama isto por org — não pode
+    // ficar presa se a API do Stripe estiver lenta/indisponível.
+    const withTimeout = (p, ms = 5000, label = 'stripe') =>
+      Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} timeout`)), ms)),
+      ]);
+    const [sub, latestInvoice, customer] = await withTimeout(
+      Promise.all([
+        stripe.subscriptions.retrieve(org.stripeSubscriptionId, {
+          expand: ['default_payment_method'],
+        }),
+        stripe.invoices.list({ subscription: org.stripeSubscriptionId, limit: 1 }),
+        org.stripeCustomerId ? stripe.customers.retrieve(org.stripeCustomerId) : Promise.resolve(null),
+      ]),
+      8000,
+      'stripe-billing'
+    );
+
+    const pm = sub.default_payment_method;
+    const periodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000) : null;
+    const periodStart = sub.current_period_start ? new Date(sub.current_period_start * 1000) : null;
+    const lastInvoice = latestInvoice && latestInvoice.data && latestInvoice.data[0];
+
+    // Tarifa mensal do plano (amount/interval) a partir do item da assinatura.
+    const priceItem = sub.items && sub.items.data && sub.items.data[0];
+    const amount = (priceItem && priceItem.price && priceItem.price.unit_amount) || null;
+    const currency = (priceItem && priceItem.price && priceItem.price.currency) || 'brl';
+    const interval = (priceItem && priceItem.price && priceItem.price.recurring && priceItem.price.recurring.interval) || null;
+
+    return {
+      configured: true,
+      hasSubscription: true,
+      snapshot: {
+        subscriptionId: sub.id,
+        status: sub.status, // active | trialing | past_due | canceled | unpaid | incomplete…
+        cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end),
+        currentPeriod: {
+          start: periodStart ? periodStart.toISOString() : null,
+          end: periodEnd ? periodEnd.toISOString() : null,
+        },
+        plan: {
+          amount: amount != null ? amount / 100 : null,
+          currency,
+          interval,
+          nickname: (priceItem && priceItem.price && priceItem.price.nickname) || null,
+        },
+        paymentMethod: pm
+          ? {
+              brand: pm.card ? pm.card.brand : null,
+              last4: pm.card ? pm.card.last4 : null,
+              expMonth: pm.card ? pm.card.exp_month : null,
+              expYear: pm.card ? pm.card.exp_year : null,
+            }
+          : null,
+        lastInvoice: lastInvoice
+          ? {
+              id: lastInvoice.id,
+              number: lastInvoice.number || null,
+              status: lastInvoice.status, // paid | open | uncollectible | void | draft
+              amountDue: lastInvoice.amount_due != null ? lastInvoice.amount_due / 100 : null,
+              amountPaid: lastInvoice.amount_paid != null ? lastInvoice.amount_paid / 100 : null,
+              currency: lastInvoice.currency || 'brl',
+              created: lastInvoice.created ? new Date(lastInvoice.created * 1000).toISOString() : null,
+              hostedInvoiceUrl: lastInvoice.hosted_invoice_url || null,
+            }
+          : null,
+        // Retrato do customer (delinquent = pagamento atrasado pendente).
+        customer: customer && customer.deleted !== true ? { delinquent: Boolean(customer.delinquent) } : null,
+      },
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      hasSubscription: Boolean(org.stripeSubscriptionId),
+      snapshot: null,
+      error: err.message,
+    };
+  }
+}
+
+/**
+ * Enriquece uma lista de orgs com o snapshot Stripe ao vivo, de forma
+ * resiliente e paralela (não derruba a listagem se um org falhar/expirar).
+ */
+async function attachStripeSnapshots(prisma, items) {
+  const results = await Promise.allSettled(
+    items.map((org) => fetchStripeBillingSnapshot(prisma, org))
+  );
+  return items.map((org, i) => {
+    const r = results[i];
+    return {
+      ...org,
+      billingLive: r.status === 'fulfilled' ? r.value : { configured: false, snapshot: null, error: 'timeout' },
+    };
+  });
+}
+
+/**
  * Registra as rotas do admin no app Express fornecido.
  * Fica FORA do guard global de /api do Firebase por design: usa a própria
  * sessão admin (env), não o cookie /api/user da plataforma.
@@ -197,9 +311,15 @@ function createAdminRouter(prisma) {
         prisma.organization.count({ where: { plan: 'premium' } }),
         prisma.prospect.count(),
       ]);
+      let billingConfigured = false;
+      try {
+        billingConfigured = require('./stripe-billing').isBillingConfigured();
+      } catch (_e) {
+        billingConfigured = false;
+      }
       return res.json({
         success: true,
-        data: { users, orgs, trials, premiums, prospects },
+        data: { users, orgs, trials, premiums, prospects, billingConfigured },
       });
     } catch (error) {
       return res.status(500).json({ success: false, error: error.message });
@@ -305,11 +425,40 @@ function createAdminRouter(prisma) {
         }),
       ]);
 
+      const data = await attachStripeSnapshots(prisma, items);
+
       return res.json({
         success: true,
-        data: items,
+        data,
         meta: { total, limit, skip },
       });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // ── Status de pagamento AO VIVO (Stripe API) de um org ──────────────────
+  // Consulta a API do Stripe (não o cache) para verificar pagamento atual:
+  // status da assinatura, período, valor, cartão, fatura mais recente.
+  router.get('/orgs/:id/billing', requireAdmin, async (req, res) => {
+    try {
+      const orgId = String(req.params.id || '');
+      const org = await prisma.organization.findUnique({
+        where: { id: orgId },
+        select: {
+          id: true,
+          name: true,
+          plan: true,
+          stripeCustomerId: true,
+          stripeSubscriptionId: true,
+          stripePlanStatus: true,
+        },
+      });
+      if (!org) {
+        return res.status(404).json({ success: false, error: 'Organização não encontrada.' });
+      }
+      const billing = await fetchStripeBillingSnapshot(prisma, org);
+      return res.json({ success: true, data: { org, billing } });
     } catch (error) {
       return res.status(500).json({ success: false, error: error.message });
     }

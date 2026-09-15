@@ -36,6 +36,7 @@ export interface AdminOrgRow {
   updatedAt: string;
   _count: { users: number; prospects: number };
   users: Array<{ id: string; email: string; name: string | null }>;
+  billingLive?: StripeBillingSnapshot;
 }
 
 export interface AdminSummary {
@@ -44,6 +45,38 @@ export interface AdminSummary {
   trials: number;
   premiums: number;
   prospects: number;
+  billingConfigured?: boolean;
+}
+
+// ── Status de pagamento via Stripe (admin) ────────────────────────────────
+export interface StripeBillingSnapshot {
+  configured: boolean;
+  hasSubscription: boolean;
+  snapshot?: {
+    subscriptionId: string;
+    status: string; // active | trialing | past_due | canceled | unpaid | incomplete…
+    cancelAtPeriodEnd: boolean;
+    currentPeriod: { start: string | null; end: string | null };
+    plan: { amount: number | null; currency: string; interval: string | null; nickname: string | null };
+    paymentMethod: {
+      brand: string | null;
+      last4: string | null;
+      expMonth: number | null;
+      expYear: number | null;
+    } | null;
+    lastInvoice: {
+      id: string;
+      number: string | null;
+      status: string;
+      amountDue: number | null;
+      amountPaid: number | null;
+      currency: string;
+      created: string | null;
+      hostedInvoiceUrl: string | null;
+    } | null;
+    customer: { delinquent: boolean } | null;
+  } | null;
+  error?: string;
 }
 
 export interface Paged<T> {
@@ -131,4 +164,17 @@ export async function adminSetOrgPlan(
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao alterar o plano');
   return json.data as AdminOrgRow;
+}
+
+/** Busca o status de pagamento AO VIVO do Stripe de um org específico. */
+export async function adminOrgBilling(orgId: string): Promise<{
+  org: Pick<AdminOrgRow, 'id' | 'name' | 'plan' | 'stripeSubscriptionId' | 'stripePlanStatus'>;
+  billing: StripeBillingSnapshot;
+}> {
+  const res = await fetch(`${API_BASE}/orgs/${encodeURIComponent(orgId)}/billing`, {
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao consultar billing');
+  return json.data;
 }
