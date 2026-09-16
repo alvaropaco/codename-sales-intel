@@ -496,6 +496,10 @@ export interface CsvImportResult {
   mapping: Record<string, string | null>;
   mappingSource: 'ai' | 'heuristic' | 'ai+heuristic';
   mappingNotes?: string;
+  /** campos derrubados pela auditoria/blocklist de mapeamento */
+  mappingRejected?: { field: string; column: string; reason: string }[];
+  /** true quando o mapeamento usou memória de imports anteriores do org */
+  memoryUsed?: boolean;
   importedCount: number;
   importedWithoutCnpj: number;
   alreadyExists: number;

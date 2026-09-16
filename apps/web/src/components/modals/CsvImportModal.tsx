@@ -188,6 +188,11 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({ isOpen, onClose,
                   </div>
                 ))}
               </div>
+              {result.memoryUsed && (
+                <p className="text-[11px] text-muted-foreground">
+                  Reusamos como referência o mapeamento aceito de um import anterior da sua organização.
+                </p>
+              )}
               {result.mappingNotes && (
                 <p className="text-[11px] italic text-muted-foreground pt-1 border-t border-border/60">
                   {result.mappingNotes}

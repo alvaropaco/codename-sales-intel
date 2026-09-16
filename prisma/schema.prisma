@@ -30,6 +30,7 @@ model Organization {
   activities Activity[]
   workflows Workflow[]
   enrichmentRequests EnrichmentRequest[]
+  csvMappingMemories CsvMappingMemory[]
   commercialSettings CommercialSettings?
 }
 
@@ -154,6 +155,26 @@ model EnrichmentRequest {
   prospect     Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
 
   @@index([prospectId])
+  @@index([orgId])
+}
+
+// Memória de mapeamento de imports CSV por org: lembra como as planilhas do
+// cliente foram mapeadas para reusar como referência (few-shot) nos próximos
+// imports. Guarda APENAS nomes de colunas + mapeamento aceito — nunca os
+// valores das linhas (dados de leads não ficam aqui).
+model CsvMappingMemory {
+  id              String   @id @default(cuid())
+  orgId           String
+  headerSignature String   // colunas normalizadas, ordenadas e concatenadas
+  headers         Json     // cabeçalhos originais da planilha
+  mapping         Json     // mapeamento aceito (final, pós-auditoria)
+  useCount        Int      @default(1)
+  lastUsedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, headerSignature])
   @@index([orgId])
 }
 

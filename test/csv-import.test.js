@@ -19,6 +19,10 @@ const {
   resolveMapping,
   buildRecord,
   computeImportKey,
+  computeHeaderSignature,
+  headerSimilarity,
+  pickMemoryMapping,
+  MEMORY_SIMILARITY_THRESHOLD,
 } = require('../csv-import');
 
 // CNPJ válido conhecido (dígitos verificadores corretos).
@@ -349,6 +353,73 @@ test('resolveMapping mantém o mapeamento quando a auditoria falha (gateway fora
   };
   const { mapping } = await resolveMapping(['Empresa'], AMOSTRA_AUDITORIA, { callLlm: fakeLlm });
   assert.strictEqual(mapping.companyName, 'Empresa');
+});
+
+// ── Memória de mapeamento (planilhas recorrentes do org) ────────────────────
+
+test('computeHeaderSignature é estável, insensitive a ordem/caixa/acento', () => {
+  const a = computeHeaderSignature(['Empresa', 'CNPJ', 'Cidade']);
+  const b = computeHeaderSignature(['cnpj', 'CIDADE', 'empresa ']);
+  const c = computeHeaderSignature(['Emp resa', 'CNPJ']); // conjunto diferente
+  assert.strictEqual(a, b);
+  assert.notStrictEqual(a, c);
+});
+
+test('headerSimilarity: jaccard entre conjuntos de colunas', () => {
+  assert.strictEqual(headerSimilarity(['A', 'B'], ['B', 'A']), 1);
+  assert.strictEqual(headerSimilarity(['A', 'B'], ['C', 'D']), 0);
+  const sim = headerSimilarity(['Empresa', 'CNPJ', 'Cidade', 'UF'], ['Empresa', 'CNPJ', 'Cidade', 'E-mail']);
+  assert.strictEqual(sim, 3 / 5); // interseção 3, união 5
+});
+
+test('pickMemoryMapping escolhe a memória mais parecida acima do limiar', () => {
+  const headers = ['Empresa', 'CNPJ', 'Cidade', 'UF', 'Telefone'];
+  const memories = [
+    { headers: ['Totalmente', 'Diferente'], mapping: { companyName: 'Totalmente' } },
+    { headers: ['Empresa', 'CNPJ', 'Cidade', 'UF', 'Fone'], mapping: { companyName: 'Empresa', phone: 'Fone' } },
+    { headers: ['Empresa', 'CNPJ', 'Cidade', 'UF', 'Telefone'], mapping: { companyName: 'Empresa', phone: 'Telefone' } },
+  ];
+  const best = pickMemoryMapping(headers, memories);
+  assert.strictEqual(best.mapping.phone, 'Telefone');
+  assert.ok(best.similarity >= MEMORY_SIMILARITY_THRESHOLD);
+
+  // Nada parecido o bastante → null
+  assert.strictEqual(pickMemoryMapping(headers, [memories[0]]), null);
+  assert.strictEqual(pickMemoryMapping(headers, []), null);
+});
+
+test('resolveMapping injeta o mapeamento memorizado no prompt (few-shot)', async () => {
+  const prompts = [];
+  const fakeLlm = async ({ user }) => {
+    prompts.push(user);
+    return {
+      content: JSON.stringify({
+        mapping: { companyName: 'Empresa', phone: 'Fone' },
+        notes: 'reuso',
+      }),
+    };
+  };
+  const previous = {
+    headers: ['Empresa', 'CNPJ', 'Cidade', 'UF', 'Fone'],
+    mapping: { companyName: 'Empresa', phone: 'Fone' },
+  };
+  const rows = [{ 'Empresa': 'A Ltda', 'Fone': '11 3322-4455' }];
+  const { mapping, memoryUsed } = await resolveMapping(
+    ['Empresa', 'CNPJ', 'Cidade', 'UF', 'Fone'],
+    rows,
+    { callLlm: fakeLlm, previous }
+  );
+  assert.strictEqual(memoryUsed, true);
+  assert.strictEqual(mapping.phone, 'Fone');
+  // 1ª chamada = mapeamento (com o few-shot); 2ª = auditoria de valores
+  assert.match(prompts[0], /mapeamento_anterior_aceito/);
+  assert.match(prompts[0], /Fone/);
+
+  // Sem memória: flag false e prompt de mapeamento sem o bloco
+  prompts.length = 0;
+  const r2 = await resolveMapping(['Empresa', 'Fone'], rows, { callLlm: fakeLlm });
+  assert.strictEqual(r2.memoryUsed, false);
+  assert.doesNotMatch(prompts[0], /mapeamento_anterior_aceito/);
 });
 
 // ── buildRecord — linha → modelo Prospect ───────────────────────────────────

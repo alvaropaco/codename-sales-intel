@@ -428,6 +428,55 @@ function cnpjColumnLooksValid(rows, cnpjHeader) {
   return valid / values.length >= 0.5;
 }
 
+// ---------------------------------------------------------------------------
+// MEMÓRIA DE MAPEAMENTO — reusa mapeamentos aceitos anteriormente pelo org
+// (planilhas recorrentes do mesmo cliente mapeiam igual).
+// ---------------------------------------------------------------------------
+
+/** Impressão determinística do conjunto de colunas (para dedup por org). */
+function computeHeaderSignature(headers) {
+  return headers
+    .map((h) => normalizeHeaderKey(h))
+    .sort()
+    .join('|');
+}
+
+/**
+ * Similaridade de Jaccard entre os conjuntos de colunas de duas planilhas
+ * (0..1). Usada para decidir se um mapeamento memorizado é referência
+ * confiável para a planilha atual.
+ */
+function headerSimilarity(headersA, headersB) {
+  const a = new Set(headersA.map((h) => normalizeHeaderKey(h)));
+  const b = new Set(headersB.map((h) => normalizeHeaderKey(h)));
+  if (!a.size || !b.size) return 0;
+  let intersection = 0;
+  for (const key of a) if (b.has(key)) intersection++;
+  const union = a.size + b.size - intersection;
+  return intersection / union;
+}
+
+// Similaridade mínima para injetar o mapeamento memorizado no prompt.
+const MEMORY_SIMILARITY_THRESHOLD = 0.6;
+
+/**
+ * Escolhe, entre as memórias do org, o mapeamento mais parecido com a
+ * planilha atual. Retorna null quando nenhuma atinge o limiar.
+ * memoryRows: [{ headers, mapping }] (headers pode vir como JSON/array).
+ */
+function pickMemoryMapping(headers, memoryRows) {
+  let best = null;
+  for (const row of memoryRows || []) {
+    const storedHeaders = Array.isArray(row.headers) ? row.headers : [];
+    if (!storedHeaders.length) continue;
+    const similarity = headerSimilarity(headers, storedHeaders);
+    if (similarity >= MEMORY_SIMILARITY_THRESHOLD && (!best || similarity > best.similarity)) {
+      best = { headers: storedHeaders, mapping: row.mapping, similarity };
+    }
+  }
+  return best;
+}
+
 const MAPPING_SYSTEM_PROMPT = `Você analisa a estrutura de planilhas CSV de leads B2B brasileiras e mapeia cada coluna para o modelo de dados de uma plataforma de prospecção.
 
 Regras:
@@ -438,6 +487,7 @@ Regras:
 - "cnpj" é opcional: muitas planilhas de contatos não o têm, e tudo bem. Quando existir, procure CNPJ (14 dígitos, com ou sem máscara). NUNCA mapeie CPF, RG ou outro documento como CNPJ.
 - Colunas que não correspondem a nenhum campo-alvo ficam de fora.
 - Datas de abertura, endereço completo, observações: NÃO têm campo correspondente — ignore.
+- Se houver um "mapeamento_anterior_aceito" no payload, é de um import anterior DESTE CLIENTE para uma planilha com colunas muito parecidas: replique as escolhas para colunas iguais/semelhantes; desvie apenas quando o conteúdo mostrar que não se aplica.
 - Responda SOMENTE com JSON válido no formato:
 {"mapping": {"cnpj": "<coluna ou null>", "companyName": "<coluna ou null>", "tradeName": "<coluna ou null>", "industry": "<coluna ou null>", "domain": "<coluna ou null>", "city": "<coluna ou null>", "state": "<coluna ou null>", "email": "<coluna ou null>", "phone": "<coluna ou null>", "employees": "<coluna ou null>", "revenueEstimate": "<coluna ou null>"}, "notes": "<1 frase em pt-BR sobre o que entendeu da planilha>"}`;
 
@@ -501,7 +551,7 @@ async function verifyMappingWithLlm(headers, rows, mapping, { callLlm: callLlmFn
  * Mapeamento via LLM (gateway LiteLLM, llm-client.js). Lança em falha —
  * o caller cai no heurístico.
  */
-async function inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn = callLlm } = {}) {
+async function inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn = callLlm, previous = null } = {}) {
   // Apresenta cada coluna com uma amostra dos valores: modelos pequenos
   // mapeiam muito melhor vendo o CONTEÚDO junto com o nome da coluna.
   const userPrompt = JSON.stringify(
@@ -515,6 +565,11 @@ async function inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn = c
           .slice(0, 3),
       })),
       campos_alvo: TARGET_FIELDS.map((f) => ({ campo: f.key, descricao: f.label, detalhe: f.description })),
+      // Few-shot do próprio cliente (planilhas recorrentes mapeiam igual).
+      // Só cabeçalhos + mapeamento — nunca valores das linhas.
+      ...(previous
+        ? { mapeamento_anterior_aceito: { colunas: previous.headers, mapping: previous.mapping } }
+        : {}),
     },
     null,
     1
@@ -549,10 +604,12 @@ async function inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn = c
  *      MAPEAMENTO FINAL (derruba campo cuja coluna claramente não contém
  *      aquele tipo de dado — inclusive campos preenchidos pelo heurístico,
  *      que só olham o nome da coluna).
- * Nunca lança. Retorna { mapping, source, notes?, rejected }.
+ * Nunca lança. Retorna { mapping, source, notes?, rejected, memoryUsed }.
  * callLlmFn injetável para testes (default: gateway LiteLLM via llm-client).
+ * `previous` = mapeamento memorizado do org ({ headers, mapping }) quando a
+ * planilha é parecida com uma já importada — vira few-shot no prompt.
  */
-async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLlm } = {}) {
+async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLlm, previous = null } = {}) {
   let mapping = {};
   let source = 'heuristic';
   let notes;
@@ -560,7 +617,7 @@ async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLl
   const rejected = [];
 
   try {
-    const ai = await inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn });
+    const ai = await inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn, previous });
     if (ai.mapping && Object.keys(ai.mapping).length) {
       mapping = ai.mapping;
       source = 'ai';
@@ -612,7 +669,7 @@ async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLl
     console.warn(`[csv-import] campos rejeitados no mapeamento: ${JSON.stringify(rejected)}`);
   }
 
-  return { mapping, source, notes, rejected };
+  return { mapping, source, notes, rejected, memoryUsed: Boolean(previous) };
 }
 
 // ---------------------------------------------------------------------------
@@ -727,6 +784,10 @@ module.exports = {
   resolveMapping,
   buildRecord,
   computeImportKey,
+  computeHeaderSignature,
+  headerSimilarity,
+  pickMemoryMapping,
   MAPPING_SYSTEM_PROMPT,
   VERIFY_SYSTEM_PROMPT,
+  MEMORY_SIMILARITY_THRESHOLD,
 };

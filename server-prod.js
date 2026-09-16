@@ -1502,9 +1502,31 @@ app.post('/api/prospects/import-csv', async (req, res) => {
       return res.status(400).json({ success: false, error: 'O CSV não possui linhas de dados.' });
     }
 
+    // Memória de mapeamento: planilhas recorrentes do cliente mapeiam igual.
+    // Escolhe o mapeamento memorizado mais parecido (Jaccard ≥ limiar) e o
+    // injeta como referência no prompt da IA. Falha de memória não bloqueia.
+    let previous = null;
+    let memoryUsed = false;
+    try {
+      const memories = await prisma.csvMappingMemory.findMany({
+        where: { orgId },
+        orderBy: { lastUsedAt: 'desc' },
+        take: 20,
+      });
+      const match = csvImport.pickMemoryMapping(parsed.headers, memories);
+      if (match) {
+        previous = { headers: match.headers, mapping: match.mapping };
+        memoryUsed = true;
+        console.log(`[csv-import] memória de mapeamento aplicada (similaridade ${match.similarity.toFixed(2)})`);
+      }
+    } catch (memErr) {
+      console.warn(`[csv-import] falha ao ler memória de mapeamento: ${memErr.message}`);
+    }
+
     const { mapping, source: mappingSource, notes: mappingNotes, rejected } = await csvImport.resolveMapping(
       parsed.headers,
-      parsed.records
+      parsed.records,
+      { previous }
     );
     // Rastreabilidade: sem esta linha, um mapeamento errado do LLM é
     // indistinguível de planilha malformada no diagnóstico de produção.
@@ -1643,6 +1665,39 @@ app.post('/api/prospects/import-csv', async (req, res) => {
       }
     }
 
+    // Memoriza o mapeamento final aceito (cabeçalhos + mapping; nunca valores
+    // das linhas) para as próximas planilhas do org. Best-effort.
+    try {
+      const signature = csvImport.computeHeaderSignature(parsed.headers);
+      await prisma.csvMappingMemory.upsert({
+        where: { orgId_headerSignature: { orgId, headerSignature: signature } },
+        create: {
+          orgId,
+          headerSignature: signature,
+          headers: parsed.headers,
+          mapping,
+        },
+        update: {
+          headers: parsed.headers,
+          mapping,
+          lastUsedAt: new Date(),
+          useCount: { increment: 1 },
+        },
+      });
+      // Teto de memórias por org (planilhas antigas saem, as recentes ficam).
+      const old = await prisma.csvMappingMemory.findMany({
+        where: { orgId },
+        orderBy: { lastUsedAt: 'desc' },
+        skip: 20,
+        select: { id: true },
+      });
+      if (old.length) {
+        await prisma.csvMappingMemory.deleteMany({ where: { id: { in: old.map((r) => r.id) } } });
+      }
+    } catch (memErr) {
+      console.warn(`[csv-import] falha ao memorizar mapeamento: ${memErr.message}`);
+    }
+
     res.json({
       success: true,
       data: {
@@ -1654,6 +1709,7 @@ app.post('/api/prospects/import-csv', async (req, res) => {
         mappingSource,
         mappingNotes,
         mappingRejected: rejected,
+        memoryUsed,
         importedCount,
         importedWithoutCnpj,
         alreadyExists,
