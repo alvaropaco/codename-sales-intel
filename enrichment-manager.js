@@ -671,8 +671,23 @@ function getManager({ prisma } = {}) {
       logger: createLogger({ component: 'enrichment-manager' }),
       assertQuota: ({ orgId, plan }) => defaultQuotaGuard(prisma, orgId, plan, config),
     });
+    scheduleRawPrune(prisma, config, _default._logger);
   }
   return _default;
+}
+
+/** Retenção de brutos (FR-027): limpeza diária dos RawRecords vencidos. */
+let _pruneScheduled = false;
+function scheduleRawPrune(prisma, config, logger) {
+  if (_pruneScheduled || !prisma) return;
+  _pruneScheduled = true;
+  const { createRawStore } = require('./raw-store');
+  const rawStore = createRawStore({ prisma, config });
+  const run = () => rawStore.prune(config.RAW_RETENTION_DAYS())
+    .then((n) => { if (n) console.log(`[enrichment] raw-store: ${n} brutos expirados removidos`); })
+    .catch((err) => console.error(`[enrichment] raw-store prune falhou: ${err.message}`));
+  setInterval(run, 24 * 3600 * 1000).unref();
+  setTimeout(run, 60 * 1000).unref();
 }
 
 function natsStream_enabled() {

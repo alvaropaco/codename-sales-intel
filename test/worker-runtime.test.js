@@ -289,3 +289,69 @@ test('US4 runtime: injeção de falha por env (PROVIDER_FORCE_ERROR) não chama 
     delete process.env.PROVIDER_FORCE_ERROR;
   }
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// US6 — evidência por fato + dado bruto via rawStore
+// ════════════════════════════════════════════════════════════════════════════
+
+function makeRawStoreStub() {
+  const calls = { put: 0 };
+  let seq = 0;
+  return {
+    calls,
+    put: async (record) => {
+      calls.put += 1;
+      seq += 1;
+      return { rawRecordId: `raw-${seq}`, truncated: false };
+    },
+    get: async () => null,
+  };
+}
+
+test('US6 runtime: fatos viram EnrichmentEvidence; bruto vai ao rawStore com referência no result', async () => {
+  const rawStore = makeRawStoreStub();
+  const { runtime, prisma, published } = makeRuntime({
+    executors: {
+      'identity.domain.verify': async () => ({
+        status: 'COMPLETED',
+        data: { domain_active: true },
+        facts: [{ attribute: 'company.domain_active', value: true, confidence: 0.9,
+          evidence: { sourceType: 'dns', url: 'https://exemplo.com', retrievedAt: new Date().toISOString() } }],
+        raw: { contentType: 'application/json', body: { lookup: 'exemplo.com', addresses: ['1.2.3.4'] } },
+      }),
+    },
+  });
+  runtime.setRawStoreForTest(rawStore);
+
+  await runtime.processMessage(createFakeMessage(makeTask()));
+  assert.strictEqual(rawStore.calls.put, 1);
+  const resultRow = await prisma.enrichmentResult.findUnique({ where: { taskId: 't-1' } });
+  assert.strictEqual(resultRow.rawRecordId, 'raw-1'); // referência, não payload
+  const evidence = await prisma.enrichmentEvidence.findMany({ where: { orgId: 'org-1' } });
+  assert.strictEqual(evidence.length, 1);
+  assert.strictEqual(evidence[0].attribute, 'company.domain_active');
+  assert.strictEqual(evidence[0].sourceType, 'dns');
+  assert.strictEqual(evidence[0].resultId, resultRow.id);
+  // O evento publicado carrega a referência, nunca o corpo bruto.
+  assert.strictEqual(published[0].rawRecordId, 'raw-1');
+  assert.strictEqual(published[0].raw, undefined);
+});
+
+test('US6 conflito de fontes: dois results do mesmo atributo COEXISTEM sem merge', async () => {
+  const { runtime, prisma } = makeRuntime({
+    executors: {
+      'identity.domain.verify': async (task) => ({
+        status: 'COMPLETED',
+        data: { employee_count: task.taskId === 't-1' ? 350 : 500 },
+        facts: [{ attribute: 'company.employeeCount',
+          value: task.taskId === 't-1' ? 350 : 500,
+          confidence: 0.8, evidence: { sourceType: task.taskId === 't-1' ? 'pdl' : 'searxng', retrievedAt: new Date().toISOString() } }],
+      }),
+    },
+  });
+  await runtime.processMessage(createFakeMessage(makeTask()));
+  await runtime.processMessage(createFakeMessage(makeTask({ taskId: 't-2', taskKey: 'key-2' })));
+  const rows = await prisma.enrichmentResult.findMany({ where: { orgId: 'org-1' } });
+  assert.strictEqual(rows.length, 2); // coexistem
+  assert.deepStrictEqual(rows.map((r) => r.data.employee_count).sort(), [350, 500]);
+});

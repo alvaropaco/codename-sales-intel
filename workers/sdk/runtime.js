@@ -39,6 +39,7 @@ function createWorkerRuntime({
   } = deps;
 
   let publisher = injectedPublisher;
+  let rawStore = deps.rawStore || null;
 
   const executors = new Map(); // capability → async (task, ctx) => outcome
   let registry = deps.registry || require('../../enrichment-provider-registry').createNoopRegistry();
@@ -104,6 +105,11 @@ function createWorkerRuntime({
     registry = fn;
   }
 
+  /** Injeta o raw-store em runtime (produção e testes US6). */
+  function setRawStoreForTest(fn) {
+    rawStore = fn;
+  }
+
   // ── Injeção de falha/latência por env (quickstart C4) ─────────────────────
   function forceErrorFor(provider) {
     return String(process.env.PROVIDER_FORCE_ERROR || '')
@@ -155,7 +161,7 @@ function createWorkerRuntime({
   }
 
   async function persistResult(event) {
-    await prisma.enrichmentResult.upsert({
+    const row = await prisma.enrichmentResult.upsert({
       where: { taskId: event.taskId },
       create: {
         orgId: event.orgId,
@@ -171,14 +177,35 @@ function createWorkerRuntime({
         confidence: (event.facts && event.facts[0] && event.facts[0].confidence) || null,
         durationMs: event.durationMs,
         workerVersion: event.workerVersion,
+        rawRecordId: event.rawRecordId || null,
       },
       update: {
         status: event.status,
         data: event.data,
         durationMs: event.durationMs,
         provider: event.provider,
+        rawRecordId: event.rawRecordId || null,
       },
     });
+    // Evidência por fato (FR-026): prova de origem persistida junto ao result.
+    const facts = event.facts || [];
+    if (facts.length && prisma.enrichmentEvidence) {
+      await prisma.enrichmentEvidence.createMany({
+        data: facts.map((f) => ({
+          orgId: event.orgId,
+          resultId: row.id,
+          attribute: f.attribute,
+          value: f.value,
+          sourceType: (f.evidence && f.evidence.sourceType) || null,
+          provider: (f.evidence && f.evidence.provider) || event.provider || null,
+          url: (f.evidence && f.evidence.url) || null,
+          retrievedAt: (f.evidence && f.evidence.retrievedAt && new Date(f.evidence.retrievedAt)) || now(),
+          confidence: (f.evidence && f.evidence.confidence) != null ? f.evidence.confidence : (f.confidence ?? null),
+          rawRecordId: (f.evidence && f.evidence.rawRecordId) || event.rawRecordId || null,
+        })),
+      });
+    }
+    return row;
   }
 
   // ── Núcleo de processamento (unit-testável; msg = {data, ack, nak, term}) ──
@@ -331,6 +358,7 @@ function createWorkerRuntime({
         signal: controller.signal,
         logger: log,
         deps: runtimeDeps,
+        rawStore,
       });
     } catch (err) {
       execErr = err;
@@ -354,6 +382,24 @@ function createWorkerRuntime({
 
     const status = outcome && outcome.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
     await registry.recordOutcome(provider, { ok: status === 'COMPLETED', latencyMs: durationMs });
+
+    // Dado bruto → raw-store ANTES do persist (result carrega só a referência).
+    let rawRecordId = null;
+    if (outcome && outcome.raw && rawStore) {
+      try {
+        const ref = await rawStore.put({
+          orgId: task.orgId,
+          capability: task.capability,
+          provider: (outcome && outcome.provider) || provider,
+          contentType: outcome.raw.contentType || 'application/json',
+          body: outcome.raw.body,
+        });
+        rawRecordId = ref.rawRecordId;
+      } catch (err) {
+        log.warn(`runtime: raw-store indisponível (${err.message}); seguindo sem bruto`);
+      }
+    }
+
     const event = buildResultEvent(task, {
       status,
       data: outcome ? outcome.data : {},
@@ -367,7 +413,8 @@ function createWorkerRuntime({
       suggestedTasks: outcome ? outcome.suggestedTasks : [],
       provider: outcome ? outcome.provider : undefined,
     });
-    const delivered = await deliver(msg, event); // persist → publish → ack (FR-018)
+    event.rawRecordId = rawRecordId;
+    const delivered = await deliver(msg, event); // persist(+evidência) → publish → ack (FR-018)
     return { status: delivered ? status : 'NAK' };
   }
 
@@ -451,6 +498,7 @@ function createWorkerRuntime({
     registerExecutorsForTest: registerExecutors,
     setPublisherForTest,
     setRegistryForTest,
+    setRawStoreForTest,
     get isRunning() {
       return running;
     },

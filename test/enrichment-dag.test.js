@@ -108,7 +108,7 @@ test('US5 dependências concluídas → desbloqueia, publica e enriquece input c
   assert.ok(published, 'dependente desbloqueado deve ser publicado');
   const payload = contracts.parsePayload(published.data);
   assert.strictEqual(payload.input.legal_name, 'MARISPAN LTDA'); // fatos da dep entram no input
-  assert.strictEqual(payload.input.companyName, 'Marispan Ltda'); // input original preservado
+  assert.strictEqual(payload.input.companyName, 'Marispan Filial Ltda'); // input original preservado
 });
 
 test('US5 dependência falhada permanentemente → dependente CANCELLED com causa', async () => {
