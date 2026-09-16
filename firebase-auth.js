@@ -25,6 +25,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const express = require('express');
 const { parse: parseCookie, serialize: serializeCookie } = require('cookie');
+const { sendWelcomeEmail } = require('./transactional-email');
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'b2base_session';
 const SESSION_TTL_HOURS = Math.max(1, Number(process.env.SESSION_TTL_HOURS) || 336);
@@ -526,7 +527,7 @@ async function upsertUserFromDecodedToken(prisma, decodedToken) {
     data: { name: name || email.split('@')[0] || 'Organização principal' },
   });
 
-  return prisma.user.create({
+  const newUser = await prisma.user.create({
     data: {
       email,
       name,
@@ -535,6 +536,14 @@ async function upsertUserFromDecodedToken(prisma, decodedToken) {
       orgId: org.id,
     },
   });
+
+  // E-mail de boas-vindas para o novo usuário. Fire-and-forget: nunca
+  // bloqueia o cadastro/login e nunca propaga erro para a request.
+  if (newUser && emailFromToken) {
+    sendWelcomeEmail({ email: newUser.email, name: newUser.name }).catch(() => {});
+  }
+
+  return newUser;
 }
 
 async function serializeUser(user) {
