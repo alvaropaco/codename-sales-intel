@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "enrichment.job.completed.v1",
+  "title": "Conclusão de job de enriquecimento",
+  "type": "object",
+  "required": ["version", "jobId", "orgId", "prospectId", "status", "counts", "completionPct", "completedAt"],
+  "properties": {
+    "version": { "const": "1" },
+    "jobId": { "type": "string" },
+    "orgId": { "type": "string" },
+    "prospectId": { "type": "string" },
+    "status": { "enum": ["COMPLETED", "PARTIAL", "FAILED", "CANCELLED"] },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "total": { "type": "integer" },
+        "completed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "cancelled": { "type": "integer" },
+        "pending": { "type": "integer" },
+        "queued": { "type": "integer" },
+        "running": { "type": "integer" },
+        "retry": { "type": "integer" },
+        "timeout": { "type": "integer" },
+        "blocked": { "type": "integer" },
+        "skipped": { "type": "integer" }
+      }
+    },
+    "completionPct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "completedAt": { "type": "string", "format": "date-time" }
+  }
+}

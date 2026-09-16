@@ -40,6 +40,11 @@ function makeValidator(schema) {
 // uma task `spawn` (declarativo — worker nunca orquestra, research R7).
 // `providers`: ordem = preferência; a decisão de saúde/limite é do registry (US4).
 
+// Estágio 'port': capability portada para o motor (Fase 11) mas só ELEGÍVEL
+// com ENRICHMENT_CATALOG_FULL=true — rollout controlado, paridade em staging
+// antes do tráfego real (T058/research R11).
+const CATALOG_FULL = () => String(process.env.ENRICHMENT_CATALOG_FULL || 'false') === 'true';
+
 const CAPABILITIES = {
   'identity.domain.verify': {
     family: 'identity',
@@ -86,9 +91,10 @@ const CAPABILITIES = {
 
   // ── Porte (Fase 11) — registradas, desligadas até a esteira migrar ────────
   'identity.cnpj.resolve': {
+    // stage: 'port' — ver CATALOG_FULL acima
     family: 'identity',
     tier: 'basic',
-    enabled: false,
+    enabled: 'port',
     entityType: ['prospect', 'company'],
     timeoutMs: 60000,
     maxAttempts: 2,
@@ -102,9 +108,10 @@ const CAPABILITIES = {
   },
 
   'search.legal': {
+    // stage: 'port' — ver CATALOG_FULL acima
     family: 'search',
     tier: 'premium',
-    enabled: false,
+    enabled: 'port',
     entityType: ['prospect', 'company', 'person'],
     timeoutMs: 45000,
     maxAttempts: 2,
@@ -115,9 +122,10 @@ const CAPABILITIES = {
   },
 
   'company.profile.deep': {
+    // stage: 'port' — ver CATALOG_FULL acima
     family: 'company',
     tier: 'premium',
-    enabled: false,
+    enabled: 'port',
     entityType: ['prospect', 'company'],
     timeoutMs: 90000,
     maxAttempts: 2,
@@ -128,9 +136,10 @@ const CAPABILITIES = {
   },
 
   'company.logo': {
+    // stage: 'port' — ver CATALOG_FULL acima
     family: 'company',
     tier: 'premium',
-    enabled: false,
+    enabled: 'port',
     entityType: ['prospect', 'company', 'domain'],
     timeoutMs: 15000,
     maxAttempts: 2,
@@ -141,9 +150,10 @@ const CAPABILITIES = {
   },
 
   'company.deepgraph': {
+    // stage: 'port' — ver CATALOG_FULL acima
     family: 'company',
     tier: 'premium',
-    enabled: false,
+    enabled: 'port',
     entityType: ['prospect', 'company'],
     timeoutMs: 300000, // varredura OSINT profunda (worker Python) pode levar minutos
     maxAttempts: 2,
@@ -174,7 +184,8 @@ function getExecutor(name) {
 function getCapability(name) {
   const def = CAPABILITIES[name];
   if (!def) return null;
-  return { capability: name, ...def, validateInput: makeValidator(def.inputSchema) };
+  const enabled = def.enabled === true || (def.enabled === 'port' && CATALOG_FULL());
+  return { capability: name, ...def, enabled, validateInput: makeValidator(def.inputSchema) };
 }
 
 function listCapabilities() {
