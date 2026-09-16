@@ -625,3 +625,141 @@ model LeadChannelState {
   @@index([channel])
   @@index([status])
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Motor de enriquecimento distribuído (specs/001-distributed-enrichment).
+// Isolamento por organização (orgId) em todas as entidades — constituição IV.
+// Contratos NATS versionados *.v1 em specs/001-distributed-enrichment/contracts/.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Operação completa de enriquecimento de um lead. Um prospect pode ter vários
+// jobs ao longo do tempo; `plan` é snapshot do plano no momento do job.
+model EnrichmentJob {
+  id          String    @id @default(cuid())
+  orgId       String
+  prospectId  String
+  // PENDING | RUNNING | PARTIAL | COMPLETED | FAILED | CANCELLED
+  status      String    @default("PENDING")
+  // manual | api | csv_import | qualification_stage | discovery
+  trigger     String
+  plan        String    // trial | premium (snapshot — gating é avaliado no planejamento)
+  engine      String    @default("v2")
+  startedAt   DateTime?
+  completedAt DateTime?
+  lastError   Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tasks EnrichmentTask[]
+
+  @@index([orgId, createdAt])
+  @@index([prospectId, createdAt])
+}
+
+// Unidade fundamental de execução distribuída: job + entidade + capability.
+// Idempotente por `taskKey` (uuidv5 determinístico) — redelivery/replanejamento
+// não duplicam estado. `dependsOn` forma o DAG mínimo (FR-012).
+model EnrichmentTask {
+  id              String    @id @default(cuid())
+  orgId           String
+  jobId           String
+  prospectId      String
+  taskKey         String    @unique
+  entityKey       String // ex.: "prospect:cls…", "domain:exemplo.com.br"
+  entityType      String // prospect | company | person | domain | email | phone | social_profile | product | article
+  capability      String
+  provider        String?
+  input           Json
+  inputHash       String
+  // PENDING | QUEUED | RUNNING | COMPLETED | FAILED | RETRY | TIMEOUT | BLOCKED | CANCELLED | SKIPPED
+  status          String    @default("PENDING")
+  priority        Int       @default(2) // 0=highest … 3=background
+  attempt         Int       @default(0)
+  maxAttempts     Int       @default(3)
+  timeoutMs       Int       @default(30000)
+  dependsOn       String[]  @default([])
+  depth           Int       @default(0) // profundidade de expansão dinâmica
+  spawnedByTaskId String? // rastreabilidade da expansão (FR-013)
+  startedAt       DateTime?
+  completedAt     DateTime?
+  lastError       Json? // { type, message, provider, attempt }
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  job    EnrichmentJob    @relation(fields: [jobId], references: [id])
+  result EnrichmentResult?
+
+  @@index([jobId, status])
+  @@index([status, priority])
+  @@index([orgId, prospectId])
+}
+
+// Resultado final persistido PELO WORKER (um por task; retentativas sobrescrevem
+// via upsert por taskId). Persistido antes do ack (FR-004/FR-018).
+model EnrichmentResult {
+  id            String   @id @default(cuid())
+  orgId         String
+  taskId        String   @unique
+  jobId         String
+  prospectId    String
+  entityKey     String
+  entityType    String
+  capability    String
+  provider      String?
+  // COMPLETED | FAILED
+  status        String
+  data          Json? // fatos normalizados canônicos
+  confidence    Float?
+  durationMs    Int
+  workerVersion String
+  rawRecordId   String?
+  // Metadados extras (ex.: reprocessedFrom no reprocessamento de bruto — T044)
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  task     EnrichmentTask      @relation(fields: [taskId], references: [id])
+  evidence EnrichmentEvidence[]
+
+  @@index([orgId, prospectId])
+  @@index([jobId])
+}
+
+// Prova de origem POR FATO (FR-026): responde "de onde veio, quando, com quanta
+// confiança". Valores conflitantes de fontes distintas COEXISTEM (FR-029).
+model EnrichmentEvidence {
+  id          String   @id @default(cuid())
+  orgId       String
+  resultId    String
+  attribute   String // ex.: company.employeeCount
+  value       Json
+  sourceType  String // searxng | brasilapi | rfb | pdl | clearbit | dns …
+  provider    String?
+  url         String?
+  retrievedAt DateTime
+  confidence  Float?
+  rawRecordId String?
+  createdAt   DateTime @default(now())
+
+  result EnrichmentResult @relation(fields: [resultId], references: [id])
+
+  @@index([orgId, attribute])
+}
+
+// Dado bruto retido (camada separada do normalizado — FR-027/028). Backend
+// inicial Postgres atrás da abstração raw-store.js; S3/MinIO ativável depois
+// (research R5) via storageBackend/storageRef.
+model RawRecord {
+  id             String   @id @default(cuid())
+  orgId          String
+  capability     String
+  provider       String
+  contentType    String // application/json | text/html | text/plain
+  sizeBytes      Int
+  payload        String? // preenchido quando storageBackend=postgres
+  storageBackend String   @default("postgres")
+  storageRef     String?
+  truncated      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([orgId, capability, createdAt])
+}
