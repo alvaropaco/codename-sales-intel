@@ -382,6 +382,7 @@ function createWorkerRuntime({
 
     const status = outcome && outcome.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
     await registry.recordOutcome(provider, { ok: status === 'COMPLETED', latencyMs: durationMs });
+    if (typeof deps.onMetric === 'function') deps.onMetric('task_duration', { capability: task.capability, durationMs });
 
     // Dado bruto → raw-store ANTES do persist (result carrega só a referência).
     let rawRecordId = null;

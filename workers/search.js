@@ -69,6 +69,9 @@ function createSearchWorker({ prisma, js, jsm = null, deps = {} } = {}) {
       publisher: js ? makeResultPublisher({ js }) : null,
       rawStore,
       logger,
+      onMetric: (event, data) => {
+        if (event === 'task_duration') require('../metrics').observeEnrichmentTaskDuration(data.capability, data.durationMs / 1000);
+      },
       ...deps,
     },
   });

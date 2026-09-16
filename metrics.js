@@ -210,11 +210,124 @@ function startMetricsServer(prisma) {
   return server;
 }
 
+// ── Métricas do motor de enriquecimento distribuído (spec US8) ──────────────
+const enrichmentTasksGauge = enabled
+  ? new client.Gauge({
+      name: 'b2base_enrichment_tasks',
+      help: 'Tasks do motor de enriquecimento por capability e estado',
+      labelNames: ['capability', 'state'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentDurationHist = enabled
+  ? new client.Histogram({
+      name: 'b2base_enrichment_task_duration_seconds',
+      help: 'Duração da execução de tasks por capability',
+      labelNames: ['capability'],
+      registers: [registry],
+    })
+  : null;
+const providerRequestsTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_provider_requests_total',
+      help: 'Chamadas a providers por resultado (ok/error/rejected)',
+      labelNames: ['provider', 'outcome'],
+      registers: [registry],
+    })
+  : null;
+const providerStateGauge = enabled
+  ? new client.Gauge({
+      name: 'b2base_enrichment_provider_state',
+      help: 'Estado do circuit breaker por provider (1 = estado vigente)',
+      labelNames: ['provider', 'state'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentPendingGauge = enabled
+  ? new client.Gauge({
+      name: 'b2base_enrichment_tasks_pending',
+      help: 'Tasks pendentes/em voo por capability (base para autoscaling futuro)',
+      labelNames: ['capability'],
+      registers: [registry],
+    })
+  : null;
+const qualificationTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_qualification_total',
+      help: 'Recalques de score executados pelo consumidor de qualificação',
+      registers: [registry],
+    })
+  : null;
+const qualificationFailures = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_qualification_failures_total',
+      help: 'Falhas do consumidor de qualificação (isoladas do enriquecimento)',
+      registers: [registry],
+    })
+  : null;
+
+const _lastProviderState = new Map(); // provider → estado vigente (para zerar o anterior)
+
+function setEnrichmentTaskState(capability, state, count) {
+  if (enrichmentTasksGauge) enrichmentTasksGauge.set({ capability, state }, count);
+}
+function observeEnrichmentTaskDuration(capability, seconds) {
+  if (enrichmentDurationHist) enrichmentDurationHist.observe({ capability }, seconds);
+}
+function incEnrichmentProviderRequest(provider, outcome) {
+  if (providerRequestsTotal) providerRequestsTotal.inc({ provider, outcome });
+}
+function setEnrichmentProviderState(provider, state) {
+  if (!providerStateGauge) return;
+  const previous = _lastProviderState.get(provider);
+  if (previous && previous !== state) {
+    providerStateGauge.set({ provider, state: previous }, 0);
+  }
+  providerStateGauge.set({ provider, state }, 1);
+  _lastProviderState.set(provider, state);
+}
+function setEnrichmentPending(capability, count) {
+  if (enrichmentPendingGauge) enrichmentPendingGauge.set({ capability }, count);
+}
+function incQualificationTotal() {
+  if (qualificationTotal) qualificationTotal.inc();
+}
+function incQualificationFailure() {
+  if (qualificationFailures) qualificationFailures.inc();
+}
+
+/** Pendência por capability (groupby de tasks ativas) — chamada em intervalo. */
+async function refreshEnrichmentPendingMetrics(prisma) {
+  if (!enabled || !prisma || !prisma.enrichmentTask) return;
+  const groups = await prisma.enrichmentTask.groupBy({
+    by: ['capability'],
+    where: { status: { in: ['PENDING', 'QUEUED', 'RUNNING', 'RETRY', 'TIMEOUT', 'BLOCKED'] } },
+    _count: { _all: true },
+  });
+  for (const g of groups) {
+    enrichmentPendingGauge.set({ capability: g.capability }, g._count._all);
+  }
+}
+
+/** Renderiza apenas o registro (sem refresh de filas/DB — seguro em testes). */
+async function renderEnrichmentMetrics() {
+  return registry.metrics();
+}
+
 module.exports = {
   startMetricsServer,
   refreshQueueMetrics,
   refreshDbMetrics,
   renderMetrics,
+  renderEnrichmentMetrics,
+  refreshEnrichmentPendingMetrics,
+  setEnrichmentTaskState,
+  observeEnrichmentTaskDuration,
+  incEnrichmentProviderRequest,
+  setEnrichmentProviderState,
+  setEnrichmentPending,
+  incQualificationTotal,
+  incQualificationFailure,
   isEnabled: () => enabled,
   incEmailSent: () => inc(emailsSentTotal),
   incEmailFailed: () => inc(emailsFailedTotal),
