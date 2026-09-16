@@ -433,6 +433,16 @@ function createRequireAuth(prisma) {
   }
 
   return async function requireAuth(req, res, next) {
+    // Endpoints INTERNOS (SRE/guardião) autenticados por header interno em vez
+    // de cookie de sessão — pular o guard de sessão e deixar o handler validar.
+    if (req.path.startsWith('/api/system') || req.path === '/api/system') {
+      const expected = process.env.INTERNAL_RECONCILE_TOKEN;
+      const provided = req.get('X-Internal-Token');
+      if (expected && provided && provided === expected) {
+        return next();
+      }
+      return res.status(403).json({ success: false, error: 'forbidden', code: 'FORBIDDEN' });
+    }
     const token = req.cookies && req.cookies[SESSION_COOKIE_NAME];
     if (!token) {
       return res

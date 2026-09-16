@@ -165,18 +165,6 @@ app.get('/api/version', (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-// Endpoints INTERNOS (SRE/guardião): bypass do guard de sessão de /api.
-// Autenticados por header X-Internal-Token (env INTERNAL_RECONCILE_TOKEN) em
-// vez de cookie de sessão. Precisa vir ANTES do guard global /api abaixo. O
-// próprio handler revalida o token (defesa em profundidade).
-app.use('/api/system', (req, res, next) => {
-  const expected = process.env.INTERNAL_RECONCILE_TOKEN;
-  const provided = req.get('X-Internal-Token');
-  if (expected && provided && provided === expected) {
-    return next();
-  }
-  return res.status(403).json({ success: false, error: 'forbidden', code: 'FORBIDDEN' });
-});
 app.use('/api', firebaseAuth.createRequireAuth(prisma));
 
 // Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
