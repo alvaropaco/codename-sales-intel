@@ -74,10 +74,12 @@ function buildEnrichmentSummary(summary) {
 }
 
 // ---------------------------------------------------------------------------
-// Config (env com defaults)
+// Config (env com defaults). Conexão delegada ao módulo compartilhado
+// nats-stream.js — mesmo comportamento, um único ponto de conexão.
 // ---------------------------------------------------------------------------
-const NATS_URL = process.env.NATS_URL || 'nats://legal-nats.laweragent.svc.cluster.local:4222';
-const NATS_STREAM = process.env.NATS_STREAM || 'ENRICHMENT';
+const natsStream = require('./nats-stream');
+const NATS_URL = natsStream.NATS_URL;
+const NATS_STREAM = natsStream.NATS_STREAM;
 const NATS_DURABLE = process.env.NATS_DURABLE || 'b2base-results';
 const NATS_REQUEST_SUBJECT = process.env.NATS_REQUEST_SUBJECT || 'enrichment.company.requested.v1';
 const NATS_COMPLETED_SUBJECT = process.env.NATS_COMPLETED_SUBJECT || 'enrichment.company.completed.v1';
@@ -106,26 +108,12 @@ function normalizeCnpj(cnpj) {
 }
 
 async function connectNats() {
-  if (_nc && !_nc.isClosed()) return _nc;
-  try {
-    _nc = await connect({
-      servers: NATS_URL,
-      name: 'b2base-backend',
-      reconnect: true,
-      maxReconnectAttempts: -1,          // nunca desiste; fica tentando
-      reconnectTimeWait: 2000,
-      waitOnFirstConnect: false,          // não bloqueia o boot do servidor
-    });
-    _js = _nc.jetstream();
-    console.log(`[nats] conectado a ${NATS_URL}`);
-    return _nc;
-  } catch (error) {
-    // Primeira conexão falhou (ex.: NATS fora do ar). Limpa para permitir
-    // nova tentativa na próxima chamada sem estado inconsistente.
-    _nc = null;
-    _js = null;
-    throw error;
-  }
+  // Delega ao módulo compartilhado (mesma semântica: reconnect infinito,
+  // boot não bloqueante, singleton por processo).
+  const nc = await natsStream.connectNats({ name: 'b2base-backend' });
+  _nc = nc;
+  _js = nc.jetstream();
+  return _nc;
 }
 
 // ---------------------------------------------------------------------------

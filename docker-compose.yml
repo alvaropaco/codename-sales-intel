@@ -18,5 +18,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # Motor de enriquecimento distribuído (specs/001-distributed-enrichment):
+  # JetStream carrega o stream ENRICHMENT (subjects enrichment.>).
+  nats:
+    image: nats:2-alpine
+    container_name: b2base-nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222" # monitor HTTP do JetStream
+    volumes:
+      - nats_data:/data
+
+  # Rate limit distribuído e circuit breaker por provider (ioredis).
+  redis:
+    image: redis:7-alpine
+    container_name: b2base-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   postgres_data:
+  nats_data:
+  redis_data:
