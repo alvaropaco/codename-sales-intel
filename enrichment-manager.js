@@ -67,6 +67,7 @@ function createEnrichmentManager(deps = {}) {
     logger = console,
     now = () => new Date(),
     onEvent = () => {}, // gancho de métricas (US8)
+    assertQuota = null, // guard de cota mensal (US3) — injetável
   } = deps;
 
   // ── Publicação ────────────────────────────────────────────────────────────
@@ -233,8 +234,9 @@ function createEnrichmentManager(deps = {}) {
       err.code = 'PROSPECT_NOT_FOUND';
       throw err;
     }
-    // Gancho de cota (implementado na US3 — default: sem verificação).
-    if (typeof assertQuota === 'function') await assertQuota({ orgId, plan });
+    // Cota mensal por organização (FR-031): guard injetável; o singleton
+    // instala o guard default (contagem de jobs no mês).
+    if (assertQuota) await assertQuota({ orgId, plan });
 
     const job = await prisma.enrichmentJob.create({
       data: { orgId, prospectId, status: 'PENDING', trigger, plan, engine: 'v2' },
@@ -433,10 +435,6 @@ function createEnrichmentManager(deps = {}) {
     return job.id;
   }
 
-  // Declarado antes do uso em createJob (hoisting de function declaration).
-  // eslint-disable-next-line no-unused-vars
-  function assertQuota() { /* US3: implementado via deps.assertQuota */ }
-
   return {
     createJob,
     planTasks,
@@ -466,15 +464,32 @@ function makeRealJsAdapter() {
   };
 }
 
+/** Guard default de cota: nº de jobs da org no mês corrente × plano. */
+async function defaultQuotaGuard(prisma, orgId, plan, config) {
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+  const used = await prisma.enrichmentJob.count({
+    where: { orgId, createdAt: { gte: startOfMonth } },
+  });
+  if (used >= config.monthlyQuota(plan)) {
+    const err = new Error(`Cota mensal de enriquecimento do plano ${plan} atingida (${used})`);
+    err.code = 'ENRICHMENT_QUOTA_EXCEEDED';
+    throw err;
+  }
+}
+
 function getManager({ prisma } = {}) {
   if (!_default) {
     const { getOrgPlan } = require('./plan');
     const { createLogger } = require('./logger');
+    const config = require('./enrichment-config');
     _default = createEnrichmentManager({
       prisma,
       js: natsStream_enabled() ? makeRealJsAdapter() : null,
       getOrgPlan,
       logger: createLogger({ component: 'enrichment-manager' }),
+      assertQuota: ({ orgId, plan }) => defaultQuotaGuard(prisma, orgId, plan, config),
     });
   }
   return _default;

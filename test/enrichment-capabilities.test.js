@@ -78,3 +78,28 @@ test('capabilityFamilies: famílias distintas para os workers', () => {
   const families = caps.capabilityFamilies();
   for (const f of ['identity', 'search', 'company']) assert.ok(families.includes(f));
 });
+
+// ── US3 — masking de fatos premium para trial (endpoint layer, função pura) ─
+
+test('filterFactsForPlan: remove capabilities premium da leitura de trial', () => {
+  const data = {
+    prospectId: 'p-1',
+    entities: [{
+      entityKey: 'prospect:p-1', entityType: 'prospect',
+      capabilities: {
+        'identity.cnpj.basic': { status: 'COMPLETED', data: { cnpj: 'x' } },
+        'company.profile.deep': { status: 'COMPLETED', data: { employees: 350 } },
+        'search.news': { status: 'COMPLETED', data: { news: [] } },
+      },
+    }],
+  };
+  const filtered = caps.filterFactsForPlan(data, 'trial');
+  assert.ok(filtered.entities[0].capabilities['identity.cnpj.basic']);
+  assert.ok(!filtered.entities[0].capabilities['company.profile.deep']);
+  assert.strictEqual(filtered.entities[0].capabilities['search.news'].status, 'COMPLETED');
+  // Premium não é afetado.
+  const untouched = caps.filterFactsForPlan(data, 'premium');
+  assert.ok(untouched.entities[0].capabilities['company.profile.deep']);
+  // Input não é mutado.
+  assert.ok(data.entities[0].capabilities['company.profile.deep']);
+});

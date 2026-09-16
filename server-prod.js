@@ -1215,15 +1215,8 @@ app.get('/api/prospects/:id/enrichment', async (req, res) => {
     const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
     if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
     const data = await enrichmentManager.getProspectFacts(prospect.id, orgId);
-    if (plan !== 'premium' && data) {
-      for (const entity of data.entities || []) {
-        for (const cap of Object.keys(entity.capabilities || {})) {
-          const def = enrichmentCapabilities.getCapability(cap);
-          if (def && def.tier === 'premium') delete entity.capabilities[cap];
-        }
-      }
-    }
-    res.json({ success: true, data });
+    const masked = enrichmentCapabilities.filterFactsForPlan(data, plan);
+    res.json({ success: true, data: masked });
   } catch (error) {
     const status = error && error.status ? error.status : 500;
     res.status(status).json({ success: false, error: error.message });
