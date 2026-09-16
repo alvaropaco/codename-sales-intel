@@ -54,6 +54,7 @@ const {
 } = require('./cnpj-enrichment');
 const natsEnrichment = require('./nats-enrichment');
 const csvImport = require('./csv-import');
+const leadEnrichment = require('./lead-enrichment');
 const enrichmentGraph = require('./enrichment-graph');
 const firebaseAuth = require('./firebase-auth');
 const adminAuth = require('./admin');
@@ -1193,6 +1194,22 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
     const plan = await getOrgPlan(orgId);
+
+    // Lead SEM CNPJ: esteira de resolução (RFB + SearXNG → CNPJ; senão PDL).
+    if (leadEnrichment.enabled()) {
+      const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
+      if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+      if (!prospect.cnpj) {
+        const updated = await leadEnrichment.requestLeadEnrichment(prisma, prospect);
+        return res.json({
+          success: true,
+          data: redactProspectForPlan(updated, plan),
+          enrichment: { status: 'pending', source: 'lead-enrichment', error: null },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
     // Com NATS habilitado, encaminhamos para o pipeline de enriquecimento.
     if (natsEnrichment.isNatsEnabled()) {
       const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
@@ -1255,9 +1272,10 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
 // card entra a partir de "Novas oportunidades" (lead), o enriquecimento roda,
 // e ao CONCLUIR o card avança automaticamente para "Prontas para contato"
 // (qualified). Regras:
-//   - lead → prospect: exige CNPJ — é a chave que os pipelines de
-//     enriquecimento consomem (lead importado sem CNPJ "se forma" quando o
-//     usuário informa o identificador).
+//   - lead → prospect: sempre permitido, COM OU SEM CNPJ. Sem CNPJ, a esteira
+//     de enriquecimento (lead-enrichment.js) tenta RESOLVER o CNPJ (base RFB
+//     + SearXNG) e, não conseguindo, enriquece via PDL (redes sociais, site,
+//     porte, pessoa de contato).
 //   - prospect → qualified: bloqueado enquanto o enriquecimento não teve
 //     conclusão (null/pending). Estados terminais (enriched/partial/
 //     unavailable/error) permitem avanço manual (escape para dados legados
@@ -1266,11 +1284,6 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
 //     um pipeline que já rodou e não pode ser "desfeito".
 
 function stageTransitionError(previousStatus, nextStatus, prospect) {
-  if (nextStatus === 'prospect' && previousStatus !== 'prospect') {
-    if (!prospect.cnpj) {
-      return 'Informe o CNPJ do lead antes de movê-lo para "Em Qualificação" — ele é a chave do enriquecimento.';
-    }
-  }
   if (nextStatus === 'qualified') {
     const concluded = prospect.enrichmentStatus && prospect.enrichmentStatus !== 'pending';
     if (!concluded) {
@@ -1286,8 +1299,13 @@ function stageTransitionError(previousStatus, nextStatus, prospect) {
 /**
  * Dispara a esteira de enriquecimento de um prospect que acabou de entrar em
  * "Em Qualificação" (NATS quando disponível; fallback síncrono BrasilAPI).
+ * Lead SEM CNPJ: lead-enrichment.js tenta resolver o CNPJ (base RFB +
+ * SearXNG) e, não conseguindo, enriquece via PDL — tudo em background.
  */
 async function triggerQualificationEnrichment(prisma, prospect) {
+  if (!prospect.cnpj && leadEnrichment.enabled()) {
+    return leadEnrichment.requestLeadEnrichment(prisma, prospect);
+  }
   if (natsEnrichment.isNatsEnabled()) {
     const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
     if (!eventId) {
