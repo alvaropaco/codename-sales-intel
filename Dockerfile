@@ -96,6 +96,11 @@ COPY --from=builder /app/node_modules ./node_modules
 # com MODULE_NOT_FOUND; arquivos não requeridos são inofensivos no runtime)
 COPY *.js ./
 COPY package.json ./
+# Motor de enriquecimento distribuído (specs/001-distributed-enrichment):
+# workers rodam como processos separados da MESMA imagem via entrypoint:
+#   node workers/identity.js | node workers/search.js | node workers/company-deep.js
+COPY workers ./workers
+COPY scripts ./scripts
 
 # Copy built SPA + fallback dashboard
 COPY --from=builder /app/apps/web/dist ./apps/web/dist

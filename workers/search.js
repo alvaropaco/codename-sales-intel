@@ -17,6 +17,31 @@ const natsStream = require('../nats-stream');
 const { searxSearch } = require('../searxng');
 
 const executors = {
+  async 'search.legal'(task, { logger }) {
+    const { legalScan } = require('../lead-enrichment');
+    let results = [];
+    try {
+      results = await legalScan({
+        companyName: task.input.companyName,
+        cnpj: task.input.cnpj,
+      });
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw err;
+      const e = new Error(`SearXNG indisponível: ${err.message}`);
+      e.code = 'PROVIDER_UNAVAILABLE';
+      throw e;
+    }
+    logger.info(`search.legal "${task.input.companyName}": ${results.length} resultados`);
+    return {
+      status: 'COMPLETED',
+      provider: 'searxng',
+      data: { legal: results },
+      facts: [{ attribute: 'company.legal_cases', value: results, confidence: results.length ? 0.7 : 0.5,
+        evidence: { sourceType: 'searxng', provider: 'searxng', url: results[0] ? results[0].url : null,
+          retrievedAt: new Date().toISOString() } }],
+    };
+  },
+
   async 'search.news'(task, { logger }) {
     const companyName = String(task.input.companyName || '').trim();
     const query = task.input.query || `${companyName} notícias`;
