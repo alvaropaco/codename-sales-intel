@@ -76,6 +76,21 @@ function _htmlWelcome(name) {
           </td>
         </tr>
         <tr>
+          <td style="padding:8px 32px 24px 32px;" align="center">
+            <!--[if mso]>
+            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://b2base.net" style="height:52px;v-text-anchor:middle;width:280px;" arcsize="12%" stroke="f" fillcolor="#22d3ee">
+              <w:anchorlock/>
+              <center style="color:#0b1220;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Acessar o B2Base →</center>
+            </v:roundrect>
+            <![endif]-->
+            <!--[if !mso]><!-->
+            <a href="https://b2base.net" target="_blank" style="display:inline-block;background:#22d3ee;color:#0b1220;text-decoration:none;padding:15px 36px;border-radius:8px;font-size:16px;font-weight:700;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;box-shadow:0 4px 14px rgba(34,211,238,.35);">
+              🚀 Acessar o B2Base
+            </a>
+            <!--<![endif]-->
+          </td>
+        </tr>
+        <tr>
           <td style="padding:0 32px 24px 32px;">
             <div style="background:#1f2937;border-radius:10px;padding:16px 20px;">
               <div style="font-size:13px;color:#94a3b8;margin-bottom:8px;">PRIMEIROS PASSOS</div>
@@ -111,6 +126,8 @@ function _textWelcome(name) {
     '',
     'O B2Base é a sua plataforma de inteligência comercial para descobrir,',
     'enriquecer e acompanhar oportunidades B2B a partir de dados públicos.',
+    '',
+    'Acesse agora: https://b2base.net',
     '',
     'Primeiros passos:',
     '  - Descobrir leads: busque por CNAE ou importe sua lista',
