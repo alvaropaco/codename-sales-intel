@@ -1,0 +1,42 @@
+# Compatibilidade backward dos contratos v1 do motor de enriquecimento
+# (espelha o job do cnpj-data-publisher — constituição II).
+name: enrichment-contracts
+
+on:
+  pull_request:
+    paths:
+      - 'specs/001-distributed-enrichment/contracts/**'
+      - 'enrichment-contracts.js'
+
+jobs:
+  v1-contracts-backwards-compatible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Schemas v1 não mudam incompativelmente (sem quebra de required/enum)
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          for f in specs/001-distributed-enrichment/contracts/schemas/*.json; do
+            if git cat-file -e "$BASE:$f" 2>/dev/null; then
+              git show "$BASE:$f" > /tmp/base-schema.json
+              node -e "
+                const base = require('/tmp/base-schema.json');
+                const curr = require('./$f');
+                const missing = (base.required || []).filter((k) => !(curr.required || []).includes(k));
+                if (missing.length) { console.error('$f: campos required removidos:', missing); process.exit(1); }
+                if (base.properties && base.properties.version && base.properties.version.const !== undefined) {
+                  if (curr.properties.version.const !== base.properties.version.const) {
+                    console.error('$f: version.const alterado — publique um contrato .v2'); process.exit(1);
+                  }
+                }
+                console.log('$f: compatível');
+              "
+            else
+              echo "$f: novo no PR (sem base para comparar)"
+            fi
+          done

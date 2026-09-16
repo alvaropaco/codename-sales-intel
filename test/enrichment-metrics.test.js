@@ -25,8 +25,8 @@ test('US8 métricas do motor expostas no /metrics', { skip: metrics.isEnabled() 
     `b2base_enrichment_provider_requests_total{provider="searxng",outcome="error"${app}} 1`,
     `b2base_enrichment_provider_state{provider="searxng",state="DEGRADED"${app}} 1`,
     `b2base_enrichment_tasks_pending{capability="search.news"${app}} 7`,
-    `b2base_enrichment_qualification_total${app} 1`,
-    `b2base_enrichment_qualification_failures_total${app} 1`,
+    `b2base_enrichment_qualification_total{app="b2base"} 1`,
+    `b2base_enrichment_qualification_failures_total{app="b2base"} 1`,
   ]) {
     assert.ok(body.includes(fragment), `esperado no /metrics: ${fragment}`);
   }

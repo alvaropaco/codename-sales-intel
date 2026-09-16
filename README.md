@@ -51,6 +51,26 @@ pytest tests/unit -q
 docker compose up -d    # pgvector + nats + worker em mock mode
 ```
 
+## Spec-Driven Development (Spec Kit)
+
+Features de produto seguem o [GitHub Spec Kit](https://github.com/github/spec-kit):
+spec → plan → tasks → implement, com a constituição do projeto
+(`.specify/memory/constitution.md`) como conjunto de princípios.
+
+```bash
+uv tool install specify-cli   # CLI de manutenção (uma vez por máquina)
+specify check                 # valida estrutura spec-kit do projeto
+```
+
+Fluxo por feature (skills no ZCode): `$speckit-specify` → `$speckit-clarify` →
+`$speckit-plan` → `$speckit-tasks` → `$speckit-analyze` → `$speckit-implement` →
+`$speckit-converge`.
+
+- Specs por feature: `specs/<NNN>-<nome>/` (branch `NNN-<nome>`)
+- Skills do fluxo: `.zcode/skills/speckit-*/`
+- Templates: `.specify/templates/` · Scripts: `.specify/scripts/`
+- Instruções para agentes: `AGENTS.md`
+
 ## Build & deploy (GitOps)
 
 Imagens publicadas por CI no GHCR; ArgoCD sincroniza a partir de
@@ -79,3 +99,53 @@ verdade; a antiga cópia em `k8s-infra/apps/` é removida após o primeiro sync)
   local `172.17.0.1:5000` para o GHCR)
 
 Os dois repos antigos devem ser arquivados no GitHub após o cutover.
+
+## Motor de Enriquecimento Distribuído (v2)
+
+Motor orientado a eventos onde um lead gera um **job** expandido em **tasks**
+independentes (entidade × capability), executadas em paralelo por **workers**
+especializados via NATS JetStream. Spec completa em
+`specs/001-distributed-enrichment/` (spec, plan, contratos v1, quickstart).
+
+### Componentes
+
+| Módulo | Papel |
+|---|---|
+| `enrichment-manager.js` | ciclo de vida do job: planeja, publica, consome resultados, DAG, expansão, conclusão |
+| `enrichment-capabilities.js` | catálogo declarativo (tiers trial/premium, limites, regras de expansão) |
+| `enrichment-provider-registry.js` | rate limit, concorrência e circuit breaker por provider (Redis) |
+| `workers/sdk/` | runtime compartilhado dos workers (validate → execute → persist → publish → ack) |
+| `workers/identity.js` | `identity.cnpj.resolve`, `identity.cnpj.basic`, `identity.domain.verify` |
+| `workers/search.js` | `search.news`, `search.legal` |
+| `workers/company-deep.js` | `company.profile.deep` (PDL), `company.logo`, `company.deepgraph` (ponte worker Python) |
+| `qualification.js` | consumidor separado de resultados → `recalcLeadScore` (debounce por lead) |
+| `raw-store.js` | retenção do dado bruto + reprocessamento sem recaptura |
+
+### Rodando em dev
+
+```bash
+docker compose up -d              # postgres + nats (JetStream) + redis
+pnpm run db:migrate               # migration do motor (tabelas enrichment_*)
+pnpm run dev                      # API + manager + qualificação
+pnpm run worker:identity          # terminal 2
+pnpm run worker:search            # terminal 3
+pnpm run worker:company-deep      # terminal 4 (capabilities premium)
+```
+
+### Rollout (sem big-bang)
+
+1. `ENRICHMENT_ENGINE_V2=true` + `ENRICHMENT_ENGINE_V2_ORGS=<orgIds>` — motor v2
+   apenas para as orgs allowlistadas; demais seguem no fluxo legado intacto.
+2. `ENRICHMENT_CATALOG_FULL=true` — habilita as capabilities portadas
+   (PDL, jurídico, logo, deepgraph) depois da paridade validada em staging
+   (quickstart C1–C8).
+3. Rollback = remover a org da allowlist ou desligar a flag. Sem migration.
+
+### Deploy
+
+Mesma imagem da plataforma (`ghcr.io/alvaropaco/b2base-platform`); workers são
+processos separados por **entrypoint** — no `k8s-infra`, um Deployment por
+família de worker apontando para `node workers/<família>.js` (padrão do
+`workertype-deployment.yaml` do enrichment-worker Python). Métricas em
+`:9090/metrics` (`b2base_enrichment_*`); pendência por capability serve de base
+para autoscaling futuro (KEDA/HPA — fora do escopo v1).

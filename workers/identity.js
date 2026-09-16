@@ -39,6 +39,28 @@ async function httpProbe(domain, { signal, fetchImpl = fetch } = {}) {
 }
 
 const executors = {
+  async 'identity.cnpj.resolve'(task, { logger }) {
+    const { resolveCnpj } = require('../lead-enrichment');
+    const resolved = await resolveCnpj({
+      companyName: task.input.companyName,
+      city: task.input.city,
+      state: task.input.state,
+    });
+    if (!resolved || !resolved.cnpj) {
+      return { status: 'FAILED', error: { type: 'NOT_FOUND', message: 'CNPJ não resolvido pelas fontes públicas', retryable: false } };
+    }
+    logger.info(`cnpj.resolve ${task.input.companyName} → ${resolved.cnpj}`);
+    return {
+      status: 'COMPLETED',
+      provider: 'searxng.rfb',
+      data: { cnpj: resolved.cnpj, legal_name: resolved.legalName || null, source: resolved.source || null },
+      facts: [
+        { attribute: 'company.cnpj', value: resolved.cnpj, confidence: resolved.score >= 0.62 ? 0.95 : 0.7,
+          evidence: { sourceType: resolved.source || 'searxng.rfb', provider: 'searxng.rfb', retrievedAt: new Date().toISOString() } },
+      ],
+    };
+  },
+
   async 'identity.domain.verify'(task, { signal, logger }) {
     const domain = String(task.input.domain || '').toLowerCase().trim();
     let resolves = false;

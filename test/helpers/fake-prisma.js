@@ -91,6 +91,9 @@ function createFakePrisma() {
     enrichmentResult: makeModel('enrichmentResult'),
     enrichmentEvidence: makeModel('enrichmentEvidence'),
     rawRecord: makeModel('rawRecord'),
+    // Contratos legados (worker Python / ponte deepgraph)
+    enrichmentRequest: makeModel('enrichmentRequest'),
+    cnpjEnrichment: makeModel('cnpjEnrichment'),
   };
 }
 
