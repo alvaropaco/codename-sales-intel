@@ -260,3 +260,80 @@ test('US2 redelivery de result após retry concluído não reaplica (task termin
   const prospect = await deps.prisma.prospect.findUnique({ where: { id: job.prospectId } });
   assert.strictEqual(prospect.enrichmentSummary.v2[task.capability].appliedCount, 1);
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// US3 — multi-tenant: gating por plano, snapshot, cota mensal, cross-tenant
+// ════════════════════════════════════════════════════════════════════════════
+
+// Catálogo stub com capability premium HABILITADA para tornar o gating observável.
+const okValidator = (schema) => (input) => {
+  for (const [field, type] of Object.entries(schema)) {
+    if (input && typeof input[field] === type) continue;
+    return { ok: false, code: 'INVALID_INPUT', message: `${field} (${type}) obrigatório` };
+  }
+  return { ok: true };
+};
+const gatedCaps = {
+  eligibleCapabilities: ({ plan = 'trial' } = {}) => (plan === 'premium' ? ['identity.cnpj.basic', 'company.profile.deep'] : ['identity.cnpj.basic']),
+  getCapability: (name) => ({
+    'identity.cnpj.basic': { capability: name, family: 'identity', tier: 'basic', enabled: true, entityType: ['prospect'], timeoutMs: 5000, maxAttempts: 2, priority: 1, providers: ['x'], inputSchema: { cnpj: 'string' }, validateInput: okValidator({ cnpj: 'string' }), expand: [] },
+    'company.profile.deep': { capability: name, family: 'company', tier: 'premium', enabled: true, entityType: ['prospect'], timeoutMs: 5000, maxAttempts: 2, priority: 2, providers: ['x'], inputSchema: { companyName: 'string' }, validateInput: okValidator({ companyName: 'string' }), expand: [] },
+  }[name]),
+};
+
+test('US3 gating: trial NÃO planeja capability premium; premium sim', async () => {
+  const trial = makeDeps({ plan: 'trial', caps: gatedCaps });
+  const pro = await seedProspect(trial.prisma);
+  const { tasks: trialTasks } = await trial.manager.createJob({ orgId: 'org-1', prospectId: pro.id, trigger: 'manual' });
+  assert.deepStrictEqual(trialTasks.map((t) => t.capability), ['identity.cnpj.basic']);
+
+  const premium = makeDeps({ plan: 'premium', caps: gatedCaps });
+  const pro2 = await seedProspect(premium.prisma);
+  const { tasks: premiumTasks } = await premium.manager.createJob({ orgId: 'org-1', prospectId: pro2.id, trigger: 'manual' });
+  assert.ok(premiumTasks.some((t) => t.capability === 'company.profile.deep'));
+});
+
+test('US3 snapshot: plano do job é o do momento da criação (mudança depois não altera)', async () => {
+  let plan = 'trial';
+  const deps = makeDeps({ caps: gatedCaps });
+  deps.manager = createEnrichmentManager({
+    prisma: deps.prisma, js: deps.js,
+    getOrgPlan: async () => plan,
+    capabilities: gatedCaps,
+    logger: { info() {}, warn() {}, error() {}, child() { return this; } },
+  });
+  const pro = await seedProspect(deps.prisma);
+  const { job } = await deps.manager.createJob({ orgId: 'org-1', prospectId: pro.id, trigger: 'manual' });
+  assert.strictEqual(job.plan, 'trial');
+  plan = 'premium'; // org fez upgrade no meio do job
+  const still = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(still.plan, 'trial');
+});
+
+test('US3 cota: excedente lança ENRICHMENT_QUOTA_EXCEEDED e nenhuma task nasce', async () => {
+  const deps = makeDeps({ caps: gatedCaps });
+  const assertQuota = async () => {
+    const err = new Error('cota mensal atingida');
+    err.code = 'ENRICHMENT_QUOTA_EXCEEDED';
+    throw err;
+  };
+  const manager = createEnrichmentManager({
+    prisma: deps.prisma, js: deps.js, getOrgPlan: async () => 'trial',
+    capabilities: gatedCaps, assertQuota,
+    logger: { info() {}, warn() {}, error() {}, child() { return this; } },
+  });
+  const pro = await seedProspect(deps.prisma);
+  await assert.rejects(
+    () => manager.createJob({ orgId: 'org-1', prospectId: pro.id, trigger: 'manual' }),
+    (e) => e.code === 'ENRICHMENT_QUOTA_EXCEEDED'
+  );
+  assert.strictEqual(deps.prisma.enrichmentTask.rows.length, 0);
+});
+
+test('US3 cross-tenant: getJobStatus/getProspectFacts de outra org retornam null', async () => {
+  const deps = makeDeps();
+  const { job } = await seedJob(deps);
+  assert.strictEqual(await deps.manager.getJobStatus(job.id, 'org-OUTRO'), null);
+  assert.strictEqual(await deps.manager.getProspectFacts(job.prospectId, 'org-OUTRO'), null);
+  assert.ok(await deps.manager.getJobStatus(job.id, 'org-1'));
+});

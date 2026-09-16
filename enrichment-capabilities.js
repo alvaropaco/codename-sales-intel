@@ -207,8 +207,27 @@ function expandRulesFor(name) {
   return def && def.expand ? def.expand.map((r) => ({ ...r })) : [];
 }
 
+/** Mascaramento server-side de fatos (US3/FR-033): leitura de trial não
+ *  expõe capabilities premium. Função pura — NÃO muta o input. */
+function filterFactsForPlan(factsData, plan) {
+  if (!factsData || !factsData.entities || plan === 'premium') return factsData;
+  return {
+    ...factsData,
+    entities: factsData.entities.map((entity) => ({
+      ...entity,
+      capabilities: Object.fromEntries(
+        Object.entries(entity.capabilities || {}).filter(([name]) => {
+          const def = CAPABILITIES[name];
+          return !def || def.tier === 'basic';
+        })
+      ),
+    })),
+  };
+}
+
 module.exports = {
   CAPABILITIES,
+  filterFactsForPlan,
   getCapability,
   listCapabilities,
   eligibleCapabilities,
