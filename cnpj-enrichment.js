@@ -105,7 +105,7 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
     const lookup = await fetchBrasilApiCnpj(prospect.cnpj);
 
     if (!lookup.found) {
-      return prisma.prospect.update({
+      await prisma.prospect.update({
         where: { id: prospect.id },
         data: {
           enrichmentStatus: lookup.status,
@@ -114,6 +114,10 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
           enrichedAt: new Date(),
         },
       });
+      // Sem dados do CNPJ: pontua com os sinais disponíveis.
+      const { recalcLeadScore } = require('./opportunity-score');
+      const fresh = await prisma.prospect.findUnique({ where: { id: prospect.id } });
+      return recalcLeadScore(prisma, fresh);
     }
 
     const enrichment = mapBrasilApiPayload(lookup.data);

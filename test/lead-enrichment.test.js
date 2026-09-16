@@ -95,21 +95,25 @@ test('resolveCnpj retorna null quando nada casa acima do limiar', async () => {
 
 test('trial: deep enrich sem CNPJ marca indisponível com upsell, sem chamar fontes pagas', async () => {
   const { _deepEnrichWithoutCnpj } = require('../lead-enrichment');
-  let captured = null;
+  const updates = [];
   const prismaStub = {
     prospect: {
       findUnique: async () => null,
       update: async ({ data }) => {
-        captured = data;
+        updates.push(data);
         return { id: 'p1' };
       },
     },
   };
   const prospect = { id: 'p1', orgId: 'org_trial', companyName: 'Alguem LTDA', city: 'X', cnpj: null };
   await _deepEnrichWithoutCnpj(prismaStub, prospect, { orgPlan: 'trial' });
-  assert.strictEqual(captured.enrichmentStatus, 'unavailable');
-  assert.match(captured.enrichmentError, /Premium/);
-  assert.strictEqual(captured.enrichmentSummary, undefined); // nada de PDL/scans
+  const statusUpdate = updates.find((u) => u.enrichmentStatus);
+  assert.strictEqual(statusUpdate.enrichmentStatus, 'unavailable');
+  assert.match(statusUpdate.enrichmentError, /Premium/);
+  // recalc final: score honesto com os sinais já coletados (breakdown gravado)
+  const scoreUpdate = updates.find((u) => u.opportunityScore !== undefined);
+  assert.ok(typeof scoreUpdate.opportunityScore === 'number');
+  assert.ok(scoreUpdate.enrichmentSummary.score_breakdown);
 });
 
 test('logoForDomain monta URL do Clearbit', async () => {

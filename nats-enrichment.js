@@ -301,7 +301,10 @@ async function persistEnrichmentResult(prisma, result) {
           where: { id: prospect.id },
           data: {
             ...(commercialPotential != null ? { opportunityScore: commercialPotential } : {}),
-            enrichmentSummary: buildEnrichmentSummary(summary),
+            enrichmentSummary: {
+              ...(prospect.enrichmentSummary || {}),
+              ...buildEnrichmentSummary(summary),
+            },
             enrichmentStatus: status === 'PARTIAL' ? 'partial' : 'enriched',
             enrichmentSource: 'nats.enrichment',
             enrichmentError: null,
@@ -341,6 +344,14 @@ async function persistEnrichmentResult(prisma, result) {
       }
     }
     // DISCARDED: pedido inválido — marcamos sem aplicar dados.
+  } else if (enrichmentVersion > appliedVersion && commercialPotential == null) {
+    // Worker respondeu SEM commercial_potential (parciais/incompletos):
+    // recalcula o score localmente com os sinais disponíveis — sem isso o
+    // lead fica eternamente com o default de import (60).
+    const { recalcLeadScore } = require('./opportunity-score');
+    await recalcLeadScore(prisma, prospect).catch((err) =>
+      console.error('[nats] recalcLeadScore falhou:', err.message)
+    );
   }
 
   return row;

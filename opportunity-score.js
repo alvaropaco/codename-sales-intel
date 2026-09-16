@@ -336,6 +336,76 @@ function computeOpportunityScore({ cnpjData, prospect, profile }) {
   return { score, breakdown };
 }
 
+
+// ---------------------------------------------------------------------------
+// SCORE DE SINAIS — pontua o lead com QUALQUER sinal disponível, mesmo sem
+// CNPJ (leads importados). É recalculado no fim de cada esteira de
+// enriquecimento: sobe com identificador, contatos, presença digital e
+// momentum; desce com indícios jurídicos. O commercial_potential do worker
+// NATS (quando existe) tem precedência sobre este score.
+// ---------------------------------------------------------------------------
+
+const SIGNAL_WEIGHTS = {
+  identificador: 22,  // CNPJ resolvido e validado
+  localizacao: 10,    // cidade (5) + UF (5)
+  setor: 8,           // segmento/atividade conhecido
+  contatos: 26,       // e-mail (12) + telefone (8) + pessoa de contato (6)
+  digital: 22,        // domínio (10) + LinkedIn (8) + Facebook (2) + Twitter (2)
+  porte: 8,           // funcionários (4) + faturamento estimado (4)
+  momentum: 4,        // notícias/recentes (+4); indícios jurídicos (−5)
+};
+
+function computeSignalScore(prospect) {
+  const s = prospect.enrichmentSummary || {};
+  const le = s.lead_enrichment || {};
+  const company = le.company || {};
+
+  const hasPhones = Array.isArray(prospect.cnpjPhones) && prospect.cnpjPhones.length > 0;
+  const breakdown = {
+    identificador: prospect.cnpj ? SIGNAL_WEIGHTS.identificador : 0,
+    localizacao: (prospect.city ? 5 : 0) + (prospect.state ? 5 : 0),
+    setor: prospect.industry ? SIGNAL_WEIGHTS.setor : 0,
+    contatos:
+      (prospect.cnpjEmail ? 12 : 0) +
+      (hasPhones ? 8 : 0) +
+      (prospect.contactName ? 6 : 0),
+    digital:
+      (prospect.domain ? 10 : 0) +
+      ((le.linkedin || company.linkedin_url) ? 8 : 0) +
+      (company.facebook_url ? 2 : 0) +
+      (company.twitter_url ? 2 : 0),
+    porte: (prospect.employees ? 4 : 0) + (prospect.revenueEstimate ? 4 : 0),
+    momentum:
+      (Array.isArray(le.news) && le.news.length ? SIGNAL_WEIGHTS.momentum : 0) -
+      (Array.isArray(le.legal) && le.legal.length ? 5 : 0),
+  };
+
+  const score = Math.max(0, Math.min(100, Object.values(breakdown).reduce((a, b) => a + b, 0)));
+  return { score, breakdown };
+}
+
+/**
+ * Recalcula e grava o score de um prospect com base nos sinais atuais
+ * (chamar no FIM de cada esteira de enriquecimento). O breakdown vai para
+ * enrichmentSummary.score_breakdown para a UI explicar a nota.
+ */
+async function recalcLeadScore(prisma, prospectOrId) {
+  const p = typeof prospectOrId === 'string'
+    ? await prisma.prospect.findUnique({ where: { id: prospectOrId } })
+    : prospectOrId;
+  if (!p) return null;
+
+  const { score, breakdown } = computeSignalScore(p);
+  await prisma.prospect.update({
+    where: { id: p.id },
+    data: {
+      opportunityScore: score,
+      enrichmentSummary: { ...(p.enrichmentSummary || {}), score_breakdown: breakdown },
+    },
+  });
+  return { score, breakdown };
+}
+
 module.exports = {
   WEIGHTS,
   NEUTRAL_FIT,
@@ -353,4 +423,7 @@ module.exports = {
   partnerNameInText,
   presenceBreakdown,
   structureBreakdown,
+  computeSignalScore,
+  recalcLeadScore,
+  SIGNAL_WEIGHTS,
 };

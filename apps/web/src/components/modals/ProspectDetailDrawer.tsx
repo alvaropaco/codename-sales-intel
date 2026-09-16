@@ -141,6 +141,27 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
               <div>
                 <span className="text-[10px] uppercase font-bold text-muted-foreground">Potencial comercial</span>
                 <p className="text-2xl font-black text-indigo-400">{prospect.opportunityScore}/100</p>
+                {(() => {
+                  const breakdown = prospect.enrichmentSummary?.score_breakdown as Record<string, number> | undefined;
+                  if (!breakdown) return null;
+                  const labels: Record<string, string> = {
+                    identificador: 'CNPJ', localizacao: 'Localização', setor: 'Setor',
+                    contatos: 'Contatos', digital: 'Digital', porte: 'Porte', momentum: 'Impulso',
+                  };
+                  const top = Object.entries(breakdown)
+                    .filter(([, v]) => v > 0)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3)
+                    .map(([k]) => labels[k] || k);
+                  const risk = breakdown.momentum < 0;
+                  if (!top.length && !risk) return null;
+                  return (
+                    <p className="mt-0.5 text-[9px] font-semibold text-muted-foreground">
+                      {top.length > 0 && <span>pontos fortes: {top.join(' · ')}</span>}
+                      {risk && <span className="text-amber-500 dark:text-amber-300">{top.length ? ' · ' : ''}indícios jurídicos</span>}
+                    </p>
+                  );
+                })()}
               </div>
               <Badge variant={prospect.status === 'qualified' ? 'qualified' : 'prospect'}>
                 {prospect.status.toUpperCase()}

@@ -509,6 +509,11 @@ async function _process(prisma, prospectId) {
     }
 
     const fresh = await prisma.prospect.findUnique({ where: { id: prospect.id } });
+    // Score sobe já na resolução (identificador + sinais do import)
+    const { recalcLeadScore } = require('./opportunity-score');
+    await recalcLeadScore(prisma, fresh).catch((err) =>
+      console.error('[lead-enrichment] recalc pós-resolução falhou:', err.message)
+    );
     const orgPlan = await plan.getOrgPlan(prisma, fresh.orgId);
 
     // PREMIUM: esteira profunda (worker NATS com OSINT; fallback BrasilAPI).
@@ -543,6 +548,9 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
         enrichmentError: 'CNPJ não localizado. Enriquecimento avançado (redes sociais, contatos, jurídico, notícias) é exclusivo do plano Premium.',
       },
     });
+    // Score honesto mesmo no trial: pontua com os sinais já coletados.
+    const { recalcLeadScore } = require('./opportunity-score');
+    await recalcLeadScore(prisma, prospect).catch(() => {});
     return;
   }
 
@@ -601,6 +609,13 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
       enrichmentSummary: { ...(prospect.enrichmentSummary || {}), lead_enrichment: summaryLead },
     },
   });
+
+  // Score final com todos os sinais coletados (PDL, scans, contatos).
+  const fresh = await prisma.prospect.findUnique({ where: { id: prospect.id } });
+  const { recalcLeadScore } = require('./opportunity-score');
+  await recalcLeadScore(prisma, fresh).catch((err) =>
+    console.error('[lead-enrichment] recalc final falhou:', err.message)
+  );
 }
 
 module.exports = {

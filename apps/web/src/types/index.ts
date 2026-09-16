@@ -38,6 +38,12 @@ export interface EnrichmentSummary {
   operational_readiness?: number | null;
   commercial_potential?: number | null;
   tech_count?: number | null;
+  /** decomposição do score de sinais (recalcLeadScore) */
+  score_breakdown?: Record<string, number> | null;
+  /** resolução de CNPJ de leads importados sem identificador */
+  cnpj_resolution?: { source: string; confidence: number; matched_name?: string } | null;
+  /** enriquecimento profundo (premium): PDL + scans */
+  lead_enrichment?: Record<string, unknown> | null;
 }
 
 export interface Prospect {
