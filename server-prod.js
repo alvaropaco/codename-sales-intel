@@ -64,6 +64,10 @@ const gmailAuth = require('./gmail-auth');
 const gmailApi = require('./gmail-api');
 const emailProvider = require('./email-provider');
 const { maskProspectForTrial, maskCompanyGraphForTrial, stripMaskedIncomingFields } = require('./plan-masking');
+// ─── Motor de enriquecimento distribuído v2 (specs/001-distributed-enrichment)
+const enrichmentConfig = require('./enrichment-config');
+const enrichmentCapabilities = require('./enrichment-capabilities');
+const enrichmentManager = require('./enrichment-manager').getManager({ prisma });
 const outreachWorkers = require('./outreach-workers');
 const aiCampaign = require('./ai-campaign');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
@@ -1188,6 +1192,44 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
   }
 });
 
+// GET /api/enrichment/jobs/:jobId — status do job no motor distribuído
+// (percentuais de conclusão em tempo real — FR-006). 404 cross-tenant.
+app.get('/api/enrichment/jobs/:jobId', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const status = await enrichmentManager.getJobStatus(req.params.jobId, orgId);
+    if (!status) return res.status(404).json({ success: false, error: 'Job not found' });
+    res.json({ success: true, data: status });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/prospects/:id/enrichment — fatos agregados por capability com
+// evidência (US6). Trial não recebe fatos de capability premium (FR-033).
+app.get('/api/prospects/:id/enrichment', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const plan = await getOrgPlan(orgId);
+    const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+    const data = await enrichmentManager.getProspectFacts(prospect.id, orgId);
+    if (plan !== 'premium' && data) {
+      for (const entity of data.entities || []) {
+        for (const cap of Object.keys(entity.capabilities || {})) {
+          const def = enrichmentCapabilities.getCapability(cap);
+          if (def && def.tier === 'premium') delete entity.capabilities[cap];
+        }
+      }
+    }
+    res.json({ success: true, data });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
 // PUT /api/prospects/:id - Update prospect
 // ============================================================================
 // PIPELINE — regras de transição de estágio (kanban)
@@ -1228,6 +1270,21 @@ function stageTransitionError(previousStatus, nextStatus, prospect) {
  * - TRIAL → básico: firmografia oficial BrasilAPI apenas.
  */
 async function dispatchEnrichmentForPlan(prisma, prospect) {
+  // ── Motor v2 (specs/001-distributed-enrichment): rollout gradual por flag +
+  // allowlist de organizações (research R11). Qualquer falha do motor cai no
+  // fluxo legado — o enriquecimento nunca deixa de disparar por causa do v2.
+  if (enrichmentConfig.isEnabledForOrg(prospect.orgId)) {
+    try {
+      await enrichmentManager.dispatchForProspect(prospect, { trigger: 'api' });
+      return prisma.prospect.update({
+        where: { id: prospect.id },
+        data: { enrichmentStatus: 'pending', enrichmentSource: 'enrichment.engine.v2', enrichmentError: null },
+      });
+    } catch (err) {
+      if (err.code === 'ENRICHMENT_QUOTA_EXCEEDED') { err.status = 429; throw err; }
+      console.error(`[enrichment] motor v2 indisponível (${err.message}); usando fluxo legado`);
+    }
+  }
   if (!prospect.cnpj && leadEnrichment.enabled()) {
     return leadEnrichment.requestLeadEnrichment(prisma, prospect);
   }
