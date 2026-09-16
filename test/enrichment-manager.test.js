@@ -187,3 +187,76 @@ test('US1 segurança: result de outra organização é ignorado (não aplica, n�
   const untouched = await deps.prisma.enrichmentTask.findUnique({ where: { id: tasks[0].id } });
   assert.strictEqual(untouched.status, 'QUEUED');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// US2 — resiliência no manager: retry transiente, esgotamento, TIMEOUT
+// ════════════════════════════════════════════════════════════════════════════
+
+test('US2 retry transiente: re-publica attempt+1 com notBefore; task RETRY→QUEUED', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  const task = tasks[0];
+  await deps.manager.handleResult(mkResult(job, task, 'FAILED', {
+    error: { type: 'RATE_LIMIT', message: '429', retryable: true },
+  }));
+
+  // Re-publicação: mesma capability, attempt=2, Nats-Msg-Id novo (dedup-safe).
+  const republished = decoded(deps.js, 'enrichment.task.').filter((m) => m.attempt === 2);
+  assert.strictEqual(republished.length, 1);
+  assert.strictEqual(republished[0].capability, task.capability);
+  assert.ok(republished[0].notBefore, 'notBefore (backoff) deve ir no payload');
+  const republishedMsg = deps.js.published.filter((m) => m.subject.includes('enrichment.task.'))[3];
+  assert.strictEqual(republishedMsg.opts.headers['Nats-Msg-Id'], `${task.id}:2`);
+
+  const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: task.id } });
+  assert.strictEqual(row.attempt, 2);
+  assert.strictEqual(row.status, 'QUEUED'); // volta à fila (passou por RETRY)
+  assert.strictEqual(row.lastError.type, 'RATE_LIMIT'); // causa retida para auditoria
+  const stillRunning = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(stillRunning.status, 'RUNNING'); // retry em voo não conclui o job
+});
+
+test('US2 esgotamento: retry com attempt == maxAttempts → FAILED definitivo', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  const task = tasks[0];
+  await deps.prisma.enrichmentTask.update({ where: { id: task.id }, data: { maxAttempts: 1 } });
+  await deps.manager.handleResult(mkResult(job, task, 'FAILED', {
+    error: { type: 'PROVIDER_UNAVAILABLE', message: 'fora do ar', retryable: true },
+  }));
+  const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: task.id } });
+  assert.strictEqual(row.status, 'FAILED');
+  assert.strictEqual(row.attempt, 1);
+  const republished = decoded(deps.js, 'enrichment.task.').filter((m) => m.attempt === 2);
+  assert.strictEqual(republished.length, 0); // esgotado: nenhuma re-publicação
+  let finalJob = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(finalJob.status, 'RUNNING'); // demais tasks ainda na fila
+  // Concluindo as restantes, o job fecha PARTIAL (1 falha definitiva + 2 sucessos).
+  for (const t of tasks.slice(1)) await deps.manager.handleResult(mkResult(job, t, 'COMPLETED'));
+  finalJob = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(finalJob.status, 'PARTIAL');
+});
+
+test('US2 TIMEOUT: volta à fila com causa TIMEOUT registrada', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  const task = tasks[0];
+  await deps.manager.handleResult(mkResult(job, task, 'FAILED', {
+    error: { type: 'TIMEOUT', message: 'timeout após 15000ms', retryable: true },
+  }));
+  const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: task.id } });
+  assert.strictEqual(row.status, 'QUEUED');
+  assert.strictEqual(row.lastError.type, 'TIMEOUT');
+});
+
+test('US2 redelivery de result após retry concluído não reaplica (task terminal)', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  const task = tasks[0];
+  const result = mkResult(job, task, 'COMPLETED');
+  await deps.manager.handleResult(result);
+  const outcome = await deps.manager.handleResult({ ...result, attempt: 2 });
+  assert.strictEqual(outcome.duplicate, true);
+  const prospect = await deps.prisma.prospect.findUnique({ where: { id: job.prospectId } });
+  assert.strictEqual(prospect.enrichmentSummary.v2[task.capability].appliedCount, 1);
+});
