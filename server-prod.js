@@ -1274,13 +1274,13 @@ async function triggerQualificationEnrichment(prisma, prospect) {
  * É fire-and-forget: não bloqueia o boot e não quebra caso o NATS esteja fora.
  * Limitado por RECONCILE_PENDING_ON_BOOT (bool) e RECONCILE_PENDING_LIMIT.
  */
-async function resumePendingEnrichments(prisma) {
+async function resumePendingEnrichments(prisma, opts = {}) {
+  const limit = opts.limit != null ? opts.limit : (Number(process.env.RECONCILE_PENDING_LIMIT) || 100);
   if (process.env.RECONCILE_PENDING_ON_BOOT === 'false') {
     console.log('[reconcile] retomada de pendentes desabilitada (RECONCILE_PENDING_ON_BOOT=false)');
-    return;
+    return { disabled: true, reconciled: 0, remaining: 0 };
   }
   try {
-    const limit = Number(process.env.RECONCILE_PENDING_LIMIT) || 100;
     const pending = await prisma.prospect.findMany({
       where: { enrichmentStatus: 'pending' },
       orderBy: { createdAt: 'asc' },
@@ -1288,7 +1288,7 @@ async function resumePendingEnrichments(prisma) {
     });
     if (pending.length === 0) {
       console.log('[reconcile] nenhum prospect pendente para retomar.');
-      return;
+      return { reconciled: 0, remaining: 0 };
     }
     console.log(`[reconcile] retomando ${pending.length} prospect(s) pendente(s) no boot...`);
     // Sequencial com pausa curta para não martelar RFB/SearXNG/NATS de uma vez.
@@ -1300,9 +1300,12 @@ async function resumePendingEnrichments(prisma) {
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    console.log(`[reconcile] retomada concluída para ${pending.length} prospect(s).`);
+    const stillPending = await prisma.prospect.count({ where: { enrichmentStatus: 'pending' } });
+    console.log(`[reconcile] retomada concluída para ${pending.length} prospect(s); ainda pendentes: ${stillPending}.`);
+    return { reconciled: pending.length, remaining: stillPending };
   } catch (err) {
     console.error('[reconcile] erro ao retomar pendentes:', err.message);
+    return { error: err.message, reconciled: 0, remaining: null };
   }
 }
 
@@ -2179,6 +2182,32 @@ app.post('/api/enrichment/extract', async (req, res) => {
       filters: { from: from || null, to: to || null, refresh: Boolean(refresh) },
       timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/system/reconcile-pending - Retoma prospects presos em 'pending'
+// ---------------------------------------------------------------------------
+// Endpoint INTERNO, consumido pelo SRE (guardiao-check.sh) e por ferramentas
+// de operação. Protegido por header X-Internal-Token (env INTERNAL_RECONCILE_TOKEN).
+// Fire-and-forget: dispara o dispatch canônico para os pending e responde com
+// o quanto foi re-despachado. Não bloqueia o request do usuário.
+app.post('/api/system/reconcile-pending', async (req, res) => {
+  try {
+    const expected = process.env.INTERNAL_RECONCILE_TOKEN;
+    const provided = req.get('X-Internal-Token');
+    if (!expected || provided !== expected) {
+      return res.status(403).json({ success: false, error: 'forbidden' });
+    }
+    const limit = Number(req.body && req.body.limit) || (Number(process.env.RECONCILE_PENDING_LIMIT) || 100);
+    // Dispara em background para não bloquear a resposta do guardião.
+    resumePendingEnrichments(prisma, { limit }).then((result) => {
+      console.log(`[reconcile] endpoint disparado por SRE:`, result);
+    }).catch((err) => {
+      console.error('[reconcile] endpoint SRE falhou:', err.message);
+    });
+    res.json({ success: true, message: 'reconciliação de pendentes disparada', limit });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
