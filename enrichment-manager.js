@@ -276,6 +276,170 @@ function createEnrichmentManager(deps = {}) {
     return { job: runningJob, tasks };
   }
 
+  // ── Criação de tasks (planejamento, expansão e suggestedTasks) ───────────
+  // Upsert idempotente por taskKey; publicação é responsabilidade do caller.
+  async function createTask({ job, capability, entityKey, entityType, input, dependsOn = [], depth = 0, spawnedByTaskId = null, priority } = {}) {
+    const def = capabilities.getCapability(capability);
+    if (!def) return { created: false, reason: 'CAPABILITY_UNKNOWN' };
+    if (!def.enabled) return { created: false, reason: 'CAPABILITY_DISABLED' };
+    const inputCheck = def.validateInput(input);
+    if (!inputCheck.ok) return { created: false, reason: 'INVALID_INPUT', message: inputCheck.message };
+    const taskKey = idempotency.computeTaskKey({
+      orgId: job.orgId, jobId: job.id, entityKey, capability, provider: null, input,
+    });
+    const existing = await prisma.enrichmentTask.findUnique({ where: { taskKey } });
+    if (existing) return { created: false, task: existing, reason: 'DUPLICATE' };
+    const task = await prisma.enrichmentTask.create({
+      data: {
+        orgId: job.orgId,
+        jobId: job.id,
+        prospectId: job.prospectId,
+        taskKey,
+        entityKey,
+        entityType: entityType || def.entityType[0],
+        capability,
+        provider: null,
+        input,
+        inputHash: idempotency.hashInput(input),
+        status: dependsOn.length ? 'BLOCKED' : 'QUEUED',
+        priority: priority != null ? priority : def.priority,
+        maxAttempts: def.maxAttempts,
+        timeoutMs: def.timeoutMs,
+        depth,
+        spawnedByTaskId,
+        dependsOn,
+      },
+    });
+    return { created: true, task };
+  }
+
+  /** Input da task expandida derivado do fato que a disparou. */
+  function spawnInput(capability, originTask, factValue) {
+    switch (capability) {
+      case 'identity.domain.verify':
+      case 'company.logo':
+        return { domain: String(factValue) };
+      case 'identity.cnpj.basic':
+        return { cnpj: String(factValue) };
+      case 'search.news':
+      case 'search.legal':
+        return { companyName: originTask.input.companyName || originTask.input.domain || String(factValue) };
+      default:
+        return { value: factValue };
+    }
+  }
+
+  function factValueFrom(result, attributeName) {
+    const fact = (result.facts || []).find((f) => f.attribute === attributeName);
+    if (fact) return fact.value;
+    if (result.data && attributeName in result.data) return result.data[attributeName];
+    return undefined;
+  }
+
+  async function jobTaskCount(jobId) {
+    return (await prisma.enrichmentTask.findMany({ where: { jobId } })).length;
+  }
+
+  async function refuse(reason, detail) {
+    onEvent('task.expansion_refused', { reason, ...detail });
+    logger.warn(`[enrichment-manager] expansão recusada (${reason}): ${JSON.stringify(detail)}`);
+  }
+
+  // ── Desbloqueio de dependentes (DAG mínimo — FR-012) ──────────────────────
+  async function unblockDependents(task, result) {
+    const blocked = await prisma.enrichmentTask.findMany({ where: { jobId: task.jobId, status: 'BLOCKED' } });
+    const dependents = blocked.filter((t) => (t.dependsOn || []).includes(task.id));
+    for (const dependent of dependents) {
+      const depTasks = await Promise.all(dependent.dependsOn.map((id) => prisma.enrichmentTask.findUnique({ where: { id } })));
+      const failedDep = depTasks.find((d) => d && ['FAILED', 'CANCELLED'].includes(d.status));
+      if (failedDep) {
+        await prisma.enrichmentTask.update({
+          where: { id: dependent.id },
+          data: { status: 'CANCELLED', completedAt: now(), lastError: { type: 'DEPENDENCY_FAILED', message: `dependência ${failedDep.id} terminou em ${failedDep.status}` } },
+        });
+        onEvent('task.cancelled', { capability: dependent.capability });
+        continue;
+      }
+      const allDone = depTasks.every((d) => d && d.status === 'COMPLETED');
+      if (!allDone) continue; // aguardando demais dependências
+
+      // Enriquece o input com os dados das dependências (input original vence).
+      const depResults = await Promise.all(dependent.dependsOn.map((id) => prisma.enrichmentResult.findUnique({ where: { taskId: id } })));
+      const mergedInput = { ...Object.assign({}, ...depResults.filter(Boolean).map((r) => r.data || {})), ...(dependent.input || {}) };
+      const attempt = (dependent.attempt || 0) + 1;
+      await prisma.enrichmentTask.update({
+        where: { id: dependent.id },
+        data: { status: 'QUEUED', input: mergedInput },
+      });
+      await publishTaskMessage({ ...dependent, input: mergedInput }, { attempt });
+      await prisma.enrichmentTask.update({ where: { id: dependent.id }, data: { attempt } });
+      onEvent('task.unblocked', { capability: dependent.capability });
+    }
+  }
+
+  // ── Expansão dinâmica (regras declarativas + suggestedTasks — FR-013) ─────
+  async function expandFromResult(task, result) {
+    const job = await prisma.enrichmentJob.findUnique({ where: { id: task.jobId } });
+    if (!job) return;
+
+    async function trySpawn(capability, input, { entityType, entityKey, depth, spawnedByTaskId }) {
+      const def = capabilities.getCapability(capability);
+      if (!def || !def.enabled) {
+        await refuse('CAPABILITY_UNAVAILABLE', { capability });
+        return;
+      }
+      if (def.tier === 'premium' && job.plan !== 'premium') {
+        await refuse('TIER_NOT_ALLOWED', { capability, plan: job.plan });
+        return;
+      }
+      if (!def.validateInput(input).ok) {
+        await refuse('INVALID_INPUT', { capability });
+        return;
+      }
+      const maxTasks = config.MAX_TASKS_PER_JOB();
+      if (await jobTaskCount(job.id) >= maxTasks) {
+        await refuse('MAX_TASKS_PER_JOB', { capability, limit: maxTasks });
+        return;
+      }
+      const maxDepth = config.MAX_DEPTH();
+      if (depth > maxDepth) {
+        await refuse('MAX_DEPTH', { capability, depth, limit: maxDepth });
+        return;
+      }
+      const spawned = await createTask({
+        job, capability, input,
+        entityKey: entityKey || task.entityKey,
+        entityType: entityType || task.entityType,
+        depth,
+        spawnedByTaskId,
+      });
+      if (!spawned.created) return; // duplicada — nada a publicar
+      await publishTaskMessage(spawned.task, { attempt: 1 });
+      await prisma.enrichmentTask.update({ where: { id: spawned.task.id }, data: { attempt: 1 } });
+      onEvent('task.spawned', { capability });
+    }
+
+    // 1. Regras declarativas do catálogo (quando o result produz o fato).
+    for (const rule of capabilities.expandRulesFor(task.capability)) {
+      const value = factValueFrom(result, rule.whenFact);
+      if (value === undefined) continue;
+      await trySpawn(rule.spawn, spawnInput(rule.spawn, task, value), {
+        depth: task.depth + 1,
+        spawnedByTaskId: task.id,
+      });
+    }
+
+    // 2. Sugestões declarativas do worker (validadas — worker nunca orquestra).
+    for (const st of result.suggestedTasks || []) {
+      await trySpawn(st.capability, st.input || {}, {
+        entityType: st.entityType,
+        entityKey: st.entityKey,
+        depth: task.depth + 1,
+        spawnedByTaskId: task.id,
+      });
+    }
+  }
+
   // ── Consumo de resultados ─────────────────────────────────────────────────
   async function handleResult(result) {
     try {
@@ -297,8 +461,13 @@ function createEnrichmentManager(deps = {}) {
 
     if (result.status === 'COMPLETED') {
       await applyCompleted(task, result);
+      // Expansão e desbloqueio ANTES de avaliar a conclusão: novas tasks
+      // (QUEUED/BLOCKED) mantêm o job vivo.
+      await unblockDependents(task, result);
+      await expandFromResult(task, result);
     } else {
       await applyFailure(task, result);
+      await unblockDependents(task, result); // falha pode cancelar dependentes
     }
     const finalized = await maybeFinalizeJob(task.jobId);
     return { ok: true, jobFinalized: finalized ? finalized.status : null };
@@ -438,6 +607,7 @@ function createEnrichmentManager(deps = {}) {
   return {
     createJob,
     planTasks,
+    createTask,
     publishQueuedTasks,
     handleResult,
     getJobStatus,
