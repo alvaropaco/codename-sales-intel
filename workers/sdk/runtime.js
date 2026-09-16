@@ -41,6 +41,7 @@ function createWorkerRuntime({
   let publisher = injectedPublisher;
 
   const executors = new Map(); // capability → async (task, ctx) => outcome
+  let registry = deps.registry || require('../../enrichment-provider-registry').createNoopRegistry();
   const effectiveFilter = filterSubject || `enrichment.task.${name}.>`;
   const effectiveDurable = durable || `enrichment-engine-${name}`;
   const effectiveStream = stream || require('../../nats-stream').NATS_STREAM;
@@ -96,6 +97,26 @@ function createWorkerRuntime({
   /** Substitui o publisher em runtime (testes de infra-falha de publicação). */
   function setPublisherForTest(fn) {
     publisher = fn;
+  }
+
+  /** Substitui o registry em runtime (testes US4). */
+  function setRegistryForTest(fn) {
+    registry = fn;
+  }
+
+  // ── Injeção de falha/latência por env (quickstart C4) ─────────────────────
+  function forceErrorFor(provider) {
+    return String(process.env.PROVIDER_FORCE_ERROR || '')
+      .split(',')
+      .map((s) => s.trim())
+      .includes(provider);
+  }
+  function forceLatencyMsFor(provider) {
+    const list = String(process.env.PROVIDER_FORCE_LATENCY || '')
+      .split(',')
+      .map((s) => s.trim());
+    if (list.length && !list.includes(provider)) return 0;
+    return parseInt(process.env.PROVIDER_FORCE_LATENCY_MS || '0', 10) || 0;
   }
 
   function buildFailureEvent(task, { type, message, retryable, durationMs, provider }) {
@@ -260,48 +281,94 @@ function createWorkerRuntime({
       log.warn(`runtime: falha ao marcar RUNNING da task ${task.taskId}: ${err.message}`);
     }
 
+    // ── Proteção de provider (US4): acquire ANTES de executar. Recusa →
+    // falha transiente sem chamar o provider (nada persistido).
+    const provider = task.provider || def.providers[0];
+    const acq = await registry.acquire(provider);
+    if (!acq.ok) {
+      const typeMap = {
+        RATE_LIMIT: 'RATE_LIMIT',
+        PROVIDER_CIRCUIT_OPEN: 'PROVIDER_CIRCUIT_OPEN',
+        CONCURRENCY: 'RATE_LIMIT',
+        DISABLED: 'CAPABILITY_DISABLED',
+      };
+      const type = typeMap[acq.reason] || 'PROVIDER_UNAVAILABLE';
+      return publishFailureAndAck(msg, task, {
+        type,
+        message: `provider ${provider} indisponível (${acq.reason})`,
+        retryable: type !== 'CAPABILITY_DISABLED',
+        durationMs: 0,
+        provider,
+        persist: false,
+      });
+    }
+
+    // Injeção de falha/latência por env (testes C4 do quickstart).
+    const forcedError = forceErrorFor(provider);
+    if (forcedError) {
+      await acq.ticket.release();
+      return publishFailureAndAck(msg, task, {
+        type: 'PROVIDER_UNAVAILABLE',
+        message: `falha injetada por PROVIDER_FORCE_ERROR (${provider})`,
+        retryable: true,
+        durationMs: 0,
+        provider,
+        persist: false,
+      });
+    }
+    const forcedLatencyMs = forceLatencyMsFor(provider);
+
     const startedAt = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), task.timeoutMs);
+    let outcome = null;
+    let execErr = null;
     try {
-      const outcome = await executor(task, {
+      if (forcedLatencyMs > 0) {
+        await new Promise((r) => setTimeout(r, Math.min(forcedLatencyMs, task.timeoutMs)));
+      }
+      outcome = await executor(task, {
         signal: controller.signal,
         logger: log,
         deps: runtimeDeps,
       });
-      const durationMs = Date.now() - startedAt;
-      const status = outcome && outcome.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
-      const event = buildResultEvent(task, {
-        status,
-        data: outcome ? outcome.data : {},
-        facts: outcome ? outcome.facts : [],
-        error: status === 'FAILED' ? {
-          type: (outcome.error && outcome.error.type) || 'INTERNAL',
-          message: (outcome.error && outcome.error.message) || '',
-          retryable: outcome.error ? outcome.error.retryable !== false : false,
-        } : null,
-        durationMs,
-        suggestedTasks: outcome ? outcome.suggestedTasks : [],
-        provider: outcome ? outcome.provider : undefined,
-      });
-      const delivered = await deliver(msg, event); // persist → publish → ack (FR-018)
-      return { status: delivered ? status : 'NAK' };
     } catch (err) {
-      const durationMs = Date.now() - startedAt;
-      const aborted = controller.signal.aborted;
-      const type = aborted ? 'TIMEOUT' : contracts.isTransientError(err.code) ? err.code : 'INTERNAL';
-      // Infra-falha ao publicar o result → nak para reentrega da MESMA msg
-      // (a persistência é idempotente por taskId — reprocessar é seguro).
+      execErr = err;
+    }
+    clearTimeout(timer);
+
+    const durationMs = Date.now() - startedAt;
+    await acq.ticket.release(); // liberado em TODOS os caminhos
+    const aborted = controller.signal.aborted;
+    if (execErr || aborted) {
+      const type = aborted ? 'TIMEOUT' : contracts.isTransientError(execErr.code) ? execErr.code : 'INTERNAL';
+      await registry.recordOutcome(provider, { ok: false, latencyMs: durationMs });
       return publishFailureAndAck(msg, task, {
         type,
-        message: aborted ? `timeout após ${task.timeoutMs}ms` : (err && err.message) || String(err),
+        message: aborted ? `timeout após ${task.timeoutMs}ms` : (execErr && execErr.message) || String(execErr),
         retryable: true,
         durationMs,
-        provider: task.provider,
+        provider,
       });
-    } finally {
-      clearTimeout(timer);
     }
+
+    const status = outcome && outcome.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
+    await registry.recordOutcome(provider, { ok: status === 'COMPLETED', latencyMs: durationMs });
+    const event = buildResultEvent(task, {
+      status,
+      data: outcome ? outcome.data : {},
+      facts: outcome ? outcome.facts : [],
+      error: status === 'FAILED' ? {
+        type: (outcome.error && outcome.error.type) || 'INTERNAL',
+        message: (outcome.error && outcome.error.message) || '',
+        retryable: outcome.error ? outcome.error.retryable !== false : false,
+      } : null,
+      durationMs,
+      suggestedTasks: outcome ? outcome.suggestedTasks : [],
+      provider: outcome ? outcome.provider : undefined,
+    });
+    const delivered = await deliver(msg, event); // persist → publish → ack (FR-018)
+    return { status: delivered ? status : 'NAK' };
   }
 
   // Deps expostas aos executores (ctx.deps) — o worker injeta as suas.
@@ -383,6 +450,7 @@ function createWorkerRuntime({
     registerExecutors,
     registerExecutorsForTest: registerExecutors,
     setPublisherForTest,
+    setRegistryForTest,
     get isRunning() {
       return running;
     },
