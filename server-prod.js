@@ -1259,6 +1259,53 @@ async function triggerQualificationEnrichment(prisma, prospect) {
   return dispatchEnrichmentForPlan(prisma, prospect);
 }
 
+/**
+ * RECONCILIAÇÃO DE ENRIQUECIMENTO NO BOOT
+ * ---------------------------------------------------------------------------
+ * Jobs de enriquecimento rodam em memória (fila _inFlight do lead-enrichment e
+ * pedidos NATS) e não são persistidos de forma transacional: se o pod reiniciar
+ * no meio do processamento, os prospects ficam presos em `enrichmentStatus =
+ * 'pending'` para sempre (não há retomada automática).
+ *
+ * Este passo varre os prospects `pending` no startup e re-despacha cada um pelo
+ * roteador canônico `dispatchEnrichmentForPlan` (que respeita o gating por
+ * plano: sem CNPJ → lead-enrichment; premium → NATS; trial → BrasilAPI).
+ *
+ * É fire-and-forget: não bloqueia o boot e não quebra caso o NATS esteja fora.
+ * Limitado por RECONCILE_PENDING_ON_BOOT (bool) e RECONCILE_PENDING_LIMIT.
+ */
+async function resumePendingEnrichments(prisma) {
+  if (process.env.RECONCILE_PENDING_ON_BOOT === 'false') {
+    console.log('[reconcile] retomada de pendentes desabilitada (RECONCILE_PENDING_ON_BOOT=false)');
+    return;
+  }
+  try {
+    const limit = Number(process.env.RECONCILE_PENDING_LIMIT) || 100;
+    const pending = await prisma.prospect.findMany({
+      where: { enrichmentStatus: 'pending' },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
+    if (pending.length === 0) {
+      console.log('[reconcile] nenhum prospect pendente para retomar.');
+      return;
+    }
+    console.log(`[reconcile] retomando ${pending.length} prospect(s) pendente(s) no boot...`);
+    // Sequencial com pausa curta para não martelar RFB/SearXNG/NATS de uma vez.
+    for (const prospect of pending) {
+      try {
+        await dispatchEnrichmentForPlan(prisma, prospect);
+      } catch (err) {
+        console.error(`[reconcile] falha ao re-despachar prospect ${prospect.id}:`, err.message);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    console.log(`[reconcile] retomada concluída para ${pending.length} prospect(s).`);
+  } catch (err) {
+    console.error('[reconcile] erro ao retomar pendentes:', err.message);
+  }
+}
+
 app.put('/api/prospects/:id', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
@@ -4622,6 +4669,10 @@ async function start() {
     } else {
       console.log('[nats] NATS desabilitado - usando enriquecimento síncrono BrasilAPI.');
     }
+
+    // Retoma prospects que ficaram presos em 'pending' por reinício do pod
+    // (jobs de enriquecimento são em memória e não sobrevivem ao restart).
+    await resumePendingEnrichments(prisma);
 
     // Inicia workers de outreach (BullMQ)
     try {
