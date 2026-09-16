@@ -376,13 +376,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
                   <th className="px-4 py-3 font-bold">E-mail</th>
                   <th className="hidden px-4 py-3 font-bold sm:table-cell">Conta</th>
                   <th className="px-4 py-3 font-bold">Plano</th>
+                  <th className="hidden px-4 py-3 font-bold md:table-cell">Última atividade</th>
                   <th className="hidden px-4 py-3 font-bold md:table-cell">Criado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
                       Nenhum usuário encontrado.
                     </td>
                   </tr>
@@ -402,6 +403,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
                       <span className={badge(u.organization?.plan || 'trial')}>
                         {(u.organization?.plan || 'trial').toUpperCase()}
                       </span>
+                    </td>
+                    <td className="hidden px-4 py-3 text-slate-400 md:table-cell">
+                      {u.lastActiveAt
+                        ? new Date(u.lastActiveAt).toLocaleString('pt-BR')
+                        : '—'}
                     </td>
                     <td className="hidden px-4 py-3 text-slate-400 md:table-cell">
                       {new Date(u.createdAt).toLocaleDateString('pt-BR')}

@@ -79,6 +79,10 @@ model User {
   // Incremented on logout so previously issued session tokens are rejected,
   // even though they are stateless JWTs.
   sessionVersion Int @default(0)
+  // Última atividade do usuário na plataforma (request autenticada).
+  // Atualizado com throttle no requireAuth (~1x/60s por usuário) para
+  // evitar write excessivo; exposto no painel admin (admin/users).
+  lastActiveAt DateTime?
 }
 
 model Prospect {

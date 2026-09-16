@@ -15,6 +15,7 @@ export interface AdminUserRow {
   sessionVersion: number;
   createdAt: string;
   updatedAt: string;
+  lastActiveAt: string | null;
   orgId: string;
   organization: {
     id: string;

@@ -359,6 +359,7 @@ function createAdminRouter(prisma) {
             sessionVersion: true,
             createdAt: true,
             updatedAt: true,
+            lastActiveAt: true,
             orgId: true,
             organization: {
               select: { id: true, name: true, plan: true, cnpj: true },

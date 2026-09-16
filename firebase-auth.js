@@ -406,6 +406,29 @@ async function isSessionRevoked(prisma, payload) {
 }
 
 function createRequireAuth(prisma) {
+  // Throttle em memória para o touch de lastActiveAt: grava no máximo 1x/60s
+  // por usuário para não gerar write excessivo no Postgres (cada request
+  // autenticada passaria por aqui). Volátil por processo — bom o suficiente
+  // como throttle; o valor exato perde-se em restarts, sem impacto real.
+  const LAST_ACTIVE_THROTTLE_MS = 60 * 1000;
+  const _lastActiveWriteAt = new Map();
+
+  async function touchLastActive(userId) {
+    if (!userId) return;
+    const now = Date.now();
+    const last = _lastActiveWriteAt.get(userId) || 0;
+    if (now - last < LAST_ACTIVE_THROTTLE_MS) return;
+    _lastActiveWriteAt.set(userId, now);
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { lastActiveAt: new Date(now) },
+      });
+    } catch (_err) {
+      // Best effort: nunca derruba a request por falha de tracking.
+    }
+  }
+
   return async function requireAuth(req, res, next) {
     const token = req.cookies && req.cookies[SESSION_COOKIE_NAME];
     if (!token) {
@@ -445,6 +468,13 @@ function createRequireAuth(prisma) {
     if (payload && payload.uid != null && req.user.id == null) {
       req.user.id = payload.uid;
     }
+
+    // Registra a atividade do usuário (com throttle) — não bloqueia a request.
+    const uid = payload && payload.uid;
+    if (uid) {
+      touchLastActive(uid).catch(() => {});
+    }
+
     return next();
   };
 }
