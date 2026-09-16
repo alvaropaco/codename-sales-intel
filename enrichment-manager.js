@@ -671,14 +671,28 @@ function getManager({ prisma } = {}) {
       logger: createLogger({ component: 'enrichment-manager' }),
       assertQuota: ({ orgId, plan }) => defaultQuotaGuard(prisma, orgId, plan, config),
     });
-    scheduleRawPrune(prisma, config, _default._logger);
+    scheduleRawPrune(prisma, config);
+    schedulePendingGauge(prisma);
   }
   return _default;
 }
 
+/** Gauge de pendência por capability (US8/FR-034) — base p/ autoscaling futuro. */
+let _pendingScheduled = false;
+function schedulePendingGauge(prisma) {
+  if (_pendingScheduled || !prisma) return;
+  _pendingScheduled = true;
+  const metrics = require('./metrics');
+  if (!metrics.isEnabled()) return;
+  const run = () => metrics.refreshEnrichmentPendingMetrics(prisma)
+    .catch((err) => console.error(`[enrichment] pending gauge falhou: ${err.message}`));
+  setInterval(run, 30 * 1000).unref();
+  setTimeout(run, 5 * 1000).unref();
+}
+
 /** Retenção de brutos (FR-027): limpeza diária dos RawRecords vencidos. */
 let _pruneScheduled = false;
-function scheduleRawPrune(prisma, config, logger) {
+function scheduleRawPrune(prisma, config) {
   if (_pruneScheduled || !prisma) return;
   _pruneScheduled = true;
   const { createRawStore } = require('./raw-store');
