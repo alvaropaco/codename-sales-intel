@@ -216,3 +216,76 @@ test('US2 publish falha → nak(delay) sem ack (broker reentrega a mesma mensage
   assert.ok(nak[1] >= 5000, `delay ${nak[1]} deve respeitar o 1º degrau de backoff`);
   assert.ok(!trace.includes('ack'), 'não deve ackar quando o publish falha');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// US4 — proteção de providers no runtime: acquire/release, circuito, injeção
+// ════════════════════════════════════════════════════════════════════════════
+
+function makeRegistryStub() {
+  const calls = { acquire: 0, release: 0, outcomes: [] };
+  return {
+    calls,
+    acquire: async (provider) => {
+      calls.acquire += 1;
+      if (registryBehavior.rejectReason) {
+        return { ok: false, reason: registryBehavior.rejectReason, retryAfterMs: 1000 };
+      }
+      return { ok: true, ticket: { provider, release: async () => { calls.release += 1; } } };
+    },
+    recordOutcome: async (provider, o) => { calls.outcomes.push({ provider, ...o }); },
+    getState: async (p) => ({ provider: p, state: 'HEALTHY' }),
+  };
+}
+const registryBehavior = { rejectReason: null };
+
+test('US4 runtime: circuito aberto → FAILED PROVIDER_CIRCUIT_OPEN sem chamar o executor', async () => {
+  registryBehavior.rejectReason = 'PROVIDER_CIRCUIT_OPEN';
+  let calls = 0;
+  const { runtime, published, trace } = makeRuntime({
+    executors: { 'identity.domain.verify': async () => { calls += 1; return OK_EXECUTOR(); } },
+  });
+  runtime.setRegistryForTest(makeRegistryStub());
+  await runtime.processMessage(createFakeMessage(makeTask(), { trace }));
+  assert.strictEqual(calls, 0); // executor NUNCA roda com o circuito aberto
+  assert.strictEqual(published[0].error.type, 'PROVIDER_CIRCUIT_OPEN');
+  assert.strictEqual(published[0].error.retryable, true);
+  assert.deepStrictEqual(trace, ['publish', 'ack']); // nada a persistir (não executou)
+  registryBehavior.rejectReason = null;
+});
+
+test('US4 runtime: ticket liberado e outcome registrado em sucesso e falha', async () => {
+  registryBehavior.rejectReason = null;
+  const stub = makeRegistryStub();
+  const { runtime } = makeRuntime({
+    executors: {
+      'identity.domain.verify': async (task, ctx) => {
+        if (task.input.domain === 'quebrado.com') {
+          return { status: 'FAILED', error: { type: 'INVALID_DATA', message: 'x', retryable: false } };
+        }
+        return OK_EXECUTOR();
+      },
+    },
+  });
+  runtime.setRegistryForTest(stub);
+  await runtime.processMessage(createFakeMessage(makeTask()));
+  await runtime.processMessage(createFakeMessage(makeTask({ taskId: 't-2', input: { domain: 'quebrado.com' } })));
+  assert.strictEqual(stub.calls.release, 2); // release em AMBOS os caminhos
+  assert.deepStrictEqual(stub.calls.outcomes.map((o) => o.ok), [true, false]);
+});
+
+test('US4 runtime: injeção de falha por env (PROVIDER_FORCE_ERROR) não chama o provider', async () => {
+  process.env.PROVIDER_FORCE_ERROR = 'dns.direct';
+  let calls = 0;
+  try {
+    const { runtime, published } = makeRuntime({
+      executors: { 'identity.domain.verify': async () => { calls += 1; return OK_EXECUTOR(); } },
+    });
+    runtime.setRegistryForTest(makeRegistryStub());
+    await runtime.processMessage(createFakeMessage(makeTask()));
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(published[0].error.type, 'PROVIDER_UNAVAILABLE');
+    assert.strictEqual(published[0].error.retryable, true);
+  } finally {
+    delete process.env.PROVIDER_FORCE_ERROR;
+  }
+});

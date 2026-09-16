@@ -115,7 +115,23 @@ app.use('/api/auth', firebaseAuth.createAuthRouter(prisma));
 // ANTES do guard global de /api porque usa o próprio cookie de sessão admin.
 // Desligado (fail-closed) se ADMIN_USERNAME/ADMIN_PASSWORD não estiverem setadas.
 if (adminAuth.isAdminEnabled()) {
-  app.use('/api/admin', adminAuth.createAdminRouter(prisma));
+  const adminRouter = adminAuth.createAdminRouter(prisma);
+  // Saúde operacional dos providers do motor distribuído (US4/US8 — FR-021).
+  adminRouter.get('/enrichment/providers', async (req, res) => {
+    try {
+      const registry = require('./enrichment-provider-registry').getSharedRegistry();
+      const catalogProviders = [...new Set(
+        enrichmentCapabilities.listCapabilities()
+          .filter((c) => c.enabled)
+          .flatMap((c) => c.providers)
+      )];
+      const providers = await registry.listProviders(catalogProviders);
+      res.json({ success: true, data: { providers } });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+  app.use('/api/admin', adminRouter);
   console.log('[admin] área administrativa habilitada em /api/admin');
 } else {
   console.warn('[admin] ADMIN_USERNAME/ADMIN_PASSWORD não configuradas — admin DESLIGADO');
