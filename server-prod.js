@@ -1502,9 +1502,15 @@ app.post('/api/prospects/import-csv', async (req, res) => {
       return res.status(400).json({ success: false, error: 'O CSV não possui linhas de dados.' });
     }
 
-    const { mapping, source: mappingSource, notes: mappingNotes } = await csvImport.resolveMapping(
+    const { mapping, source: mappingSource, notes: mappingNotes, rejected } = await csvImport.resolveMapping(
       parsed.headers,
       parsed.records
+    );
+    // Rastreabilidade: sem esta linha, um mapeamento errado do LLM é
+    // indistinguível de planilha malformada no diagnóstico de produção.
+    console.log(
+      `[csv-import] mapeamento (${mappingSource}): ${JSON.stringify(mapping)}` +
+      (rejected.length ? ` | rejeitados: ${JSON.stringify(rejected)}` : '')
     );
 
     // Monta os registros normalizados. Numeração da linha segue a planilha
@@ -1647,6 +1653,7 @@ app.post('/api/prospects/import-csv', async (req, res) => {
         mapping,
         mappingSource,
         mappingNotes,
+        mappingRejected: rejected,
         importedCount,
         importedWithoutCnpj,
         alreadyExists,

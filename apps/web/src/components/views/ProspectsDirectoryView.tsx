@@ -845,7 +845,18 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
                           </div>
                           <div>
                             <p className="font-bold text-slate-900 dark:text-foreground">{p.companyName}</p>
-                            <p className="text-[10px] text-slate-400 dark:text-muted-foreground">ID do lead: {formatCNPJ(p.cnpj)}</p>
+                            <p className="text-[10px] text-slate-400 dark:text-muted-foreground">
+                              {p.cnpj ? (
+                                <>ID do lead: {formatCNPJ(p.cnpj)}</>
+                              ) : (
+                                <span
+                                  className="inline-flex rounded-full bg-amber-500/15 px-1.5 py-0.5 font-bold text-amber-500 dark:text-amber-300"
+                                  title="Lead sem CNPJ — informe o identificador para habilitar o enriquecimento"
+                                >
+                                  CNPJ pendente
+                                </span>
+                              )}
+                            </p>
                           </div>
                         </div>
                       </td>

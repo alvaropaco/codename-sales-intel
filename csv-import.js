@@ -315,6 +315,22 @@ function normalizeHeaderKey(value) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+// Colunas de PESSOA de contato ("Contato", "Nome do Contato", "Responsável",
+// "Cargo"...) não correspondem a NENHUM campo do Prospect — são pessoas, não
+// atributos da empresa. Bloqueadas deterministicamente para os campos de
+// texto (a IA às vezes as mapeia como setor/razão social; valores de pessoa
+// em industry poluem o CRM).
+const CONTACT_COLUMN_PATTERNS = [
+  'contato', 'nomedocontato', 'responsavel', 'proprietario', 'vendedor',
+  'representante', 'socio', 'cargo', 'funcao', 'pessoa',
+];
+const TEXT_FIELDS = ['companyName', 'tradeName', 'industry'];
+
+function isContactColumn(header) {
+  const key = normalizeHeaderKey(header);
+  return CONTACT_COLUMN_PATTERNS.some((p) => key === p || key.includes(p));
+}
+
 // Padrões por campo, em ordem de prioridade (1ª passada: igualdade; 2ª:
 // prefixo/contém). Chaves sem acento/espaço/pontuação (normalizeHeaderKey).
 const HEURISTIC_PATTERNS = {
@@ -342,10 +358,14 @@ function heuristicMapping(headers) {
 
   for (const field of TARGET_FIELDS) {
     const patterns = HEURISTIC_PATTERNS[field.key] || [field.key.toLowerCase()];
+    // Campos de texto da empresa nunca vêm de coluna de pessoa de contato.
+    const skipContact = TEXT_FIELDS.includes(field.key);
     let match = null;
     // 1) igualdade exata
     for (const pattern of patterns) {
-      const hit = normalized.find((c) => !used.has(c.header) && c.key === pattern);
+      const hit = normalized.find(
+        (c) => !used.has(c.header) && c.key === pattern && !(skipContact && isContactColumn(c.header))
+      );
       if (hit) {
         match = hit;
         break;
@@ -354,7 +374,10 @@ function heuristicMapping(headers) {
     // 2) prefixo/contém
     if (!match) {
       for (const pattern of patterns) {
-        const hit = normalized.find((c) => !used.has(c.header) && (c.key.startsWith(pattern) || c.key.includes(pattern)));
+        const hit = normalized.find(
+          (c) => !used.has(c.header) && (c.key.startsWith(pattern) || c.key.includes(pattern)) &&
+            !(skipContact && isContactColumn(c.header))
+        );
         if (hit) {
           match = hit;
           break;
@@ -371,7 +394,8 @@ function heuristicMapping(headers) {
 
 /**
  * Garante que o mapeamento (da IA ou heurístico) só aponta para colunas que
- * EXISTEM no cabeçalho e que cada coluna atende a um único campo.
+ * EXISTEM no cabeçalho, que cada coluna atende a um único campo e que campos
+ * de texto da empresa não recebem colunas de pessoa de contato.
  */
 function sanitizeMapping(rawMapping, headers) {
   if (!rawMapping || typeof rawMapping !== 'object') return {};
@@ -380,10 +404,12 @@ function sanitizeMapping(rawMapping, headers) {
   const mapping = {};
   for (const field of TARGET_FIELDS) {
     const value = rawMapping[field.key];
-    if (typeof value === 'string' && headerSet.has(value.trim()) && !used.has(value.trim())) {
-      mapping[field.key] = value.trim();
-      used.add(value.trim());
-    }
+    if (typeof value !== 'string') continue;
+    const column = value.trim();
+    if (!headerSet.has(column) || used.has(column)) continue;
+    if (TEXT_FIELDS.includes(field.key) && isContactColumn(column)) continue;
+    mapping[field.key] = column;
+    used.add(column);
   }
   return mapping;
 }
@@ -406,22 +432,88 @@ const MAPPING_SYSTEM_PROMPT = `Você analisa a estrutura de planilhas CSV de lea
 
 Regras:
 - Mapeie APENAS colunas que existem no cabeçalho, usando o nome EXATO da coluna.
+- Julgue pelo CONTEÚDO dos exemplos, não só pelo nome da coluna.
 - Cada campo-alvo recebe no máximo UMA coluna; uma coluna não serve a dois campos.
+- Colunas de PESSOA de contato ("Contato", "Nome do Contato", "Responsável", "Sócio", "Vendedor", "Cargo", "Função") NÃO mapeiam para NENHUM campo — são pessoas físicas, não atributos da empresa. Em particular NUNCA as use como "industry"/setor ou "companyName"/razão social.
 - "cnpj" é opcional: muitas planilhas de contatos não o têm, e tudo bem. Quando existir, procure CNPJ (14 dígitos, com ou sem máscara). NUNCA mapeie CPF, RG ou outro documento como CNPJ.
 - Colunas que não correspondem a nenhum campo-alvo ficam de fora.
-- Datas de abertura, endereço completo, nome de contato pessoa física, observações: NÃO têm campo correspondente — ignore.
+- Datas de abertura, endereço completo, observações: NÃO têm campo correspondente — ignore.
 - Responda SOMENTE com JSON válido no formato:
 {"mapping": {"cnpj": "<coluna ou null>", "companyName": "<coluna ou null>", "tradeName": "<coluna ou null>", "industry": "<coluna ou null>", "domain": "<coluna ou null>", "city": "<coluna ou null>", "state": "<coluna ou null>", "email": "<coluna ou null>", "phone": "<coluna ou null>", "employees": "<coluna ou null>", "revenueEstimate": "<coluna ou null>"}, "notes": "<1 frase em pt-BR sobre o que entendeu da planilha>"}`;
+
+/**
+ * Chamada de auditoria do mapeamento: reenvia cada campo mapeado com os
+ * VALORES de exemplo da coluna e pede um julgamento por campo. É a rede de
+ * segurança contra o modelo pequeno do gateway mapear pelo nome da coluna e
+ * deixar valores impertinentes entrarem (ex.: nomes de pessoas em "setor").
+ */
+const VERIFY_SYSTEM_PROMPT = `Você audita o mapeamento de colunas de uma planilha CSV de leads B2B para um modelo de dados.
+
+Para cada item, julgue se os VALORES de exemplo da coluna são plausíveis para o campo:
+- companyName: nomes de empresas (ex.: "Dedini S.A."). tradeName: nomes comerciais/fantasia.
+- industry: ramos de atividade/segmentos (ex.: "Metalurgia", "Varejo"). NÃO são setores: nomes de pessoas, cargos, cidades.
+- city: cidades. state: UFs/estados. email: e-mails. phone: telefones. employees: quantidades. revenueEstimate: valores financeiros. domain: domínios/sites.
+
+Julgue PRINCIPALMENTE pelos valores; o nome da coluna é secundário. Seja conservador: responda false apenas quando os valores claramente NÃO correspondem ao campo (valores vazios/ilegíveis contam como correspondência razoável — true).
+Responda SOMENTE JSON: {"verificacao": {"<campo>": true, "<campo>": false, ...}}`;
+
+/**
+ * Segunda chamada de LLM que valida o mapeamento campo a campo.
+ * Retorna { verified: {field: bool}, failed } — failed indica gateway fora
+ * (caller mantém o mapeamento sem auditoria nesse caso).
+ */
+async function verifyMappingWithLlm(headers, rows, mapping, { callLlm: callLlmFn = callLlm } = {}) {
+  const fields = Object.entries(mapping).filter(([key]) => key !== 'cnpj'); // cnpj tem validação própria
+  if (!fields.length) return { verified: {}, failed: false };
+
+  const userPrompt = JSON.stringify(
+    fields.map(([field, column]) => ({
+      campo: field,
+      coluna: column,
+      valores: rows
+        .slice(0, MAPPING_SAMPLE_ROWS)
+        .map((r) => String(r[column] ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 5),
+    })),
+    null,
+    1
+  );
+
+  try {
+    const { content } = await callLlmFn({
+      system: VERIFY_SYSTEM_PROMPT,
+      user: userPrompt,
+      temperature: 0,
+      maxTokens: 300,
+      jsonMode: true,
+      tag: 'csv-import-verify',
+    });
+    const parsed = parseJsonLoose(content);
+    if (!parsed || typeof parsed.verificacao !== 'object') return { verified: {}, failed: true };
+    return { verified: parsed.verificacao, failed: false };
+  } catch (_err) {
+    return { verified: {}, failed: true };
+  }
+}
 
 /**
  * Mapeamento via LLM (gateway LiteLLM, llm-client.js). Lança em falha —
  * o caller cai no heurístico.
  */
 async function inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn = callLlm } = {}) {
+  // Apresenta cada coluna com uma amostra dos valores: modelos pequenos
+  // mapeiam muito melhor vendo o CONTEÚDO junto com o nome da coluna.
   const userPrompt = JSON.stringify(
     {
-      colunas_do_arquivo: headers,
-      amostra_das_linhas: sampleRows.slice(0, MAPPING_SAMPLE_ROWS),
+      colunas: headers.map((h) => ({
+        nome: h,
+        exemplos: sampleRows
+          .slice(0, MAPPING_SAMPLE_ROWS)
+          .map((r) => String(r[h] ?? '').trim())
+          .filter(Boolean)
+          .slice(0, 3),
+      })),
       campos_alvo: TARGET_FIELDS.map((f) => ({ campo: f.key, descricao: f.label, detalhe: f.description })),
     },
     null,
@@ -448,15 +540,24 @@ async function inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn = c
 }
 
 /**
- * Mapeamento final: tenta a IA e valida; preenche lacunas com o heurístico e,
- * se a IA falhar por completo, usa só o heurístico. Nunca lança.
- * Retorna { mapping, source: 'ai'|'heuristic', notes? }.
+ * Mapeamento final, em camadas:
+ *   1. IA propõe o mapeamento (nome da coluna + exemplos de valores);
+ *   2. sanitização determinística (colunas existentes, sem duplicar, colunas
+ *      de pessoa de contato fora dos campos de texto da empresa);
+ *   3. heurístico preenche lacunas;
+ *   4. auditoria por VALORES com uma segunda chamada de LLM sobre o
+ *      MAPEAMENTO FINAL (derruba campo cuja coluna claramente não contém
+ *      aquele tipo de dado — inclusive campos preenchidos pelo heurístico,
+ *      que só olham o nome da coluna).
+ * Nunca lança. Retorna { mapping, source, notes?, rejected }.
  * callLlmFn injetável para testes (default: gateway LiteLLM via llm-client).
  */
 async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLlm } = {}) {
   let mapping = {};
   let source = 'heuristic';
   let notes;
+  let llmOk = false;
+  const rejected = [];
 
   try {
     const ai = await inferMappingWithLlm(headers, sampleRows, { callLlm: callLlmFn });
@@ -464,14 +565,17 @@ async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLl
       mapping = ai.mapping;
       source = 'ai';
       notes = ai.notes;
-      // IA duvidosa na coluna de CNPJ → descarta o campo e deixa o heurístico
-      // tentar (abaixo), antes de declarar mapeamento incompleto.
-      if (mapping.cnpj && !cnpjColumnLooksValid(sampleRows, mapping.cnpj)) {
-        delete mapping.cnpj;
-      }
+      llmOk = true;
     }
   } catch (error) {
     console.warn(`[csv-import] mapeamento por IA falhou (${error.message}); usando heurístico`);
+  }
+
+  // CNPJ do caminho da IA é validado por valor aqui; o heurístico entra no
+  // merge abaixo e passa pela mesma checagem depois do merge.
+  if (mapping.cnpj && !cnpjColumnLooksValid(sampleRows, mapping.cnpj)) {
+    rejected.push({ field: 'cnpj', column: mapping.cnpj, reason: 'coluna não contém CNPJs' });
+    delete mapping.cnpj;
   }
 
   const heuristic = heuristicMapping(headers);
@@ -484,8 +588,31 @@ async function resolveMapping(headers, sampleRows, { callLlm: callLlmFn = callLl
   if (!mapping.cnpj && heuristic.cnpj) {
     mapping.cnpj = heuristic.cnpj;
   }
+  if (mapping.cnpj && !cnpjColumnLooksValid(sampleRows, mapping.cnpj)) {
+    rejected.push({ field: 'cnpj', column: mapping.cnpj, reason: 'coluna não contém CNPJs' });
+    delete mapping.cnpj;
+  }
 
-  return { mapping, source, notes };
+  // Auditoria por valores sobre o mapeamento FINAL. Se o gateway estiver
+  // fora (llmOk=false), mantém o mapeamento sem auditoria — o sanitizador
+  // determinístico já bloqueou as classes de erro mais perigosas.
+  if (llmOk && Object.keys(mapping).length) {
+    const { verified, failed } = await verifyMappingWithLlm(headers, sampleRows, mapping, { callLlm: callLlmFn });
+    if (!failed) {
+      for (const [field, ok] of Object.entries(verified)) {
+        if (ok === false && mapping[field]) {
+          rejected.push({ field, column: mapping[field], reason: 'valores não correspondem ao campo (auditoria IA)' });
+          delete mapping[field];
+        }
+      }
+    }
+  }
+
+  if (rejected.length) {
+    console.warn(`[csv-import] campos rejeitados no mapeamento: ${JSON.stringify(rejected)}`);
+  }
+
+  return { mapping, source, notes, rejected };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,9 +721,12 @@ module.exports = {
   heuristicMapping,
   sanitizeMapping,
   cnpjColumnLooksValid,
+  isContactColumn,
   inferMappingWithLlm,
+  verifyMappingWithLlm,
   resolveMapping,
   buildRecord,
   computeImportKey,
   MAPPING_SYSTEM_PROMPT,
+  VERIFY_SYSTEM_PROMPT,
 };

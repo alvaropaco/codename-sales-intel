@@ -13,7 +13,9 @@ const {
   heuristicMapping,
   sanitizeMapping,
   cnpjColumnLooksValid,
+  isContactColumn,
   inferMappingWithLlm,
+  verifyMappingWithLlm,
   resolveMapping,
   buildRecord,
   computeImportKey,
@@ -252,6 +254,101 @@ test('resolveMapping cai no heurístico quando a IA lança erro', async () => {
   assert.strictEqual(source, 'heuristic');
   assert.strictEqual(mapping.cnpj, 'CNPJ da Empresa');
   assert.strictEqual(mapping.companyName, 'Nome da Empresa');
+});
+
+// ── Bloqueio de colunas de pessoa de contato ────────────────────────────────
+
+const HEADERS_COM_CONTATO = ['Empresa', 'Contato', 'Cargo', 'Cidade', 'UF', 'Telefone', 'E-mail'];
+
+test('isContactColumn reconhece colunas de pessoa de contato', () => {
+  assert.strictEqual(isContactColumn('Contato'), true);
+  assert.strictEqual(isContactColumn('Nome do Contato'), true);
+  assert.strictEqual(isContactColumn('Responsável Comercial'), true);
+  assert.strictEqual(isContactColumn('Cargo'), true);
+  assert.strictEqual(isContactColumn('Empresa'), false);
+  assert.strictEqual(isContactColumn('E-mail'), false); // email tem padrão próprio
+});
+
+test('heuristicMapping nunca usa coluna de contato para campos de texto da empresa', () => {
+  const mapping = heuristicMapping(HEADERS_COM_CONTATO);
+  assert.strictEqual(mapping.companyName, 'Empresa');
+  // "Contato" não vira setor nem razão social nem nada:
+  assert.strictEqual(Object.values(mapping).includes('Contato'), false);
+  assert.strictEqual(Object.values(mapping).includes('Cargo'), false);
+  assert.strictEqual(mapping.industry, undefined); // não há coluna de setor
+});
+
+test('sanitizeMapping derruba mapeamento da IA que aponta contato → industry/companyName', () => {
+  const mapping = sanitizeMapping(
+    { companyName: 'Empresa', industry: 'Contato', city: 'Cidade' },
+    HEADERS_COM_CONTATO
+  );
+  assert.strictEqual(mapping.companyName, 'Empresa');
+  assert.strictEqual(mapping.industry, undefined);
+  assert.strictEqual(mapping.city, 'Cidade');
+});
+
+// ── Auditoria do mapeamento por valores (2ª chamada de LLM) ────────────────
+
+const AMOSTRA_AUDITORIA = [
+  { 'Empresa': 'Marisan Ltda', 'Segmento': 'Thiago', 'Cidade': 'Sertãozinho' },
+  { 'Empresa': 'Dedini S.A.', 'Segmento': 'Sonia Lima', 'Cidade': 'Pirassununga' },
+];
+
+test('verifyMappingWithLlm devolve o julgamento campo a campo', async () => {
+  const fakeLlm = async () => ({
+    content: JSON.stringify({ verificacao: { companyName: true, industry: false, city: true } }),
+  });
+  const { verified, failed } = await verifyMappingWithLlm(
+    ['Empresa', 'Segmento', 'Cidade'],
+    AMOSTRA_AUDITORIA,
+    { companyName: 'Empresa', industry: 'Segmento', city: 'Cidade' },
+    { callLlm: fakeLlm }
+  );
+  assert.strictEqual(failed, false);
+  assert.strictEqual(verified.industry, false);
+  assert.strictEqual(verified.companyName, true);
+});
+
+test('verifyMappingWithLlm sinaliza failed quando o gateway não responde JSON', async () => {
+  const { failed } = await verifyMappingWithLlm(
+    ['Empresa'], AMOSTRA_AUDITORIA, { companyName: 'Empresa' },
+    { callLlm: async () => ({ content: 'ok' }) }
+  );
+  assert.strictEqual(failed, true);
+});
+
+test('resolveMapping derrupa campo reprovado na auditoria e registra rejected', async () => {
+  let chamada = 0;
+  const fakeLlm = async () => {
+    chamada++;
+    // 1ª chamada: mapeamento (com erro: industry ← Segmento com nomes de pessoa)
+    // 2ª chamada: auditoria reprova industry
+    return chamada === 1
+      ? { content: JSON.stringify({ mapping: { companyName: 'Empresa', industry: 'Segmento', city: 'Cidade' } }) }
+      : { content: JSON.stringify({ verificacao: { companyName: true, industry: false, city: true } }) };
+  };
+  const { mapping, rejected } = await resolveMapping(
+    ['Empresa', 'Segmento', 'Cidade'],
+    AMOSTRA_AUDITORIA,
+    { callLlm: fakeLlm }
+  );
+  assert.strictEqual(mapping.industry, undefined); // reprovado pela auditoria
+  assert.strictEqual(mapping.companyName, 'Empresa');
+  assert.ok(rejected.some((r) => r.field === 'industry'));
+});
+
+test('resolveMapping mantém o mapeamento quando a auditoria falha (gateway fora)', async () => {
+  let chamada = 0;
+  const fakeLlm = async () => {
+    chamada++;
+    if (chamada === 1) {
+      return { content: JSON.stringify({ mapping: { companyName: 'Empresa' } }) };
+    }
+    throw new Error('gateway fora');
+  };
+  const { mapping } = await resolveMapping(['Empresa'], AMOSTRA_AUDITORIA, { callLlm: fakeLlm });
+  assert.strictEqual(mapping.companyName, 'Empresa');
 });
 
 // ── buildRecord — linha → modelo Prospect ───────────────────────────────────
