@@ -24,7 +24,8 @@ const natsEnrichment = require('./nats-enrichment');
 const mcpCnpj = require('./mcp-cnpj');
 const plan = require('./plan');
 
-const SEARXNG_URL = (process.env.SEARXNG_URL || 'https://search.0xcloud.net').replace(/\/+$/, '');
+// Cliente SearXNG extraído para searxng.js (compartilhado com o motor v2).
+const { searxSearch } = require('./searxng');
 const PDL_API_KEY = process.env.PDL_API_KEY || '';
 const PDL_BASE = 'https://api.peopledatalabs.com';
 const PDL_MIN_INTERVAL_MS = parseInt(process.env.PDL_MIN_INTERVAL_MS || '6500', 10); // free tier: 10/min
@@ -147,30 +148,6 @@ function extractCnpjCandidates(text) {
     }
   }
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// SearXNG
-// ---------------------------------------------------------------------------
-
-async function searxSearch(query, { timeoutMs = 15000, limit = 8 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${SEARXNG_URL}/search?format=json&q=${encodeURIComponent(query)}`, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) throw new Error(`searxng HTTP ${res.status}`);
-    const json = await res.json();
-    return (json.results || []).slice(0, limit).map((r) => ({
-      title: r.title || '',
-      content: r.content || '',
-      url: r.url || '',
-    }));
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 // ---------------------------------------------------------------------------
