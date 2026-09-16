@@ -91,38 +91,10 @@ RUN apk add --no-cache openssl
 # Copy node_modules (includes @prisma/client generated against schema)
 COPY --from=builder /app/node_modules ./node_modules
 
-# Copy app runtime files
-COPY server-prod.js ./
-COPY firebase-auth.js ./
-COPY admin.js ./
-COPY mcp-cnpj.js ./
-COPY cnpj-enrichment.js ./
-COPY csv-import.js ./
-COPY nats-enrichment.js ./
-COPY enrichment-graph.js ./
-COPY gmail-api.js ./
-COPY gmail-auth.js ./
-COPY email-provider.js ./
-COPY plan-masking.js ./
-COPY outreach-queues.js ./
-COPY outreach-rate-limiter.js ./
-COPY outreach-workers.js ./
-COPY campaign-suite.js ./
-COPY stripe-billing.js ./
-COPY waha-provider.js ./
-COPY whatsapp-utils.js ./
-COPY whatsapp-rate-limiter.js ./
-COPY whatsapp-queues.js ./
-COPY whatsapp-nats.js ./
-COPY whatsapp-engine.js ./
-COPY whatsapp-workers.js ./
-COPY reengagement-agent.js ./
-COPY reengagement-reply.js ./
-COPY org-context.js ./
-COPY llm-client.js ./
-COPY ai-campaign.js ./
-COPY b2base-context.js ./
-COPY metrics.js ./
+# Copy app runtime files (todos os módulos .js da raiz — server-prod.js
+# requer módulos dinamicamente e uma lista manual já quebrou 2x em produção
+# com MODULE_NOT_FOUND; arquivos não requeridos são inofensivos no runtime)
+COPY *.js ./
 COPY package.json ./
 
 # Copy built SPA + fallback dashboard
