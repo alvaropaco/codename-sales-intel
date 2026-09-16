@@ -90,3 +90,30 @@ test('resolveCnpj retorna null quando nada casa acima do limiar', async () => {
   assert.strictEqual(await resolveCnpj(PROSPECT, deps), null);
   assert.strictEqual(await resolveCnpj({ companyName: '' }, deps), null);
 });
+
+// ── Gating por plano: deep enrich é exclusivo do Premium ────────────────────
+
+test('trial: deep enrich sem CNPJ marca indisponível com upsell, sem chamar fontes pagas', async () => {
+  const { _deepEnrichWithoutCnpj } = require('../lead-enrichment');
+  let captured = null;
+  const prismaStub = {
+    prospect: {
+      findUnique: async () => null,
+      update: async ({ data }) => {
+        captured = data;
+        return { id: 'p1' };
+      },
+    },
+  };
+  const prospect = { id: 'p1', orgId: 'org_trial', companyName: 'Alguem LTDA', city: 'X', cnpj: null };
+  await _deepEnrichWithoutCnpj(prismaStub, prospect, { orgPlan: 'trial' });
+  assert.strictEqual(captured.enrichmentStatus, 'unavailable');
+  assert.match(captured.enrichmentError, /Premium/);
+  assert.strictEqual(captured.enrichmentSummary, undefined); // nada de PDL/scans
+});
+
+test('logoForDomain monta URL do Clearbit', async () => {
+  const { logoForDomain } = require('../lead-enrichment');
+  assert.strictEqual(logoForDomain('dedini.com.br'), 'https://logo.clearbit.com/dedini.com.br');
+  assert.strictEqual(logoForDomain(null), null);
+});

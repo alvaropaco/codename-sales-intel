@@ -47,6 +47,10 @@ export interface Prospect {
   taxIdType?: string | null;
   /** site/domínio — segunda chave universal de enriquecimento B2B */
   domain?: string | null;
+  /** pessoa de contato (import CSV / enriquecimento PDL) */
+  contactName?: string | null;
+  /** logo da empresa (enriquecimento premium) */
+  logoUrl?: string | null;
   companyName: string;
   industry?: string | null;
   employees?: number | null;

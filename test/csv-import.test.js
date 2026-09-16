@@ -279,7 +279,7 @@ test('resolveMapping derruba coluna apontada como CNPJ que não contém CNPJ', a
   const { mapping, source } = await resolveMapping(headers, rows, { callLlm: fakeLlm });
   assert.strictEqual(mapping.cnpj, undefined);
   assert.strictEqual(mapping.city, 'Cidade'); // mapeado pela IA antes do delete
-  assert.strictEqual(source, 'ai');
+  assert.strictEqual(source, 'ai+heuristic'); // heurístico completou com contactName
 });
 
 test('resolveMapping cai no heurístico quando a IA lança erro', async () => {
@@ -307,12 +307,11 @@ test('isContactColumn reconhece colunas de pessoa de contato', () => {
   assert.strictEqual(isContactColumn('E-mail'), false); // email tem padrão próprio
 });
 
-test('heuristicMapping nunca usa coluna de contato para campos de texto da empresa', () => {
+test('heuristicMapping: coluna de contato vira APENAS contactName', () => {
   const mapping = heuristicMapping(HEADERS_COM_CONTATO);
   assert.strictEqual(mapping.companyName, 'Empresa');
-  // "Contato" não vira setor nem razão social nem nada:
-  assert.strictEqual(Object.values(mapping).includes('Contato'), false);
-  assert.strictEqual(Object.values(mapping).includes('Cargo'), false);
+  assert.strictEqual(mapping.contactName, 'Contato'); // virou campo de primeiro nível
+  assert.strictEqual(Object.values(mapping).includes('Cargo'), false); // cargo não mapeia
   assert.strictEqual(mapping.industry, undefined); // não há coluna de setor
 });
 

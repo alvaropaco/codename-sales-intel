@@ -19,6 +19,7 @@ import {
   ExternalLink,
   Clock,
   CheckCircle2,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -95,9 +96,20 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
           <div>
             <div className="flex items-center justify-between pb-4 border-b border-border">
               <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
-                  <Building2 className="h-5 w-5" />
-                </div>
+                {prospect.logoUrl ? (
+                  <img
+                    src={prospect.logoUrl}
+                    alt={prospect.companyName}
+                    className="h-10 w-10 rounded-xl border border-indigo-500/20 bg-white object-contain p-1"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div className="h-10 w-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+                    <Building2 className="h-5 w-5" />
+                  </div>
+                )}
                 <div>
                   <h3 className="font-bold text-base text-foreground leading-tight">
                     {prospect.companyName}
@@ -210,8 +222,14 @@ export const ProspectDetailDrawer: React.FC<ProspectDetailDrawerProps> = ({
                 </div>
               )}
 
-              {(prospect.cnpjEmail || phones.length > 0) && (
+              {(prospect.contactName || prospect.cnpjEmail || phones.length > 0) && (
                 <div className="space-y-2">
+                  {prospect.contactName && (
+                    <p className="font-medium text-foreground flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-muted-foreground" />
+                      {restricted ? <LockedText>{prospect.contactName}</LockedText> : prospect.contactName}
+                    </p>
+                  )}
                   {prospect.cnpjEmail && (
                     <p className="font-medium text-foreground flex items-center gap-1.5">
                       <Mail className="h-3.5 w-3.5 text-muted-foreground" />

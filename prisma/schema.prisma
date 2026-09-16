@@ -96,6 +96,8 @@ model Prospect {
   taxIdType             String?  @default("br_cnpj") // br_cnpj | us_ein | eu_vat | ...
   domain                String?                      // site — chave universal de enriquecimento B2B
   importKey             String?                      // dedup idempotente de imports (email ou nome+cidade)
+  contactName           String?                      // pessoa de contato do lead (import CSV / PDL)
+  logoUrl               String?                      // logo da empresa (enriquecimento premium)
   companyName           String
   tradeName             String?
   status                String   @default("prospect") // prospect, qualified, lead

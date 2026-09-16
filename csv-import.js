@@ -41,6 +41,7 @@ const TARGET_FIELDS = [
   { key: 'phone', label: 'Telefone', description: 'Telefone, celular ou WhatsApp (múltiplos separados por / ou ;)' },
   { key: 'employees', label: 'Funcionários', description: 'Quantidade de funcionários/colaboradores' },
   { key: 'revenueEstimate', label: 'Faturamento', description: 'Faturamento/receita estimada (número ou formato BR)' },
+  { key: 'contactName', label: 'Contato', description: 'Nome da pessoa de contato (ex.: "João Silva") — por último, só se sobrar coluna de pessoa' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -412,6 +413,7 @@ const HEURISTIC_PATTERNS = {
   phone: ['telefone', 'celular', 'whatsapp', 'fone', 'phone', 'mobile', 'tel', 'contatotelefonico'],
   employees: ['funcionarios', 'colaboradores', 'employees', 'numerodefuncionarios', 'qtdefuncionarios', 'headcount', 'porte', 'tamanho'],
   revenueEstimate: ['faturamento', 'receita', 'revenue', 'faturamentoanual', 'receitaestimada', 'faturamentoestimado', 'billing', 'faturamentoanualestimado'],
+  contactName: ['contato', 'nomedocontato', 'novocontato', 'contatoantigo', 'responsavel', 'proprietario', 'vendedor', 'socio'],
 };
 
 /**
@@ -550,7 +552,7 @@ Regras:
 - Mapeie APENAS colunas que existem no cabeçalho, usando o nome EXATO da coluna.
 - Julgue pelo CONTEÚDO dos exemplos, não só pelo nome da coluna.
 - Cada campo-alvo recebe no máximo UMA coluna; uma coluna não serve a dois campos.
-- Colunas de PESSOA de contato ("Contato", "Nome do Contato", "Responsável", "Sócio", "Vendedor", "Cargo", "Função") NÃO mapeiam para NENHUM campo — são pessoas físicas, não atributos da empresa. Em particular NUNCA as use como "industry"/setor ou "companyName"/razão social.
+- Colunas de PESSOA de contato ("Contato", "Nome do Contato", "Novo Contato", "Responsável", "Sócio", "Vendedor") mapeiam APENAS para "contactName" (nunca para industry/companyName). "Cargo"/"Função" não têm campo — ignore.
 - Colunas de MARCA/modelo de máquina ou equipamento (ex.: TRUMPF, AMADA, MAZAK) NÃO têm campo correspondente — ignore.
 - "cnpj" é opcional: muitas planilhas de contatos não o têm, e tudo bem. Quando existir, procure CNPJ (14 dígitos, com ou sem máscara). NUNCA mapeie CPF, RG ou outro documento como CNPJ.
 - Colunas que não correspondem a nenhum campo-alvo ficam de fora.
@@ -802,6 +804,11 @@ function buildRecord(row, mapping) {
       cnpjPhones: phones.length ? phones : null,
       employees,
       revenueEstimate,
+      // contato precisa ser um NOME (≥3 letras) — nunca CPF/CNPJ/número
+      contactName:
+        pick('contactName') && (pick('contactName').match(/\p{L}/gu) || []).length >= 3
+          ? pick('contactName').slice(0, 120)
+          : null,
     },
     issues,
   };

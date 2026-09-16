@@ -1137,36 +1137,8 @@ app.post('/api/prospects', async (req, res) => {
       }
     });
 
-    // Enriquecimento: quando NATS está habilitado, publicamos o pedido para a
-    // esteira de "Em Qualificação" (status prospect) e o consumer persiste o
-    // resultado de forma assíncrona e idempotente. Caso contrário, cai no
-    // enriquecimento síncrono via BrasilAPI (fallback para dev sem NATS).
-    let enrichedProspect;
-    if (natsEnrichment.isNatsEnabled()) {
-      const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-      if (eventId) {
-        // Pedido publicado no pipeline — aguardamos a persistência do worker.
-        enrichedProspect = await prisma.prospect.update({
-          where: { id: prospect.id },
-          data: {
-            enrichmentStatus: 'pending',
-            enrichmentSource: 'nats.enrichment',
-            enrichmentError: null,
-          },
-        });
-        enrichedProspect._enrichmentEventId = eventId;
-        // Complemento: hidrata firmografia (telefones/sócios) via BrasilAPI em
-        // paralelo, sem sobrescrever o scoring da esteira NATS.
-        hydrateFirmographics(prisma, enrichedProspect).catch((err) => {
-          console.error('[firmographics] erro ao hidratar (create):', err.message);
-        });
-      } else {
-        // Pipeline indisponível — cai no enriquecimento síncrono BrasilAPI.
-        enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
-      }
-    } else {
-      enrichedProspect = await enrichProspectWithCnpj(prisma, prospect);
-    }
+    // Enriquecimento roteado por plano (NATS premium; BrasilAPI trial).
+    const enrichedProspect = await dispatchEnrichmentForPlan(prisma, prospect);
 
     res.json({
       success: true,
@@ -1194,60 +1166,12 @@ app.post('/api/prospects/:id/enrich', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
     const plan = await getOrgPlan(orgId);
+    const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
 
-    // Lead SEM CNPJ: esteira de resolução (RFB + SearXNG → CNPJ; senão PDL).
-    if (leadEnrichment.enabled()) {
-      const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
-      if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
-      if (!prospect.cnpj) {
-        const updated = await leadEnrichment.requestLeadEnrichment(prisma, prospect);
-        return res.json({
-          success: true,
-          data: redactProspectForPlan(updated, plan),
-          enrichment: { status: 'pending', source: 'lead-enrichment', error: null },
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-
-    // Com NATS habilitado, encaminhamos para o pipeline de enriquecimento.
-    if (natsEnrichment.isNatsEnabled()) {
-      const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
-      if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
-      const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-      if (eventId) {
-        const updated = await prisma.prospect.update({
-          where: { id: req.params.id },
-          data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
-        });
-        return res.json({
-          success: true,
-          data: redactProspectForPlan(updated, plan),
-          enrichment: { status: 'pending', source: 'nats.enrichment', error: null },
-          eventId,
-          timestamp: new Date().toISOString(),
-        });
-      }
-      // Pipeline indisponível (NATS fora do ar / ack JetStream falhou) — cai no
-      // enriquecimento síncrono via BrasilAPI, mesma política do POST /api/prospects.
-      const enriched = await enrichProspectWithCnpj(prisma, prospect);
-      return res.json({
-        success: true,
-        data: redactProspectForPlan(enriched, plan),
-        enrichment: {
-          status: enriched.enrichmentStatus,
-          source: enriched.enrichmentSource,
-          error: enriched.enrichmentError
-        },
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Garante que o prospect pertence ao usuário antes de enriquecer.
-    const owned = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId }, select: { id: true } });
-    if (!owned) return res.status(404).json({ success: false, error: 'Prospect not found' });
-
-    const enriched = await enrichProspectWithCnpj(prisma, req.params.id);
+    // Roteia por plano: sem CNPJ → resolução (SearXNG/RFB) + deep enrich
+    // premium; com CNPJ → NATS (premium) ou BrasilAPI (trial).
+    const enriched = await dispatchEnrichmentForPlan(prisma, prospect);
     res.json({
       success: true,
       data: redactProspectForPlan(enriched, plan),
@@ -1297,27 +1221,42 @@ function stageTransitionError(previousStatus, nextStatus, prospect) {
 }
 
 /**
- * Dispara a esteira de enriquecimento de um prospect que acabou de entrar em
- * "Em Qualificação" (NATS quando disponível; fallback síncrono BrasilAPI).
- * Lead SEM CNPJ: lead-enrichment.js tenta resolver o CNPJ (base RFB +
- * SearXNG) e, não conseguindo, enriquece via PDL — tudo em background.
+ * Roteador único de enriquecimento, com gating por plano:
+ * - Lead SEM CNPJ → lead-enrichment (resolve o CNPJ; premium recebe deep
+ *   enrich com PDL/jurídico/notícias/logo, trial só o básico).
+ * - PREMIUM → esteira profunda (worker NATS; fallback BrasilAPI).
+ * - TRIAL → básico: firmografia oficial BrasilAPI apenas.
  */
-async function triggerQualificationEnrichment(prisma, prospect) {
+async function dispatchEnrichmentForPlan(prisma, prospect) {
   if (!prospect.cnpj && leadEnrichment.enabled()) {
     return leadEnrichment.requestLeadEnrichment(prisma, prospect);
   }
+  const orgPlan = await getOrgPlan(prospect.orgId);
+  if (orgPlan !== 'premium') {
+    return enrichProspectWithCnpj(prisma, prospect);
+  }
   if (natsEnrichment.isNatsEnabled()) {
     const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-    if (!eventId) {
-      // Pipeline indisponível — enriquece de forma síncrona via BrasilAPI.
-      return enrichProspectWithCnpj(prisma, prospect);
+    if (eventId) {
+      const marked = await prisma.prospect.update({
+        where: { id: prospect.id },
+        data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
+      });
+      hydrateFirmographics(prisma, marked).catch((err) =>
+        console.error(`[enrichment] erro ao hidratar firmografia ${prospect.id}:`, err.message)
+      );
+      return marked;
     }
-    return prospect;
   }
-  // NATS desligado: usa o fallback síncrono BrasilAPI, igual ao fluxo de
-  // criação. Sem isso, mover uma empresa para "Em Qualificação" não
-  // disparava enriquecimento nenhum (ficava 'pending' para sempre).
   return enrichProspectWithCnpj(prisma, prospect);
+}
+
+/**
+ * Dispara a esteira de enriquecimento de um prospect que acabou de entrar em
+ * "Em Qualificação" (com gating por plano — ver dispatchEnrichmentForPlan).
+ */
+async function triggerQualificationEnrichment(prisma, prospect) {
+  return dispatchEnrichmentForPlan(prisma, prospect);
 }
 
 app.put('/api/prospects/:id', async (req, res) => {
@@ -1596,13 +1535,6 @@ app.post('/api/prospects/import-csv', async (req, res) => {
     // Dev sem NATS: serializa os fallbacks BrasilAPI em background para a
     // resposta HTTP voltar rápido sem martelar o serviço público.
     let enrichChain = Promise.resolve();
-    const enqueueFallbackEnrichment = (prospect) => {
-      enrichChain = enrichChain
-        .then(() => enrichProspectWithCnpj(prisma, prospect))
-        .catch((err) =>
-          console.error(`[csv-import] erro ao enriquecer prospect ${prospect.id}:`, err.message)
-        );
-    };
 
     for (const record of staged) {
       try {
@@ -1625,6 +1557,7 @@ app.post('/api/prospects/import-csv', async (req, res) => {
             importKey: record.importKey,
             companyName: record.companyName,
             tradeName: record.tradeName,
+            contactName: record.contactName,
             industry: record.industry,
             city: record.city,
             state: record.state,
@@ -1644,28 +1577,14 @@ app.post('/api/prospects/import-csv', async (req, res) => {
         importedCount++;
         if (!record.cnpj) importedWithoutCnpj++;
 
-        if (record.cnpj && natsEnrichment.isNatsEnabled()) {
-          const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-          if (eventId) {
-            prospect = await prisma.prospect.update({
-              where: { id: prospect.id },
-              data: {
-                enrichmentStatus: 'pending',
-                enrichmentSource: 'nats.enrichment',
-                enrichmentError: null,
-              },
-            });
-            // Complemento firmográfico (telefones/sócios) em paralelo, sem
-            // sobrescrever o scoring da esteira NATS.
-            hydrateFirmographics(prisma, prospect).catch((err) =>
-              console.error(`[csv-import] erro ao hidratar firmografia ${prospect.id}:`, err.message)
-            );
-          } else {
-            enqueueFallbackEnrichment(prospect);
-          }
-        } else if (record.cnpj) {
-          enqueueFallbackEnrichment(prospect);
-        }
+        // Esteira roteada por plano (NATS premium / BrasilAPI trial /
+        // resolução de CNPJ para leads sem chave) — serializada para não
+        // martelar os serviços externos.
+        enrichChain = enrichChain
+          .then(() => dispatchEnrichmentForPlan(prisma, prospect))
+          .catch((err) =>
+            console.error(`[csv-import] erro na esteira de enriquecimento ${prospect.id}:`, err.message)
+          );
       } catch (error) {
         if (error.code === 'PLAN_LIMIT_REACHED' || error.status === 403) {
           limitReached = true;
@@ -2702,26 +2621,12 @@ async function importDiscoveredCompanyForOrg(orgId, data) {
     },
   });
 
-  // Empresas descobertas também entram na esteira de enriquecimento.
-  let enriched = prospect;
-  if (natsEnrichment.isNatsEnabled()) {
-    const eventId = await natsEnrichment.requestEnrichment(prisma, prospect);
-    if (eventId) {
-      enriched = await prisma.prospect.update({
-        where: { id: prospect.id },
-        data: { enrichmentStatus: 'pending', enrichmentSource: 'nats.enrichment', enrichmentError: null },
-      });
-      // Complemento: hidrata firmografia (telefones/sócios) via BrasilAPI em
-      // paralelo, sem sobrescrever o scoring da esteira NATS.
-      hydrateFirmographics(prisma, enriched).catch((err) => {
-        console.error('[firmographics] erro ao hidratar (import):', err.message);
-      });
-    } else {
-      enriched = await enrichProspectWithCnpj(prisma, prospect);
-    }
-  } else {
-    enriched = await enrichProspectWithCnpj(prisma, prospect);
-  }
+  // Empresas descobertas entram na esteira roteada por plano (NATS premium;
+  // BrasilAPI trial).
+  const enriched = await dispatchEnrichmentForPlan(prisma, prospect).catch((err) => {
+    console.error('[discovery] erro na esteira de enriquecimento:', err.message);
+    return prospect;
+  });
 
   return { prospect: enriched, alreadyExists: false, plan };
 }

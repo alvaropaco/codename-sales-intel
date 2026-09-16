@@ -24,6 +24,7 @@ const FIELD_LABELS: Record<string, string> = {
   phone: 'Telefone',
   employees: 'Funcionários',
   revenueEstimate: 'Faturamento',
+  contactName: 'Contato',
 };
 
 export const CsvImportModal: React.FC<CsvImportModalProps> = ({ isOpen, onClose, onSuccess }) => {

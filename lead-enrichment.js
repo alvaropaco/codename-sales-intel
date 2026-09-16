@@ -2,15 +2,18 @@
  * lead-enrichment.js — enriquecimento de leads SEM CNPJ.
  *
  * Fase 1: RESOLVER o CNPJ (a chave da esteira clássica):
- *   a. Base RFB local (MCP-CNPJ): busca por nome — melhor qualidade;
- *   b. SearXNG: busca web por "<nome> CNPJ", extrai candidatos dos snippets,
- *      valida dígitos verificadores e confirma cada candidato na base RFB.
+ *   a. SearXNG: busca web por "<nome> CNPJ", extrai candidatos dos snippets,
+ *      valida dígitos verificadores e confirma cada candidato na base RFB;
+ *   b. Base RFB local (MCP-CNPJ): busca por nome — lenta, fica por último.
  *
- * Fase 2: resolveu → dispara a esteira clássica (NATS worker; fallback
- * BrasilAPI). Não resolveu → PDL (People Data Labs): empresa (site, redes
- * sociais, porte, funcionários, fundação, indústria) + pessoa por e-mail
- * (nome, cargo, redes). Tudo vai para enrichmentSummary e o status vira
- * 'partial' (achou algo) ou 'unavailable' (nada encontrado).
+ * Fase 2 (plano):
+ *   - PREMIUM: resolveu → esteira profunda (worker NATS com OSINT; fallback
+ *     BrasilAPI). Não resolveu → deep enrich: PDL (empresa: site, redes,
+ *     porte, funcionários, fundação; pessoa: nome, cargo, redes), scan
+ *     jurídico e de notícias via SearXNG (links para revisão humana) e logo
+ *     (Clearbit) a partir do domínio.
+ *   - TRIAL: enriquecimento BÁSICO apenas — resolução de CNPJ + firmografia
+ *     oficial (BrasilAPI). Sem worker OSINT, sem PDL, sem scans.
  *
  * Jobs rodam em fila in-process (concurreência baixa para não martelar
  * SearXNG/PDL) e são deduplicados por prospect.
@@ -19,6 +22,7 @@
 const csvImport = require('./csv-import');
 const natsEnrichment = require('./nats-enrichment');
 const mcpCnpj = require('./mcp-cnpj');
+const plan = require('./plan');
 
 const SEARXNG_URL = (process.env.SEARXNG_URL || 'https://search.0xcloud.net').replace(/\/+$/, '');
 const PDL_API_KEY = process.env.PDL_API_KEY || '';
@@ -225,12 +229,28 @@ async function pdlCompanyEnrich({ companyName, city }) {
   };
 }
 
-/** Pessoa por e-mail. Resposta PDL person vem aninhada em `data`. */
-async function pdlPersonEnrichByEmail(email) {
-  if (!email) return null;
-  const json = await pdlRequest('/v5/person/enrich', { email }).catch(() => null);
+/**
+ * Pessoa por e-mail OU por nome+empresa (PDL v5 person/enrich).
+ * Resposta PDL person vem aninhada em `data`.
+ */
+async function pdlPersonEnrich({ email, contactName, companyName, city } = {}) {
+  let params = null;
+  if (email) {
+    params = { email };
+  } else if (contactName) {
+    const parts = String(contactName).trim().split(/\s+/);
+    params = {
+      first_name: parts[0],
+      ...(parts.length > 1 ? { last_name: parts[parts.length - 1] } : {}),
+      ...(companyName ? { company: companyName } : {}),
+      ...(city ? { locality: city } : {}),
+      country: 'br',
+    };
+  }
+  if (!params) return null;
+  const json = await pdlRequest('/v5/person/enrich', params).catch(() => null);
   const p = json && json.data ? json.data : null;
-  if (!p) return null;
+  if (!p || (!p.full_name && !p.job_title && !p.linkedin_url)) return null;
   return {
     full_name: p.full_name || null,
     job_title: p.job_title || null,
@@ -377,6 +397,47 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// SCANS PROFUNDOS (premium) — jurídico e notícias via SearXNG.
+// Não substituem consulta oficial: levantam INDÍCIOS com links para
+// revisão humana, gravados em enrichmentSummary.
+// ---------------------------------------------------------------------------
+
+async function legalScan({ companyName, cnpj }) {
+  const queries = [
+    `"${companyName}" processo judicial`,
+    cnpj ? `CNPJ ${cnpj} ação judicial` : `"${companyName}" ação trabalhista`,
+  ];
+  const links = [];
+  for (const q of queries) {
+    const results = await searxSearch(q, { limit: 5 }).catch(() => []);
+    for (const r of results) {
+      if (!links.some((l) => l.url === r.url)) {
+        links.push({ title: r.title.slice(0, 140), url: r.url, snippet: r.content.slice(0, 200) });
+      }
+    }
+    if (links.length >= 4) break;
+  }
+  return links.slice(0, 5);
+}
+
+async function newsScan({ companyName }) {
+  const results = await searxSearch(`"${companyName}" (notícia OR investimento OR expansão OR faturamento)`, {
+    limit: 6,
+  }).catch(() => []);
+  return results.slice(0, 4).map((r) => ({
+    title: r.title.slice(0, 140),
+    url: r.url,
+    snippet: r.content.slice(0, 200),
+  }));
+}
+
+/** Logo público a partir do domínio (Clearbit, sem chave). */
+function logoForDomain(domain) {
+  if (!domain) return null;
+  return `https://logo.clearbit.com/${domain}`;
+}
+
+// ---------------------------------------------------------------------------
 // FLUXO PRINCIPAL
 // ---------------------------------------------------------------------------
 
@@ -447,9 +508,12 @@ async function _process(prisma, prospectId) {
       throw err;
     }
 
-    // CNPJ na mão → esteira profunda clássica (worker NATS; fallback BrasilAPI)
     const fresh = await prisma.prospect.findUnique({ where: { id: prospect.id } });
-    if (natsEnrichment.isNatsEnabled()) {
+    const orgPlan = await plan.getOrgPlan(prisma, fresh.orgId);
+
+    // PREMIUM: esteira profunda (worker NATS com OSINT; fallback BrasilAPI).
+    // TRIAL: básico — firmografia oficial BrasilAPI.
+    if (orgPlan === 'premium' && natsEnrichment.isNatsEnabled()) {
       const eventId = await natsEnrichment.requestEnrichment(prisma, fresh);
       if (eventId) return;
     }
@@ -460,11 +524,28 @@ async function _process(prisma, prospectId) {
     return;
   }
 
-  await _deepEnrichWithoutCnpj(prisma, prospect);
+  const orgPlan = await plan.getOrgPlan(prisma, prospect.orgId);
+  await _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan });
 }
 
-/** Sem CNPJ encontrado: PDL empresa + pessoa, gravados em enrichmentSummary. */
-async function _deepEnrichWithoutCnpj(prisma, prospect) {
+/**
+ * Sem CNPJ encontrado. PREMIUM: PDL (empresa + pessoa), scans jurídico e de
+ * notícias (SearXNG) e logo. TRIAL: marca indisponível com upsell —
+ * enriquecimento avançado é exclusivo do plano Premium.
+ */
+async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = {}) {
+  if (orgPlan !== 'premium') {
+    await prisma.prospect.update({
+      where: { id: prospect.id },
+      data: {
+        enrichmentStatus: 'unavailable',
+        enrichmentSource: 'lead-enrichment',
+        enrichmentError: 'CNPJ não localizado. Enriquecimento avançado (redes sociais, contatos, jurídico, notícias) é exclusivo do plano Premium.',
+      },
+    });
+    return;
+  }
+
   const summaryLead = {};
   let found = false;
 
@@ -479,17 +560,39 @@ async function _deepEnrichWithoutCnpj(prisma, prospect) {
       summaryLead.linkedin = company.linkedin_url;
     }
 
-    const person = await pdlPersonEnrichByEmail(prospect.cnpjEmail).catch(() => null);
+    const person = await pdlPersonEnrich({
+      email: prospect.cnpjEmail,
+      contactName: prospect.contactName,
+      companyName: prospect.companyName,
+      city: prospect.city,
+    }).catch(() => null);
     if (person) {
       found = true;
       summaryLead.person = person;
     }
   }
 
+  const legal = await legalScan({ companyName: prospect.companyName, cnpj: prospect.cnpj }).catch(() => []);
+  if (legal.length) {
+    found = found || legal.length > 0;
+    summaryLead.legal = legal;
+  }
+
+  const news = await newsScan({ companyName: prospect.companyName }).catch(() => []);
+  if (news.length) {
+    summaryLead.news = news;
+    found = true;
+  }
+
+  const domain = prospect.domain || (summaryLead.company && summaryLead.company.website) || null;
+
   await prisma.prospect.update({
     where: { id: prospect.id },
     data: {
-      domain: prospect.domain || (summaryLead.company && summaryLead.company.website) || null,
+      domain,
+      logoUrl: prospect.logoUrl || logoForDomain(domain),
+      // Contact name descoberto no PDL preenche o campo quando vazio.
+      contactName: prospect.contactName || (summaryLead.person && summaryLead.person.full_name) || null,
       enrichmentStatus: found ? 'partial' : 'unavailable',
       enrichmentSource: found ? 'lead-enrichment:pdl' : 'lead-enrichment',
       enrichmentError: found
@@ -504,9 +607,13 @@ module.exports = {
   enabled,
   requestLeadEnrichment,
   resolveCnpj,
+  _deepEnrichWithoutCnpj,
   extractCnpjCandidates,
   nameSimilarity,
   searxSearch,
   pdlCompanyEnrich,
-  pdlPersonEnrichByEmail,
+  pdlPersonEnrich,
+  legalScan,
+  newsScan,
+  logoForDomain,
 };
