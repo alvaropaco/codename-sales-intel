@@ -12,6 +12,7 @@ const { createWorkerRuntime } = require('./sdk/runtime');
 const { makeResultPublisher } = require('./sdk/result-publisher');
 const capabilities = require('../enrichment-capabilities');
 const { createLogger } = require('../logger');
+const { createRawStore } = require('../raw-store');
 const natsStream = require('../nats-stream');
 const { searxSearch } = require('../searxng');
 
@@ -56,6 +57,7 @@ const executors = {
 /** Monta o runtime completo (boot e testes de integração). */
 function createSearchWorker({ prisma, js, jsm = null, deps = {} } = {}) {
   const logger = createLogger({ component: 'worker', family: 'search' });
+  const rawStore = prisma ? createRawStore({ prisma }) : null;
   const runtime = createWorkerRuntime({
     name: 'search',
     capabilities,
@@ -65,6 +67,7 @@ function createSearchWorker({ prisma, js, jsm = null, deps = {} } = {}) {
       js,
       jsm,
       publisher: js ? makeResultPublisher({ js }) : null,
+      rawStore,
       logger,
       ...deps,
     },

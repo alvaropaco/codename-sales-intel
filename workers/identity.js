@@ -12,6 +12,7 @@ const { createWorkerRuntime } = require('./sdk/runtime');
 const { makeResultPublisher } = require('./sdk/result-publisher');
 const capabilities = require('../enrichment-capabilities');
 const { createLogger } = require('../logger');
+const { createRawStore } = require('../raw-store');
 const natsStream = require('../nats-stream');
 
 // ── Deps injetáveis (testes substituem dns/httpFetch) ───────────────────────
@@ -124,6 +125,7 @@ const executors = {
 /** Monta o runtime completo (usado no boot e nos testes de integração). */
 function createIdentityWorker({ prisma, js, jsm = null, deps = {} } = {}) {
   const logger = createLogger({ component: 'worker', family: 'identity' });
+  const rawStore = prisma ? createRawStore({ prisma }) : null;
   const runtime = createWorkerRuntime({
     name: 'identity',
     capabilities,
@@ -133,6 +135,7 @@ function createIdentityWorker({ prisma, js, jsm = null, deps = {} } = {}) {
       js,
       jsm,
       publisher: js ? makeResultPublisher({ js }) : null,
+      rawStore,
       logger,
       ...deps,
     },

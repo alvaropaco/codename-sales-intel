@@ -11,7 +11,9 @@ function makeId(prefix) {
 function matches(record, where = {}) {
   return Object.entries(where).every(([field, expected]) => {
     if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
-      // where composto do Prisma: { taskKey: 'x' } dentro de where único — não usado aqui
+      // Operadores do Prisma suportados pelo fake: { lt, gte }
+      if ('lt' in expected) return new Date(record[field]) < new Date(expected.lt);
+      if ('gte' in expected) return new Date(record[field]) >= new Date(expected.gte);
       return matches(record[field] || {}, expected);
     }
     return record[field] === expected;
