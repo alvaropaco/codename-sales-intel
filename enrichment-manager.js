@@ -364,8 +364,18 @@ function createEnrichmentManager(deps = {}) {
       if (!allDone) continue; // aguardando demais dependências
 
       // Enriquece o input com os dados das dependências (input original vence).
+      // Fonte primária: rows de EnrichmentResult (persistidas pelo worker);
+      // fallback: o data do evento corrente (mesmo conteúdo, sem ir ao banco).
       const depResults = await Promise.all(dependent.dependsOn.map((id) => prisma.enrichmentResult.findUnique({ where: { taskId: id } })));
-      const mergedInput = { ...Object.assign({}, ...depResults.filter(Boolean).map((r) => r.data || {})), ...(dependent.input || {}) };
+      const depData = Object.assign(
+        {},
+        ...depResults.map((r, i) => {
+          if (r && r.data) return r.data;
+          if (depTasks[i] && depTasks[i].id === result.taskId && result.data) return result.data;
+          return {};
+        })
+      );
+      const mergedInput = { ...depData, ...(dependent.input || {}) };
       const attempt = (dependent.attempt || 0) + 1;
       await prisma.enrichmentTask.update({
         where: { id: dependent.id },
