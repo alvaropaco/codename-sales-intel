@@ -28,14 +28,17 @@ function createWorkerRuntime({
   workerVersion = process.env.GIT_SHA || 'dev',
   now = () => new Date(),
   publishResultTimeoutMs = 5000,
+  config = defaultConfig,
 } = {}) {
   const {
     prisma,
     js = null, // JetStream real (start/stop); processMessage não depende dele
-    publisher = null, // async (resultEvent) — injetável; default via makeResultPublisher
+    publisher: injectedPublisher = null, // async (resultEvent) — injetável
     logger: baseLogger = console,
     jsm = null, // jetstream manager para garantir o consumer durável
   } = deps;
+
+  let publisher = injectedPublisher;
 
   const executors = new Map(); // capability → async (task, ctx) => outcome
   const effectiveFilter = filterSubject || `enrichment.task.${name}.>`;
@@ -90,17 +93,44 @@ function createWorkerRuntime({
     await publish(result);
   }
 
-  async function publishFailureAndAck(msg, task, { type, message, retryable, durationMs, provider, persist = true }) {
-    const event = buildResultEvent(task, {
+  /** Substitui o publisher em runtime (testes de infra-falha de publicação). */
+  function setPublisherForTest(fn) {
+    publisher = fn;
+  }
+
+  function buildFailureEvent(task, { type, message, retryable, durationMs, provider }) {
+    return buildResultEvent(task, {
       status: 'FAILED',
       error: { type, message: String(message || ''), retryable },
       durationMs,
       provider,
     });
-    if (persist) await persistResult(event);
-    await publishResult(event);
-    await msg.ack();
-    return { status: 'FAILED', type };
+  }
+
+  /**
+   * Entrega o evento: [persist] → publish → ack. Qualquer falha de
+   * persistência/publicação → nak(delay) — o broker reentrega a MESMA
+   * mensagem (persistência idempotente por taskId torna o reprocesso seguro).
+   */
+  async function deliver(msg, event, { persist = true } = {}) {
+    try {
+      if (persist) await persistResult(event);
+      await publishResult(event);
+      await msg.ack();
+      return true;
+    } catch (err) {
+      const delay = config.backoffDelayMs(event.attempt || 1);
+      baseLogger.warn(`runtime: falha ao entregar result de ${event.taskId} (${err.message}); nak(${delay}ms)`);
+      try {
+        await msg.nak(delay);
+      } catch (_e) { /* msg será reentregue pelo ack_wait do broker */ }
+      return false;
+    }
+  }
+
+  async function publishFailureAndAck(msg, task, opts) {
+    const delivered = await deliver(msg, buildFailureEvent(task, opts), { persist: opts.persist !== false });
+    return { status: delivered ? 'FAILED' : 'NAK', type: opts.type };
   }
 
   async function persistResult(event) {
@@ -254,10 +284,8 @@ function createWorkerRuntime({
         suggestedTasks: outcome ? outcome.suggestedTasks : [],
         provider: outcome ? outcome.provider : undefined,
       });
-      await persistResult(event); // 1º persist
-      await publishResult(event); // 2º publish
-      await msg.ack(); // 3º ack — somente após persist+publish (FR-018)
-      return { status };
+      const delivered = await deliver(msg, event); // persist → publish → ack (FR-018)
+      return { status: delivered ? status : 'NAK' };
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const aborted = controller.signal.aborted;
@@ -354,6 +382,7 @@ function createWorkerRuntime({
     processMessage,
     registerExecutors,
     registerExecutorsForTest: registerExecutors,
+    setPublisherForTest,
     get isRunning() {
       return running;
     },
