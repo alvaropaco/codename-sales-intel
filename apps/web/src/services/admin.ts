@@ -16,6 +16,7 @@ export interface AdminUserRow {
   createdAt: string;
   updatedAt: string;
   lastActiveAt: string | null;
+  blockedAt: string | null;
   orgId: string;
   organization: {
     id: string;
@@ -165,6 +166,22 @@ export async function adminSetOrgPlan(
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao alterar o plano');
   return json.data as AdminOrgRow;
+}
+
+/** Bloqueia ou desbloqueia um usuário. Retorna o usuário atualizado. */
+export async function adminSetUserBlocked(
+  userId: string,
+  blocked: boolean
+): Promise<AdminUserRow> {
+  const action = blocked ? 'block' : 'unblock';
+  const res = await fetch(`${API_BASE}/users/${encodeURIComponent(userId)}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao alterar bloqueio');
+  return json.data as AdminUserRow;
 }
 
 /** Busca o status de pagamento AO VIVO do Stripe de um org específico. */

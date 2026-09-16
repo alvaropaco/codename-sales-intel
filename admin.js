@@ -360,6 +360,7 @@ function createAdminRouter(prisma) {
             createdAt: true,
             updatedAt: true,
             lastActiveAt: true,
+            blockedAt: true,
             orgId: true,
             organization: {
               select: { id: true, name: true, plan: true, cnpj: true },
@@ -377,6 +378,43 @@ function createAdminRouter(prisma) {
       return res.status(500).json({ success: false, error: error.message });
     }
   });
+
+  // ── Bloquear / desbloquear usuário ───────────────────────────────────────
+  // Bloquear: preenche blockedAt → requireAuth e login rejeitam toda request
+  // autenticada do usuário imediatamente (invalida sessões existentes).
+  // Desbloquear: volta a null → acesso restaurado.
+  const setUserBlocked = async (req, res, blocked) => {
+    try {
+      const userId = String(req.params.id || '').trim();
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'ID de usuário inválido.' });
+      }
+      const existing = await prisma.user.findUnique({ where: { id: userId } });
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+      }
+      const updated = await prisma.user.update({
+        where: { id: userId },
+        data: { blockedAt: blocked ? new Date() : null },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          blockedAt: true,
+          lastActiveAt: true,
+          createdAt: true,
+          updatedAt: true,
+          orgId: true,
+        },
+      });
+      return res.json({ success: true, data: updated });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  };
+
+  router.post('/users/:id/block', requireAdmin, (req, res) => setUserBlocked(req, res, true));
+  router.post('/users/:id/unblock', requireAdmin, (req, res) => setUserBlocked(req, res, false));
 
   // ── Organizações / contas ──────────────────────────────────────────────
   router.get('/orgs', requireAdmin, async (req, res) => {

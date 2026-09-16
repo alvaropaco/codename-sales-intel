@@ -20,6 +20,7 @@ import {
   adminUsers,
   adminOrgs,
   adminSetOrgPlan,
+  adminSetUserBlocked,
   adminSummary,
   adminLogout,
   adminOrgBilling,
@@ -54,6 +55,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
   const [q, setQ] = useState('');
   const [planFilter, setPlanFilter] = useState<'' | 'trial' | 'premium'>('');
   const [busyOrg, setBusyOrg] = useState<string | null>(null);
+  const [busyUser, setBusyUser] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [billingDetail, setBillingDetail] = useState<{
@@ -159,6 +161,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
       setError(err instanceof Error ? err.message : 'Erro ao alterar plano.');
     } finally {
       setBusyOrg(null);
+    }
+  };
+
+  const handleToggleBlock = async (u: AdminUserRow) => {
+    const blocked = Boolean(u.blockedAt);
+    const target = !blocked;
+    const action = target ? 'BLOQUEAR' : 'DESBLOQUEAR';
+    if (
+      !window.confirm(
+        `${action} o usuário "${u.email}"?\n\n${
+          target
+            ? 'Ele perderá o acesso à plataforma imediatamente.'
+            : 'Ele poderá acessar a plataforma novamente.'
+        }`
+      )
+    ) {
+      return;
+    }
+    setBusyUser(u.id);
+    setError(null);
+    try {
+      await adminSetUserBlocked(u.id, target);
+      showToast(
+        `Usuário "${u.email}" ${target ? 'bloqueado' : 'desbloqueado'}.`
+      );
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao alterar bloqueio.');
+    } finally {
+      setBusyUser(null);
     }
   };
 
@@ -378,12 +410,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
                   <th className="px-4 py-3 font-bold">Plano</th>
                   <th className="hidden px-4 py-3 font-bold md:table-cell">Última atividade</th>
                   <th className="hidden px-4 py-3 font-bold md:table-cell">Criado</th>
+                  <th className="px-4 py-3 font-bold">Status</th>
+                  <th className="px-4 py-3 font-bold">Ação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
                       Nenhum usuário encontrado.
                     </td>
                   </tr>
@@ -411,6 +445,37 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ username
                     </td>
                     <td className="hidden px-4 py-3 text-slate-400 md:table-cell">
                       {new Date(u.createdAt).toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-4 py-3">
+                      {u.blockedAt ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-bold text-red-300">
+                          <AlertTriangle className="h-3 w-3" /> Bloqueado
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-bold text-emerald-300">
+                          <CheckCircle2 className="h-3 w-3" /> Ativo
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => handleToggleBlock(u)}
+                        disabled={busyUser === u.id}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition disabled:opacity-60 ${
+                          u.blockedAt
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                            : 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
+                        }`}
+                      >
+                        {busyUser === u.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : u.blockedAt ? (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                        )}
+                        {u.blockedAt ? 'Desbloquear' : 'Bloquear'}
+                      </button>
                     </td>
                   </tr>
                 ))}

@@ -83,6 +83,10 @@ model User {
   // Atualizado com throttle no requireAuth (~1x/60s por usuário) para
   // evitar write excessivo; exposto no painel admin (admin/users).
   lastActiveAt DateTime?
+  // Bloqueio do usuário pelo admin: quando não-nulo, toda request
+  // autenticada do usuário é rejeitada (efeito imediato, incluindo
+  // sessões já existentes). null = ativo.
+  blockedAt DateTime?
 }
 
 model Prospect {

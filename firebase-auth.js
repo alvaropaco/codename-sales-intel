@@ -401,8 +401,10 @@ function cookieParserMiddleware(req, _res, next) {
 
 async function isSessionRevoked(prisma, payload) {
   const user = await prisma.user.findUnique({ where: { id: payload.uid } });
-  if (!user) return true;
-  return Number(payload.ver ?? 0) !== Number(user.sessionVersion ?? 0);
+  if (!user) return { revoked: true, blocked: false };
+  const revoked = Number(payload.ver ?? 0) !== Number(user.sessionVersion ?? 0);
+  const blocked = Boolean(user.blockedAt);
+  return { revoked, blocked };
 }
 
 function createRequireAuth(prisma) {
@@ -448,7 +450,14 @@ function createRequireAuth(prisma) {
     }
 
     try {
-      if (await isSessionRevoked(prisma, payload)) {
+      const sessionCheck = await isSessionRevoked(prisma, payload);
+      if (sessionCheck.blocked) {
+        clearSessionCookie(res);
+        return res
+          .status(403)
+          .json({ success: false, error: 'Sua conta foi bloqueada.', code: 'USER_BLOCKED' });
+      }
+      if (sessionCheck.revoked) {
         clearSessionCookie(res);
         return res
           .status(401)
@@ -606,6 +615,16 @@ async function loginWithIdToken(prisma, idToken) {
   }
 
   const user = await upsertUserFromDecodedToken(prisma, decoded);
+
+  // Usuário bloqueado pelo admin não pode gerar sessão nova (e o requireAuth
+  // também rejeita sessões já existentes via blockedAt — cobertura dupla).
+  if (user.blockedAt) {
+    const err = new Error('Sua conta foi bloqueada. Contate o suporte.');
+    err.status = 403;
+    err.code = 'USER_BLOCKED';
+    throw err;
+  }
+
   const token = createSessionToken(user);
   return { token, user: await serializeUser(user) };
 }
