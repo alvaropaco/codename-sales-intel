@@ -4685,6 +4685,22 @@ async function start() {
     if (natsEnrichment.isNatsEnabled()) {
       natsEnrichment.startEnrichmentConsumer(prisma);
       natsEnrichment.startDlqMonitor();
+      // Motor v2: consumidor de qualificação desacoplado (US7) + consumer de
+      // resultados do manager. Falhas isoladas — nunca bloqueiam o boot.
+      if (enrichmentConfig.isEngineV2Enabled()) {
+        try {
+          const { createQualificationConsumer } = require('./qualification');
+          const { createLogger } = require('./logger');
+          const consumer = createQualificationConsumer({
+            prisma,
+            logger: createLogger({ component: 'qualification' }),
+            onMetric: (name) => { if (name.includes('failures') && metrics.incQualificationFailure) metrics.incQualificationFailure(); },
+          });
+          consumer.start().catch((err) => console.error(`[qualification] consumer não iniciado: ${err.message}`));
+        } catch (err) {
+          console.error(`[qualification] falha ao iniciar consumidor: ${err.message}`);
+        }
+      }
     } else {
       console.log('[nats] NATS desabilitado - usando enriquecimento síncrono BrasilAPI.');
     }
