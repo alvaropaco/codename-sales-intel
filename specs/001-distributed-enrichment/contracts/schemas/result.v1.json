@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "enrichment.result.v1",
+  "title": "Resultado de task de enriquecimento",
+  "type": "object",
+  "required": ["version", "taskId", "taskKey", "jobId", "orgId", "prospectId", "entityKey", "entityType", "capability", "status", "durationMs", "workerVersion", "completedAt"],
+  "properties": {
+    "version": { "const": "1" },
+    "taskId": { "type": "string" },
+    "taskKey": { "type": "string" },
+    "jobId": { "type": "string" },
+    "orgId": { "type": "string" },
+    "prospectId": { "type": "string" },
+    "entityKey": { "type": "string" },
+    "entityType": { "type": "string" },
+    "capability": { "type": "string" },
+    "provider": { "type": ["string", "null"] },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["COMPLETED", "FAILED"] },
+    "data": { "type": ["object", "null"] },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["attribute", "value"],
+        "properties": {
+          "attribute": { "type": "string" },
+          "value": {},
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "evidence": {
+            "type": "object",
+            "required": ["sourceType", "retrievedAt"],
+            "properties": {
+              "sourceType": { "type": "string" },
+              "provider": { "type": ["string", "null"] },
+              "url": { "type": ["string", "null"] },
+              "retrievedAt": { "type": "string", "format": "date-time" },
+              "rawRecordId": { "type": ["string", "null"] },
+              "confidence": { "type": ["number", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "properties": {
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "durationMs": { "type": "integer" },
+    "workerVersion": { "type": "string" },
+    "rawRecordId": { "type": ["string", "null"] },
+    "suggestedTasks": { "type": "array" },
+    "completedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": true
+}
