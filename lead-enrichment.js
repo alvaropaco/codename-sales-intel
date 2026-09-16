@@ -28,7 +28,8 @@ const CONCURRENCY = parseInt(process.env.LEAD_ENRICHMENT_CONCURRENCY || '2', 10)
 const RESOLVE_NAME_THRESHOLD_RFB = 0.62;
 const RESOLVE_NAME_THRESHOLD_SEARX = 0.45;
 // Busca na RFB não pode dominar o tempo total do resolve — SearXNG é o plano B.
-const RFB_SEARCH_TIMEOUT_MS = parseInt(process.env.RFB_SEARCH_TIMEOUT_MS || '15000', 10);
+const RFB_SEARCH_TIMEOUT_MS = parseInt(process.env.RFB_SEARCH_TIMEOUT_MS || '45000', 10);
+const RFB_LOOKUP_TIMEOUT_MS = parseInt(process.env.RFB_LOOKUP_TIMEOUT_MS || '20000', 10);
 
 function withTimeout(promise, ms, label) {
   let timer;
@@ -267,55 +268,32 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
   const search = deps.searxSearch || searxSearch;
   if (!companyName) return null;
 
-  // a) Base RFB local — busca direta por nome (deps injetados para testes
-  //    têm prioridade sobre o guard de configuração do MCP).
-  const searchFn = deps.searchCompanies || (mcpCnpj.isMcpConfigured() ? mcpCnpj.searchCompanies : null);
-  if (searchFn) {
-    try {
-      const candidates = await withTimeout(
-        searchFn({ query: companyName, limit: 15 }),
-        RFB_SEARCH_TIMEOUT_MS,
-        'rfb-search'
-      );
-      let best = null;
-      for (const cand of candidates || []) {
-        const score = scoreCandidate({ companyName, city }, cand);
-        if (!best || score > best.score) {
-          best = { score, cand };
-        }
-      }
-      if (best && best.score >= RESOLVE_NAME_THRESHOLD_RFB) {
-        return {
-          cnpj: best.cand.cnpj,
-          source: 'rfb',
-          confidence: Number(best.score.toFixed(2)),
-          matchedName: best.cand.legalName || best.cand.tradeName,
-        };
-      }
-    } catch (err) {
-      console.warn(`[lead-enrichment] busca RFB falhou: ${err.message}`);
-    }
-  }
+  const cityTokens = nameTokens(city || '').filter((t) => t.length >= 4);
+  const anchorTokens = nameTokens(companyName).filter(
+    (t) => t.length >= 5 && !GENERIC_WORDS.has(t)
+  );
 
-  // b) SearXNG: procura o CNPJ publicado na web e valida na base RFB
+  // a) SearXNG: busca rápida (<10s) — candidatos saem dos snippets, com DV
+  //    validado; cada candidato é confirmado na RFB (point lookup, timeout
+  //    curto). Sem confirmação RFB possível, aceita o snippet com âncora do
+  //    nome, preferindo os que também citam a cidade (homônimas são o
+  //    principal risco).
   try {
     const queries = [`"${companyName}" CNPJ`];
     if (city) queries.push(`"${companyName}" ${city} CNPJ`);
-    const cityTokens = nameTokens(city || '').filter((t) => t.length >= 4);
     const results = [];
     let cityConfirmed = false;
     for (const q of queries) {
       const r = await search(q).catch(() => []);
       results.push(...r);
       // Antecipa a 2ª query apenas se já há candidato com âncora do nome E
-      // cidade confirmada no snippet (senão a query com cidade pode trazer
-      // o match certo de empresas-homônimas).
+      // cidade confirmada no snippet.
       cityConfirmed = results.some((x) => {
         const snippet = `${x.title} ${x.content}`.toUpperCase();
         return (
           extractCnpjCandidates(snippet).length &&
           cityTokens.every((t) => snippet.includes(t)) &&
-          nameTokens(companyName).some((t) => t.length >= 5 && !GENERIC_WORDS.has(t) && snippet.includes(t))
+          anchorTokens.some((t) => snippet.includes(t))
         );
       });
       if (cityConfirmed || !cityTokens.length) break;
@@ -324,7 +302,11 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
     const candidates = extractCnpjCandidates(text).slice(0, 4);
     let best = null;
     for (const cnpj of candidates) {
-      const company = await getCompanyByCnpj(cnpj).catch(() => null);
+      const company = await withTimeout(
+        getCompanyByCnpj(cnpj).catch(() => null),
+        RFB_LOOKUP_TIMEOUT_MS,
+        'rfb-lookup'
+      );
       if (company) {
         const score = scoreCandidate({ companyName, city }, company);
         if (!best || score > best.score) best = { score, company };
@@ -339,13 +321,6 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
       };
     }
 
-    // RFB indisponível para confirmar: aceita o candidato cujo snippet
-    // contém uma âncora do nome (token raro, ≥5 letras, não-genérico).
-    // Quando houver cidade no lead, prefere snippets que também a citam —
-    // empresas-homônimas em cidades diferentes são o principal risco.
-    const anchorTokens = nameTokens(companyName).filter(
-      (t) => t.length >= 5 && !GENERIC_WORDS.has(t)
-    );
     const scoredSnippets = [];
     for (const r of results) {
       const snippet = `${r.title} ${r.content}`;
@@ -368,6 +343,34 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
     }
   } catch (err) {
     console.warn(`[lead-enrichment] busca SearXNG falhou: ${err.message}`);
+  }
+
+  // b) Base RFB local — busca full-text por nome (lenta: >45s no MCP atual),
+  //    fica como último recurso com timeout generoso.
+  const searchFn = deps.searchCompanies || (mcpCnpj.isMcpConfigured() ? mcpCnpj.searchCompanies : null);
+  if (searchFn) {
+    try {
+      const candidates = await withTimeout(
+        searchFn({ query: companyName, limit: 15 }),
+        RFB_SEARCH_TIMEOUT_MS,
+        'rfb-search'
+      );
+      let best = null;
+      for (const cand of candidates || []) {
+        const score = scoreCandidate({ companyName, city }, cand);
+        if (!best || score > best.score) best = { score, cand };
+      }
+      if (best && best.score >= RESOLVE_NAME_THRESHOLD_RFB) {
+        return {
+          cnpj: best.cand.cnpj,
+          source: 'rfb',
+          confidence: Number(best.score.toFixed(2)),
+          matchedName: best.cand.legalName || best.cand.tradeName,
+        };
+      }
+    } catch (err) {
+      console.warn(`[lead-enrichment] busca RFB falhou: ${err.message}`);
+    }
   }
 
   return null;
