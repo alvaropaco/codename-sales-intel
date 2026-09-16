@@ -43,6 +43,40 @@ test('isValidCnpj aceita CNPJ com máscara e rejeita dígito verificador errado'
 
 // ── Parser CSV ──────────────────────────────────────────────────────────────
 
+test('parseCsv detecta arquivo SEM cabeçalho e sintetiza coluna_N', () => {
+  // Planilha real do cliente: a 1ª linha já é dado (não tem cabeçalho)
+  const csv = [
+    'STAMPCOM;STAMPCOM METALÚRGICA LTDA;SÃO PAULO;Av José Carlos Pace, 302;04.786-040;Interlagos;SP;11 5920 8822;AMADA;2;JOÃO;DIRETOR;;SETOR DESENVOLVIMENTO;;abc@stara.com.br;54 3332 2800;',
+    'ANTONIOSI;antoniosi tecnologia ltda;MATÃO;Av Antonio Lopes,200;15991-326;;SP;16 3382 8191;TRUMPF;1;;;;ADEJAIR GERALDO;COMPRAS;adejair@antoniosi.com.br;16 3384 8000;;',
+  ].join('\n');
+  const { headers, records, hasHeaderRow } = parseCsv(csv);
+  assert.strictEqual(hasHeaderRow, false);
+  assert.deepStrictEqual(headers, ['coluna_1', 'coluna_2', 'coluna_3', 'coluna_4', 'coluna_5', 'coluna_6', 'coluna_7', 'coluna_8', 'coluna_9', 'coluna_10', 'coluna_11', 'coluna_12', 'coluna_13', 'coluna_14', 'coluna_15', 'coluna_16', 'coluna_17', 'coluna_18']);
+  // A 1ª linha NÃO é consumida como cabeçalho: ambas as linhas viram registro
+  assert.strictEqual(records.length, 2);
+  assert.strictEqual(records[0]['coluna_1'], 'STAMPCOM');
+  assert.strictEqual(records[1]['coluna_14'], 'ADEJAIR GERALDO');
+});
+
+test('parseCsv descarta cabeçalho repetido no meio do arquivo', () => {
+  const csv = [
+    'CNPJ;Razão Social;Cidade',
+    '11222333000181;A LTDA;Campinas',
+    'CNPJ;Razão Social;Cidade',
+    '222222333000110;B LTDA;Sorocaba',
+  ].join('\n');
+  const { records } = parseCsv(csv);
+  assert.strictEqual(records.length, 2);
+  assert.strictEqual(records[1]['Razão Social'], 'B LTDA');
+});
+
+test('parseCsv mantém detecção normal quando há cabeçalho de verdade', () => {
+  const { headers, records, hasHeaderRow } = parseCsv('CNPJ;Empresa;Cidade\n11222333000181;A LTDA;Campinas');
+  assert.strictEqual(hasHeaderRow, true);
+  assert.deepStrictEqual(headers, ['CNPJ', 'Empresa', 'Cidade']);
+  assert.strictEqual(records.length, 1);
+});
+
 test('parseCsv detecta delimitador ponto-e-vírgula (padrão BR) e vírgula', () => {
   assert.strictEqual(sniffDelimiter('a;b;c\n1;2;3'), ';');
   assert.strictEqual(sniffDelimiter('a,b,c\n1,2,3'), ',');

@@ -85,9 +85,63 @@ function sniffDelimiter(text) {
 }
 
 /**
- * Parser CSV completo. Retorna { headers, records, delimiter } onde records é
- * array de objetos { header: valor }. Linhas com menos/more células que o
- * cabeçalho são truncadas/preenchidas com '' (não derrubam o import).
+ * Célula "com cara de dado": e-mail, número longo (telefone/CEP/CNPJ/endereço
+ * numerado), valor monetário. Rótulos de cabeçalho raramente têm isso.
+ */
+function looksLikeDataCell(cell) {
+  const c = String(cell || '').trim();
+  if (!c) return false;
+  if (c.includes('@')) return true;
+  if (/r\$|\d{2,}[.,]\d{3}/i.test(c)) return true;
+  return (c.match(/\d/g) || []).length >= 5;
+}
+
+/**
+ * Linha de cabeçalho: quase todas as células são rótulos curtos, sem dígitos
+ * nem e-mails. Planilhas exportadas SEM cabeçalho (a 1ª linha já é dado) têm
+ * primeira linha com cara de dado — nesse caso sintetizamos coluna_N.
+ */
+function isHeaderRow(cells) {
+  const nonEmpty = cells.filter((c) => String(c).trim() !== '');
+  // Coluna única: cabeçalho se a célula não tem cara de dado ("CNPJ" vs o
+  // próprio número).
+  if (nonEmpty.length === 1) return !looksLikeDataCell(nonEmpty[0]);
+  if (nonEmpty.length < 2) return false;
+  const dataLike = nonEmpty.filter((c) => looksLikeDataCell(c)).length;
+  return dataLike / nonEmpty.length < 0.25;
+}
+
+// Vocabulário típico de rótulos de cabeçalho em planilhas BR (normalizados).
+// Serve para detectar blocos de cabeçalho colados no MEIO do arquivo.
+const HEADER_LABEL_VOCAB = new Set(
+  [
+    'cliente', 'razaosocial', 'razao', 'social', 'cidade', 'estado', 'uf', 'telefone', 'tel',
+    'celular', 'fone', 'whats', 'whatsapp', 'email', 'e-mail', 'mail', 'contato', 'cargo',
+    'funcao', 'empresa', 'bairro', 'endereco', 'cep', 'marca', 'unidade', 'fantasia',
+    'nomefantasia', 'cnpj', 'setor', 'observacoes', 'obs', 'outros', 'nome', 'site', 'numero',
+    'contatoantigo', 'novocontato', 'novoemail', 'novotel', 'segmento', 'porta', 'porte',
+  ].map((k) => k)
+);
+
+/**
+ * Linha que é um bloco de cabeçalho (≥60% de células sendo rótulos conhecidos,
+ * ≥4 células preenchidas). Planilhas montadas à mão às vezes têm o cabeçalho
+ * repetido no meio (blocos concatenados) — não é lead.
+ */
+function isEmbeddedHeaderRow(cells) {
+  const nonEmpty = cells.map((c) => String(c || '').trim()).filter(Boolean);
+  if (nonEmpty.length < 3) return false;
+  const labels = nonEmpty.filter(
+    (c) => !/\d/.test(c) && HEADER_LABEL_VOCAB.has(normalizeHeaderKey(c))
+  ).length;
+  return labels / nonEmpty.length >= 0.6;
+}
+
+/**
+ * Parser CSV completo. Detecta automaticamente se a 1ª linha é cabeçalho;
+ * sem cabeçalho, sintetiza coluna_1..N (a IA mapeia pelos VALORES). Linhas
+ * repetidas idênticas ao cabeçalho no meio do arquivo são descartadas.
+ * Retorna { headers, records, delimiter, truncated, hasHeaderRow }.
  */
 function parseCsv(text, { maxRows = MAX_IMPORT_ROWS } = {}) {
   const clean = stripBom(text);
@@ -132,9 +186,8 @@ function parseCsv(text, { maxRows = MAX_IMPORT_ROWS } = {}) {
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && clean[i + 1] === '\n') i++;
       pushRow();
-      if (rows.length > maxRows) {
-        // Teto de linhas atingido: para de ler e sinaliza truncamento (o
-        // relatório avisa o usuário quantas linhas ficaram de fora).
+      // +2 de folga: 1ª linha pode virar cabeçalho ou dado (decisão pós-parse)
+      if (rows.length > maxRows + 1) {
         truncated = true;
         break;
       }
@@ -144,19 +197,33 @@ function parseCsv(text, { maxRows = MAX_IMPORT_ROWS } = {}) {
   }
   if (sawAnyChar && (field !== '' || row.length)) pushRow();
 
-  if (!rows.length) return { headers: [], records: [], delimiter, truncated: false };
+  if (!rows.length) return { headers: [], records: [], delimiter, truncated: false, hasHeaderRow: false };
 
-  const headers = rows[0].map((h, idx) => (h.trim() ? h.trim() : `coluna_${idx + 1}`));
-  const records = [];
-  for (let r = 1; r < rows.length; r++) {
-    const cells = rows[r];
+  const hasHeaderRow = isHeaderRow(rows[0]);
+  let headers;
+  let records;
+  if (hasHeaderRow) {
+    headers = rows[0].map((h, idx) => (h.trim() ? h.trim() : `coluna_${idx + 1}`));
+    records = rows.slice(1);
+  } else {
+    headers = rows[0].map((_, idx) => `coluna_${idx + 1}`);
+    records = rows;
+  }
+  // Blocos de cabeçalho embutidos no meio do arquivo (planilhas montadas à
+  // mão, coladas em blocos) não são leads.
+  records = records.filter((r) => !isEmbeddedHeaderRow(r));
+  if (records.length > maxRows) {
+    truncated = true;
+    records = records.slice(0, maxRows);
+  }
+  const dataRecords = records.map((cells) => {
     const record = {};
     for (let cIdx = 0; cIdx < headers.length; cIdx++) {
       record[headers[cIdx]] = cells[cIdx] !== undefined ? cells[cIdx] : '';
     }
-    records.push(record);
-  }
-  return { headers, records, delimiter, truncated };
+    return record;
+  });
+  return { headers, records: dataRecords, delimiter, truncated, hasHeaderRow };
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +551,7 @@ Regras:
 - Julgue pelo CONTEÚDO dos exemplos, não só pelo nome da coluna.
 - Cada campo-alvo recebe no máximo UMA coluna; uma coluna não serve a dois campos.
 - Colunas de PESSOA de contato ("Contato", "Nome do Contato", "Responsável", "Sócio", "Vendedor", "Cargo", "Função") NÃO mapeiam para NENHUM campo — são pessoas físicas, não atributos da empresa. Em particular NUNCA as use como "industry"/setor ou "companyName"/razão social.
+- Colunas de MARCA/modelo de máquina ou equipamento (ex.: TRUMPF, AMADA, MAZAK) NÃO têm campo correspondente — ignore.
 - "cnpj" é opcional: muitas planilhas de contatos não o têm, e tudo bem. Quando existir, procure CNPJ (14 dígitos, com ou sem máscara). NUNCA mapeie CPF, RG ou outro documento como CNPJ.
 - Colunas que não correspondem a nenhum campo-alvo ficam de fora.
 - Datas de abertura, endereço completo, observações: NÃO têm campo correspondente — ignore.
@@ -501,7 +569,7 @@ const VERIFY_SYSTEM_PROMPT = `Você audita o mapeamento de colunas de uma planil
 
 Para cada item, julgue se os VALORES de exemplo da coluna são plausíveis para o campo:
 - companyName: nomes de empresas (ex.: "Dedini S.A."). tradeName: nomes comerciais/fantasia.
-- industry: ramos de atividade/segmentos (ex.: "Metalurgia", "Varejo"). NÃO são setores: nomes de pessoas, cargos, cidades.
+- industry: ramos de atividade/segmentos (ex.: "Metalurgia", "Varejo"). NÃO são setores: nomes de pessoas, cargos, cidades, marcas de máquinas/equipamentos (TRUMPF, AMADA...).
 - city: cidades. state: UFs/estados. email: e-mails. phone: telefones. employees: quantidades. revenueEstimate: valores financeiros. domain: domínios/sites.
 
 Julgue PRINCIPALMENTE pelos valores; o nome da coluna é secundário. Seja conservador: responda false apenas quando os valores claramente NÃO correspondem ao campo (valores vazios/ilegíveis contam como correspondência razoável — true).
