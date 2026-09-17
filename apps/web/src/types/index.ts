@@ -541,7 +541,11 @@ export interface LeadAddressesResponse {
 export interface LeadEnrichmentEntity {
   entityKey: string;
   entityType: string;
-  capabilities: Array<Record<string, unknown> & { capability?: string; tier?: string }>;
+  /** mapa capability → entrada do summary v2: { entityKey, status, provider, taskId, data, facts } */
+  capabilities: Record<
+    string,
+    { status?: string; provider?: string | null } & Record<string, unknown>
+  >;
 }
 
 // --- Grafo de enriquecimento (v_company_graph) -------------------------------

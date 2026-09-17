@@ -36,14 +36,22 @@ export function LeadEvidence({
             Capabilities executadas pelo motor v2
           </h4>
           <div className="flex flex-wrap gap-2">
-            {entities.map((entity) => (
-              <span key={entity.entityKey} className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-secondary/40 px-3 py-1 text-[11px]">
-                <span className="font-mono font-semibold text-foreground">{entity.entityKey}</span>
-                <span className="text-muted-foreground">
-                  {entity.capabilities.map((c) => c.capability || '?').join(', ')}
+            {entities.map((entity) => {
+              const capabilityEntries = Object.entries(entity.capabilities || {});
+              return (
+                <span key={entity.entityKey} className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-secondary/40 px-3 py-1 text-[11px]">
+                  <span className="font-mono font-semibold text-foreground">{entity.entityKey}</span>
+                  <span className="text-muted-foreground">
+                    {capabilityEntries
+                      .map(([name, entry]) => {
+                        const status = typeof entry?.status === 'string' ? entry.status.toLowerCase() : null;
+                        return status ? `${name} (${status})` : name;
+                      })
+                      .join(', ') || '—'}
+                  </span>
                 </span>
-              </span>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
