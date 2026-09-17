@@ -324,3 +324,11 @@ Task: "workers/search.js + searxng.js"    (T019)
 - [x] T066 [LOW] Alimentar `b2base_enrichment_provider_state` a partir do registry: runtime consulta `registry.getState(provider)` após acquire/recordOutcome e chama `metrics.setEnrichmentProviderState`, com teste (per US8, FR-035) (partial)
 - [x] T067 [LOW] Propagar `ctx.signal` ao fetch do `identity.cnpj.basic` em `workers/identity.js` (hoje `signal: undefined` — timeout da task não aborta o HTTP em voo) (per workers/identity.js) (partial)
 - [ ] T068 [LOW] Validação quantitativa de carga: `scripts/load-enrichment.js` com e sem `PROVIDER_FORCE_ERROR` medindo impacto no throughput (SC-003 ≤5%) e ensaio da meta de escala (SC-002 — marco próprio pós-M4, research R8) (per SC-002, SC-003) (partial)
+
+---
+
+## Phase 13: Convergence (2ª rodada)
+
+**Purpose**: Achado residual pós-implementação da Phase 12 ($speckit-converge, 2026-09-16). T062/T068 permanecem abertas como rastreio de validação em staging — não duplicadas aqui.
+
+- [ ] T069 [LOW] Rotular a task com o provider REAL escolhido: mover o campo `provider` do upsert de RUNNING em `workers/sdk/runtime.js` para depois do loop de failover (usar o `provider` adquirido, não `task.provider || def.providers[0]`), com teste de failover asserindo o provider correto na row (per US8/FR-035) (partial)
