@@ -35,6 +35,7 @@ async function main() {
   let dispatched = 0;
   let failed = 0;
 
+  const jobs = [];
   const workers = Array.from({ length: Math.min(10, prospects) }, async (_, slot) => {
     for (let i = slot; i < prospects; i += Math.min(10, prospects)) {
       const companyName = `${companyNames[i % companyNames.length]} ${String(i).padStart(5, '0')} LTDA`;
@@ -48,7 +49,8 @@ async function main() {
             enrichmentSummary: {},
           },
         });
-        await manager.dispatchForProspect(prospect, { trigger: 'api' });
+        const jobId = await manager.dispatchForProspect(prospect, { trigger: 'api' });
+        jobs.push(jobId);
         dispatched += 1;
       } catch (err) {
         failed += 1;
@@ -58,17 +60,44 @@ async function main() {
   });
   await Promise.all(workers);
 
+  const dispatchMs = Date.now() - started;
+  console.log(`[load] ${dispatched} jobs criados em ${dispatchMs}ms — aguardando drenagem...`);
+
+  // Consumidor de resultados (como no server real).
+  await manager.startResultConsumer();
+
+  // Aguarda todos os jobs alcançarem estado terminal (timeout 10 min).
+  const deadline = Date.now() + 10 * 60 * 1000;
+  let terminal = 0;
+  let drainedMs = null;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    terminal = 0;
+    for (const jobId of jobs) {
+      const job = await prisma.enrichmentJob.findUnique({ where: { id: jobId } });
+      if (job && ['COMPLETED', 'PARTIAL', 'FAILED'].includes(job.status)) terminal += 1;
+    }
+    if (terminal === jobs.length) {
+      drainedMs = Date.now() - started;
+      break;
+    }
+    process.stdout.write(`[load] drenados ${terminal}/${jobs.length}…\r`);
+  }
+
   const elapsedMs = Date.now() - started;
-  console.log(JSON.stringify({
-    ok: true,
+  const result = {
+    ok: drainedMs != null,
     prospects,
     dispatched,
     failed,
-    elapsedMs,
-    dispatchPerSec: Math.round((dispatched / Math.max(elapsedMs, 1)) * 1000),
-  }, null, 2));
-  console.log('[load] acompanhe a drenagem da fila em: b2base_enrichment_tasks_pending (porta 9090)');
+    jobsDrained: terminal,
+    dispatchMs,
+    drainMs: drainedMs,
+    tasksPerSec: drainedMs ? Math.round((terminal * 3 / (drainedMs / 1000)) * 10) / 10 : null,
+  };
+  console.log('\n' + JSON.stringify(result, null, 2));
   await prisma.$disconnect();
+  process.exit(drainedMs != null ? 0 : 1);
 }
 
 main().catch((err) => {
