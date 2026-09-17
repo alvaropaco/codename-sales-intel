@@ -82,6 +82,9 @@ export interface Prospect {
   enrichmentVersion?: number | null;
   enrichmentSummary?: EnrichmentSummary | null;
   enrichedAt?: string | null;
+  /** score de risco de crédito (0-100) e faixa — análise de risco */
+  creditRiskScore?: number | null;
+  creditRiskLevel?: 'low' | 'medium' | 'high' | string | null;
   createdAt: string;
   updatedAt: string;
   /** true quando o plano trial mascarou os campos sensíveis na resposta da API */
@@ -499,6 +502,46 @@ export interface WhatsAppConnectResult {
   accountId: string;
   status: string;
   qr?: { qrCode?: string | null; raw?: string | null } | null;
+}
+
+// --- Perfil completo do lead enriquecido (feature 002) -----------------------
+
+/** Estado independente de cada seção da tela de detalhe (FR-015). */
+export type LeadSectionState = 'idle' | 'loading' | 'ready' | 'error' | 'empty';
+
+/** Precisão da geolocalização de um endereço (data-model.md). */
+export type LeadAddressPrecision = 'street' | 'zip' | 'city';
+
+export interface LeadAddressLocation {
+  lat: number;
+  lng: number;
+  precision: LeadAddressPrecision;
+}
+
+export type LeadAddressKind = 'headquarters' | 'captured' | 'city';
+export type LeadAddressSource = 'cnpj_raw' | 'graph_fact' | 'prospect_summary';
+
+/** Endereço do lead deduplicado, com geolocalização opcional (contracts/api.md). */
+export interface LeadAddress {
+  id: string;
+  fullText: string;
+  kind: LeadAddressKind;
+  source: LeadAddressSource;
+  confidence?: number | null;
+  location: LeadAddressLocation | null;
+}
+
+export interface LeadAddressesResponse {
+  prospectId: string;
+  dataRestricted: boolean;
+  addresses: LeadAddress[];
+}
+
+/** Fatos agregados do motor v2 por entidade (GET /api/prospects/:id/enrichment). */
+export interface LeadEnrichmentEntity {
+  entityKey: string;
+  entityType: string;
+  capabilities: Array<Record<string, unknown> & { capability?: string; tier?: string }>;
 }
 
 // --- Grafo de enriquecimento (v_company_graph) -------------------------------

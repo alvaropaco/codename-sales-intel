@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { ExecutiveDashboardView } from '@/components/views/ExecutiveDashboardView';
 import { ProspectsDirectoryView } from '@/components/views/ProspectsDirectoryView';
@@ -12,7 +12,11 @@ import { WhatsAppView } from '@/components/views/WhatsAppView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
 import { ProspectModal } from '@/components/modals/ProspectModal';
-import { ProspectDetailDrawer } from '@/components/modals/ProspectDetailDrawer';
+// Lazy: a tela de detalhe (com @xyflow/react e maplibre-gl) sai do bundle
+// principal — abre apenas quando o operador clica num lead (SC-001).
+const LeadDetailScreen = lazy(() =>
+  import('@/components/lead/LeadDetailScreen').then((m) => ({ default: m.LeadDetailScreen }))
+);
 import { ActiveTab, Prospect, PipelineAnalytics, OperationalAnalytics, CommercialProfile } from '@/types';
 import { fetchProspects, fetchPipelineAnalytics, fetchOperationalAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
 import { createSession, getSession, logoutSession, type SessionUser } from '@/services/auth';
@@ -43,6 +47,12 @@ function tabFromPath(path: string): ActiveTab {
   const first = path.split('/')[1] || '';
   const key = first ? `/${first}` : '/';
   return TAB_FROM_PATH[key] || 'dashboard';
+}
+
+// Tela dedicada de detalhe do lead (feature 002): /leads/:id
+function leadIdFromPath(path: string): string | null {
+  const match = path.match(/^\/leads\/([\w-]+)\/?$/);
+  return match ? match[1] : null;
 }
 
 export function App() {
@@ -77,10 +87,54 @@ export function App() {
   });
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
   const [commercialProfile, setCommercialProfile] = useState<CommercialProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Tela dedicada de detalhe do lead: o id vem da URL (deep link /leads/:id).
+  const [leadDetailId, setLeadDetailId] = useState<string | null>(() => leadIdFromPath(window.location.pathname));
+  // true quando a entrada na tela foi via pushState — o botão Voltar usa history.back()
+  const pushedDetailRef = useRef(false);
+
+  const openLeadDetail = (id: string) => {
+    pushedDetailRef.current = true;
+    window.history.pushState(null, '', `/leads/${id}`);
+    setLeadDetailId(id);
+  };
+
+  const closeLeadDetail = () => {
+    if (pushedDetailRef.current) {
+      window.history.back(); // popstate limpa o estado
+      return;
+    }
+    // deep link direto (sem histórico interno): volta para a lista de leads
+    pushedDetailRef.current = false;
+    window.history.replaceState(null, '', '/prospects');
+    setActiveTab('prospects');
+    setLeadDetailId(null);
+  };
+
+  // Navegação do browser (Voltar/Avançar) sincroniza a tela de detalhe
+  useEffect(() => {
+    const onPopState = () => {
+      const id = leadIdFromPath(window.location.pathname);
+      pushedDetailRef.current = false;
+      setLeadDetailId(id);
+      if (!id) setActiveTab(tabFromPath(window.location.pathname));
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Sai da tela de detalhe navegando para uma tab (sidebar ou atalhos)
+  const navigateToTab = (tab: ActiveTab) => {
+    if (leadDetailId) {
+      pushedDetailRef.current = false;
+      window.history.replaceState(null, '', `/${tab}`);
+      setLeadDetailId(null);
+    }
+    setActiveTab(tab);
+  };
 
   const [session, setSession] = useState<SessionUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -139,7 +193,9 @@ export function App() {
     canonical: '/',
   };
 
-  useSeo(session ? VIEW_SEO[activeTab] : LANDING_SEO);
+  // Enquanto a tela de detalhe do lead está ativa, o SEO dela é quem manda —
+  // o App fica em silêncio (undefined) para não sobrescrever o título do lead.
+  useSeo(!session ? LANDING_SEO : leadDetailId ? undefined : VIEW_SEO[activeTab]);
 
   const loadData = async () => {
     try {
@@ -284,74 +340,86 @@ export function App() {
   return (
     <Layout
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      setActiveTab={navigateToTab}
       isDark={isDark}
       setIsDark={setIsDark}
       totalProspectsCount={prospects.length}
       searchQuery={searchQuery}
       setSearchQuery={setSearchQuery}
-      onOpenCreateModal={() => setActiveTab('prospects')}
-      onOpenQualifyModal={() => setActiveTab('risk')}
+      onOpenCreateModal={() => navigateToTab('prospects')}
+      onOpenQualifyModal={() => navigateToTab('risk')}
       userName={session.name || session.phone || session.email}
       userEmail={session.phone || session.email}
       onLogout={handleLogout}
     >
-      {activeTab === 'dashboard' && (
-        <ExecutiveDashboardView
-          prospects={prospects}
-          analytics={analytics}
-          operational={operational}
-          onSelectProspect={(p) => setSelectedProspect(p)}
-          onNavigateToTab={(tab) => setActiveTab(tab)}
-        />
+      {/* As views PERMANECEM MONTADAS (ocultas via CSS) enquanto a tela de
+          detalhe está ativa — voltar preserva filtros e scroll das listas
+          (FR-003/US1-AC3). */}
+      <div className={leadDetailId ? 'hidden' : 'contents'}>
+        {activeTab === 'dashboard' && (
+          <ExecutiveDashboardView
+            prospects={prospects}
+            analytics={analytics}
+            operational={operational}
+            onSelectProspect={(p) => openLeadDetail(p.id)}
+            onNavigateToTab={navigateToTab}
+          />
+        )}
+
+        {activeTab === 'prospects' && (
+          <ProspectsDirectoryView
+            prospects={prospects}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            onSelectProspect={(p) => openLeadDetail(p.id)}
+            onDeleteProspect={handleDeleteProspect}
+            onRefresh={loadData}
+            commercialProfile={commercialProfile}
+            onOpenSettings={() => navigateToTab('settings')}
+          />
+        )}
+
+        {activeTab === 'pipeline' && (
+          <PipelineKanbanView
+            prospects={prospects}
+            onSelectProspect={(p) => openLeadDetail(p.id)}
+            onRefresh={loadData}
+          />
+        )}
+
+        {activeTab === 'risk' && <CreditRiskView />}
+
+        {activeTab === 'workflows' && <WorkflowsView />}
+
+        {activeTab === 'enrichment' && <CnpjEnrichmentView />}
+
+        {activeTab === 'outreach' && <OutreachView prospects={prospects} />}
+
+        {activeTab === 'whatsapp' && <WhatsAppView prospects={prospects} />}
+
+        {activeTab === 'history' && <DispatchHistoryView />}
+
+        {activeTab === 'settings' && <SettingsView profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />}
+      </div>
+
+      {/* Tela dedicada de detalhe do lead sobrepõe as views quando ativa */}
+      {leadDetailId && (
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-24 text-sm font-semibold text-muted-foreground">
+              <span className="animate-pulse">Abrindo perfil do lead…</span>
+            </div>
+          }
+        >
+          <LeadDetailScreen leadId={leadDetailId} onBack={closeLeadDetail} onNavigateToTab={navigateToTab} />
+        </Suspense>
       )}
 
-      {activeTab === 'prospects' && (
-        <ProspectsDirectoryView
-          prospects={prospects}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          onSelectProspect={(p) => setSelectedProspect(p)}
-          onDeleteProspect={handleDeleteProspect}
-          onRefresh={loadData}
-          commercialProfile={commercialProfile}
-          onOpenSettings={() => setActiveTab('settings')}
-        />
-      )}
-
-      {activeTab === 'pipeline' && (
-        <PipelineKanbanView
-          prospects={prospects}
-          onSelectProspect={(p) => setSelectedProspect(p)}
-          onRefresh={loadData}
-        />
-      )}
-
-      {activeTab === 'risk' && <CreditRiskView />}
-
-      {activeTab === 'workflows' && <WorkflowsView />}
-
-      {activeTab === 'enrichment' && <CnpjEnrichmentView />}
-
-      {activeTab === 'outreach' && <OutreachView prospects={prospects} />}
-
-      {activeTab === 'whatsapp' && <WhatsAppView prospects={prospects} />}
-
-      {activeTab === 'history' && <DispatchHistoryView />}
-
-      {activeTab === 'settings' && <SettingsView profile={commercialProfile} onSave={handleSaveCommercialProfile} isSaving={isSavingProfile} />}
-
-      {/* Modals & Drawers */}
+      {/* Modals */}
       <ProspectModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onSuccess={loadData}
-      />
-
-      <ProspectDetailDrawer
-        prospect={selectedProspect}
-        onClose={() => setSelectedProspect(null)}
-        onDelete={handleDeleteProspect}
       />
 
       {profileIncomplete && (

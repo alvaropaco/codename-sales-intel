@@ -14,9 +14,15 @@ const SITE_URL = 'https://b2base.net';
  * canonical and Open Graph tags in sync with the active view. Because the
  * app is a client-side SPA, this complements the static head in index.html
  * (which covers the public landing page and no-JS/crawler fallback).
+ *
+ * Aceita `undefined` para NÃO escrever nada nesta renderização — usado pelo
+ * App quando uma tela mais específica (ex.: detalhe do lead) é dona do SEO.
  */
-export function useSeo({ title, description, canonical }: SeoOptions): void {
+export function useSeo(options: SeoOptions | undefined): void {
+  const { title, description, canonical } = options || {};
   useEffect(() => {
+    if (!title || !description) return undefined;
+
     const BRAND = 'B2Base';
     // Avoid "... | B2Base | B2Base" when the title already carries the brand.
     const pageTitle = title.includes(BRAND) ? title : `${title} | ${BRAND}`;

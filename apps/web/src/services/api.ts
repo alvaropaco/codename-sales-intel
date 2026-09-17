@@ -13,6 +13,8 @@ import {
   DiscoveryPage,
   PlanInfo,
   CompanyGraph,
+  LeadAddressesResponse,
+  LeadEnrichmentEntity,
   EmailAccount,
   OutreachCampaign,
   OutreachContactSummary,
@@ -42,6 +44,54 @@ export async function fetchProspects(): Promise<Prospect[]> {
     console.error('API fetchProspects error:', error);
     return [];
   }
+}
+
+/** Busca um prospect por id (deep link da tela de detalhe). 404 → null. */
+export async function fetchProspect(id: string): Promise<Prospect | null> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}`);
+  if (res.status === 404) return null;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar o lead');
+  }
+  return json.data;
+}
+
+/** Fatos agregados do motor v2 por entidade (capabilities já filtradas por plano). */
+export async function fetchProspectEnrichmentEntities(
+  id: string
+): Promise<LeadEnrichmentEntity[]> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}/enrichment`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar fatos de enriquecimento');
+  }
+  return json.data?.entities || [];
+}
+
+/** Dispara/reprocessa o enriquecimento do lead (motor roteado por plano). */
+export async function enrichProspect(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}/enrich`, {
+    method: 'POST',
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao disparar enriquecimento');
+  }
+}
+
+/** Endereços do lead deduplicados e geocodificados (feature 002). */
+export async function fetchLeadAddresses(id: string): Promise<LeadAddressesResponse> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}/addresses`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar endereços do lead');
+  }
+  return {
+    prospectId: json.prospectId,
+    dataRestricted: Boolean(json.dataRestricted),
+    addresses: json.addresses || [],
+  };
 }
 
 // ── Planos de assinatura (trial | premium) ──────────────────────────────────
