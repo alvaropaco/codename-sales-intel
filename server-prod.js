@@ -56,6 +56,7 @@ const natsEnrichment = require('./nats-enrichment');
 const csvImport = require('./csv-import');
 const leadEnrichment = require('./lead-enrichment');
 const enrichmentGraph = require('./enrichment-graph');
+const geocoding = require('./geocoding');
 const firebaseAuth = require('./firebase-auth');
 const adminAuth = require('./admin');
 
@@ -1235,6 +1236,46 @@ app.get('/api/prospects/:id/enrichment', async (req, res) => {
     res.json({ success: true, data: masked });
   } catch (error) {
     const status = error && error.status ? error.status : 500;
+    res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/prospects/:id/addresses — endereços do lead deduplicados e
+// geocodificados (feature 002: Perfil Completo do Lead Enriquecido). Escopo
+// por organização (404 cross-tenant); masking por plano feito no
+// geocoding.collectLeadAddresses (trial: só resumo cidade/UF).
+app.get('/api/prospects/:id/addresses', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const prospect = await prisma.prospect.findFirst({ where: { id: req.params.id, orgId } });
+    if (!prospect) return res.status(404).json({ success: false, error: 'Prospect not found' });
+    const plan = await getOrgPlan(orgId);
+
+    // Endereços capturados no grafo (nós ADDRESS) — premium apenas; falha da
+    // fonte do grafo degrada sem quebrar a resposta.
+    let graphAddressLabels = [];
+    if (plan === 'premium' && prospect.cnpj && enrichmentGraph.isConfigured()) {
+      try {
+        const graph = await enrichmentGraph.fetchCompanyGraph(prospect.cnpj);
+        graphAddressLabels = (graph.data?.nodes || [])
+          .filter((n) => n && n.type === 'ADDRESS' && n.label)
+          .map((n) => n.label);
+      } catch (err) {
+        console.error('[addresses] grafo indisponível para endereços capturados:', err.message);
+      }
+    }
+
+    const body = await geocoding.collectLeadAddresses({
+      prospect,
+      plan,
+      prisma,
+      fetchImpl: fetch,
+      graphAddressLabels,
+    });
+    res.json({ success: true, ...body });
+  } catch (error) {
+    const status = error && error.status ? error.status : 500;
+    console.error('[addresses] erro ao montar endereços do lead:', error.message);
     res.status(status).json({ success: false, error: error.message });
   }
 });

@@ -763,3 +763,16 @@ model RawRecord {
 
   @@index([orgId, capability, createdAt])
 }
+
+// Cache de geocodificação de endereços de leads (feature 002). Compartilhado
+// entre organizações: endereço não é dado de tenant — o masking por plano
+// acontece na leitura (geocoding.js: trial recebe só o resumo cidade/UF).
+model GeocodeCache {
+  id            String   @id @default(cuid())
+  normalizedKey String   @unique
+  lat           Float
+  lng           Float
+  precision     String // street | zip | city
+  source        String // brasilapi | nominatim
+  fetchedAt     DateTime @default(now()) // base do TTL de 90 dias
+}
