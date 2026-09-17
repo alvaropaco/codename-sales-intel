@@ -125,6 +125,28 @@ function createWorkerRuntime({
     return parseInt(process.env.PROVIDER_FORCE_LATENCY_MS || '0', 10) || 0;
   }
 
+  /** Publica enrichment.task.dlq.v1 (contrato §6) — melhor esforço. */
+  async function publishDlq(task, reason, attempts, lastErrorMessage) {
+    try {
+      if (!js) return;
+      const event = {
+        version: contracts.VERSION,
+        taskId: task.taskId,
+        jobId: task.jobId,
+        orgId: task.orgId,
+        capability: task.capability,
+        reason,
+        lastError: { type: 'INVALID_CONTRACT', message: String(lastErrorMessage || '') },
+        attempts,
+      };
+      const hdr = require('../../nats-stream').headers();
+      for (const [k, v] of Object.entries(contracts.correlationHeaders(task))) hdr.set(k, v);
+      await js.publish(contracts.DLQ_SUBJECT, contracts.serializePayload(event), { headers: hdr, timeout: publishResultTimeoutMs });
+    } catch (err) {
+      baseLogger.warn(`runtime: falha ao publicar DLQ de ${task.taskId}: ${err.message}`);
+    }
+  }
+
   function buildFailureEvent(task, { type, message, retryable, durationMs, provider }) {
     return buildResultEvent(task, {
       status: 'FAILED',
@@ -240,9 +262,11 @@ function createWorkerRuntime({
         await msg.term();
         return { status: 'POISON' };
       }
-      return publishFailureAndAck(msg, task, {
-        type: 'INVALID_INPUT', message: validationError.message, retryable: false, durationMs: 0, persist: false,
-      });
+      // Payload com taskId mas inválido = poison com contexto (contrato §6):
+      // publica DLQ e encerra com term — nunca vai gerar result processável.
+      await publishDlq(task, 'POISON_MESSAGE', task.attempt, validationError.message);
+      await msg.term();
+      return { status: 'POISON' };
     }
 
     const def = capabilities.getCapability(task.capability);
@@ -308,24 +332,37 @@ function createWorkerRuntime({
       log.warn(`runtime: falha ao marcar RUNNING da task ${task.taskId}: ${err.message}`);
     }
 
-    // ── Proteção de provider (US4): acquire ANTES de executar. Recusa →
-    // falha transiente sem chamar o provider (nada persistido).
-    const provider = task.provider || def.providers[0];
-    const acq = await registry.acquire(provider);
-    if (!acq.ok) {
-      const typeMap = {
-        RATE_LIMIT: 'RATE_LIMIT',
-        PROVIDER_CIRCUIT_OPEN: 'PROVIDER_CIRCUIT_OPEN',
-        CONCURRENCY: 'RATE_LIMIT',
-        DISABLED: 'CAPABILITY_DISABLED',
-      };
-      const type = typeMap[acq.reason] || 'PROVIDER_UNAVAILABLE';
+    // ── Proteção de provider (US4/T065): acquire ANTES de executar, com
+    // FAILOVER pela ordem de preferência do catálogo (task.provider primeiro).
+    const candidates = task.provider
+      ? [task.provider, ...def.providers.filter((x) => x !== task.provider)]
+      : [...def.providers];
+    const typeMap = {
+      RATE_LIMIT: 'RATE_LIMIT',
+      PROVIDER_CIRCUIT_OPEN: 'PROVIDER_CIRCUIT_OPEN',
+      CONCURRENCY: 'RATE_LIMIT',
+      DISABLED: 'CAPABILITY_DISABLED',
+    };
+    let provider = null;
+    let acq = null;
+    let lastReject = null;
+    for (const candidate of candidates) {
+      const attempt = await registry.acquire(candidate);
+      if (attempt.ok) {
+        provider = candidate;
+        acq = attempt;
+        break;
+      }
+      lastReject = { provider: candidate, reason: attempt.reason, retryAfterMs: attempt.retryAfterMs };
+    }
+    if (!acq) {
+      const type = typeMap[lastReject.reason] || 'PROVIDER_UNAVAILABLE';
       return publishFailureAndAck(msg, task, {
         type,
-        message: `provider ${provider} indisponível (${acq.reason})`,
+        message: `todos os providers indisponíveis (último: ${lastReject.provider} — ${lastReject.reason})`,
         retryable: type !== 'CAPABILITY_DISABLED',
         durationMs: 0,
-        provider,
+        provider: lastReject.provider,
         persist: false,
       });
     }
@@ -382,7 +419,13 @@ function createWorkerRuntime({
 
     const status = outcome && outcome.status === 'FAILED' ? 'FAILED' : 'COMPLETED';
     await registry.recordOutcome(provider, { ok: status === 'COMPLETED', latencyMs: durationMs });
-    if (typeof deps.onMetric === 'function') deps.onMetric('task_duration', { capability: task.capability, durationMs });
+    if (typeof deps.onMetric === 'function') {
+      deps.onMetric('task_duration', { capability: task.capability, durationMs });
+      try {
+        const st = await registry.getState(provider);
+        if (st && st.state) deps.onMetric('provider_state', { provider, state: st.state });
+      } catch (_e) { /* métrica é best-effort */ }
+    }
 
     // Dado bruto → raw-store ANTES do persist (result carrega só a referência).
     let rawRecordId = null;

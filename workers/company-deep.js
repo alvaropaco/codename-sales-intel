@@ -138,6 +138,7 @@ function createCompanyDeepWorker({ prisma, js, jsm = null, deps = {} } = {}) {
       logger,
       onMetric: (event, data) => {
         if (event === 'task_duration') require('../metrics').observeEnrichmentTaskDuration(data.capability, data.durationMs / 1000);
+        if (event === 'provider_state') require('../metrics').setEnrichmentProviderState(data.provider, data.state);
       },
       ...deps,
     },

@@ -355,3 +355,135 @@ test('US6 conflito de fontes: dois results do mesmo atributo COEXISTEM sem merge
   assert.strictEqual(rows.length, 2); // coexistem
   assert.deepStrictEqual(rows.map((r) => r.data.employee_count).sort(), [350, 500]);
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase 12 — T063 (DLQ) · T065 (failover de provider) · T066 (state metric)
+// ════════════════════════════════════════════════════════════════════════════
+
+test('T063 payload inválido com taskId → DLQ publicada + term (poison)', async () => {
+  const dlqPublished = [];
+  const { runtime, trace } = makeRuntime({
+    jsOver: {
+      publish: async (subject, data) => {
+        if (subject === require('../enrichment-contracts').DLQ_SUBJECT) {
+          dlqPublished.push(require('../enrichment-contracts').parsePayload(data));
+        }
+        return { seq: 1 };
+      },
+    },
+  });
+  const msg = createFakeMessage(makeTask({ orgId: undefined }), { trace }); // campo obrigatório ausente
+  await runtime.processMessage(msg);
+  assert.strictEqual(dlqPublished.length, 1);
+  assert.strictEqual(dlqPublished[0].reason, 'POISON_MESSAGE');
+  assert.strictEqual(dlqPublished[0].taskId, 't-1');
+  assert.deepStrictEqual(trace, ['term']); // nada de result/ack para payload inválido
+});
+
+test('T063 payload totalmente ilegível → term sem DLQ (sem contexto para publicar)', async () => {
+  const dlqPublished = [];
+  const { runtime, trace } = makeRuntime({
+    jsOver: {
+      publish: async (subject, data) => {
+        if (subject === require('../enrichment-contracts').DLQ_SUBJECT) dlqPublished.push(data);
+        return { seq: 1 };
+      },
+    },
+  });
+  await runtime.processMessage({ data: Buffer.from('lixo'), ack: async () => trace.push('ack'), nak: async () => {}, term: async () => trace.push('term') });
+  assert.strictEqual(dlqPublished.length, 0);
+  assert.deepStrictEqual(trace, ['term']);
+});
+
+// Capabilities stub multi-provider para failover (T065)
+const multiProviderCaps = {
+  eligibleCapabilities: () => ['identity.domain.verify'],
+  getCapability: (name) => ({
+    capability: name, family: 'identity', tier: 'basic', enabled: true,
+    entityType: ['prospect'], timeoutMs: 500, maxAttempts: 2, priority: 1,
+    providers: ['p1', 'p2'],
+    inputSchema: { domain: 'string' },
+    validateInput: () => ({ ok: true }),
+    expand: [],
+  }),
+};
+
+test('T065 failover: provider preferido rejeitado → executa pelo próximo do catálogo', async () => {
+  registryBehavior.rejectReason = null;
+  const acqLog = [];
+  const registryStub = {
+    acquire: async (provider) => {
+      acqLog.push(provider);
+      if (provider === 'p1') return { ok: false, reason: 'RATE_LIMIT', retryAfterMs: 1000 };
+      return { ok: true, ticket: { provider, release: async () => {} } };
+    },
+    recordOutcome: async () => {},
+    getState: async (p) => ({ provider: p, state: 'HEALTHY' }),
+  };
+  let called = 0;
+  const { runtime, published } = makeRuntime({ capabilities: multiProviderCaps });
+  runtime.setRegistryForTest(registryStub);
+  runtime.registerExecutors({
+    'identity.domain.verify': async (task, ctx) => { called += 1; void ctx; return { status: 'COMPLETED', data: { ok: 1 } }; },
+  });
+  await runtime.processMessage(createFakeMessage(makeTask()));
+  assert.deepStrictEqual(acqLog, ['p1', 'p2']); // tentou o preferido, caiu para o próximo
+  assert.strictEqual(called, 1);
+  assert.strictEqual(published[0].status, 'COMPLETED');
+});
+
+test('T065 failover: todos os providers indisponíveis → FAILED com o último motivo', async () => {
+  const acqLog = [];
+  const registryStub = {
+    acquire: async (provider) => {
+      acqLog.push(provider);
+      return { ok: false, reason: 'PROVIDER_CIRCUIT_OPEN', retryAfterMs: 1000 };
+    },
+    recordOutcome: async () => {},
+    getState: async (p) => ({ provider: p, state: 'OPEN' }),
+  };
+  let called = 0;
+  const { runtime, published } = makeRuntime({ capabilities: multiProviderCaps });
+  runtime.setRegistryForTest(registryStub);
+  runtime.registerExecutors({
+    'identity.domain.verify': async () => { called += 1; return { status: 'COMPLETED', data: {} }; },
+  });
+  await runtime.processMessage(createFakeMessage(makeTask()));
+  assert.deepStrictEqual(acqLog, ['p1', 'p2']);
+  assert.strictEqual(called, 0);
+  assert.strictEqual(published[0].error.type, 'PROVIDER_CIRCUIT_OPEN');
+  assert.strictEqual(published[0].error.retryable, true);
+});
+
+test('T066 estado do provider alimenta métrica via onMetric', async () => {
+  const metricEvents = [];
+  const registryStub = {
+    acquire: async (provider) => ({ ok: true, ticket: { provider, release: async () => {} } }),
+    recordOutcome: async () => {},
+    getState: async (provider) => ({ provider, state: 'OPEN' }),
+  };
+  const { runtime } = makeRuntime({
+    executors: { 'identity.domain.verify': OK_EXECUTOR },
+  });
+  runtime.setRegistryForTest(registryStub);
+  // Injeta onMetric via deps (setPublisherForTest não cobre onMetric — recria runtime).
+  const runtime2 = createWorkerRuntime({
+    name: 'identity',
+    capabilities,
+    workerVersion: 'test',
+    deps: {
+      prisma: require('./helpers/fake-prisma').createFakePrisma(),
+      publisher: async () => {},
+      logger: { info() {}, warn() {}, error() {}, child() { return this; } },
+      onMetric: (event, data) => metricEvents.push({ event, data }),
+    },
+  });
+  runtime2.setRegistryForTest(registryStub);
+  runtime2.registerExecutors({ 'identity.domain.verify': OK_EXECUTOR });
+  await runtime2.processMessage(createFakeMessage(makeTask()));
+  const evt = metricEvents.find((e) => e.event === 'provider_state');
+  assert.ok(evt, 'esperado evento provider_state');
+  assert.strictEqual(evt.data.provider, 'dns.direct');
+  assert.strictEqual(evt.data.state, 'OPEN');
+  void runtime;
+});

@@ -89,7 +89,7 @@ const executors = {
     };
   },
 
-  async 'identity.cnpj.basic'(task) {
+  async 'identity.cnpj.basic'(task, { signal } = {}) {
     const cnpj = String(task.input.cnpj || '').replace(/\D/g, '');
     if (cnpj.length !== 14) {
       const err = new Error(`CNPJ inválido: ${cnpj}`);
@@ -98,7 +98,7 @@ const executors = {
     }
     let res;
     try {
-      res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, { signal: undefined });
+      res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, { signal });
     } catch (err) {
       const e = new Error(`BrasilAPI inacessível: ${err.message}`);
       e.code = 'NETWORK_ERROR';
@@ -161,6 +161,7 @@ function createIdentityWorker({ prisma, js, jsm = null, deps = {} } = {}) {
       logger,
       onMetric: (event, data) => {
         if (event === 'task_duration') require('../metrics').observeEnrichmentTaskDuration(data.capability, data.durationMs / 1000);
+        if (event === 'provider_state') require('../metrics').setEnrichmentProviderState(data.provider, data.state);
       },
       ...deps,
     },

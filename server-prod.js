@@ -4765,6 +4765,13 @@ async function start() {
       // resultados do manager. Falhas isoladas — nunca bloqueiam o boot.
       if (enrichmentConfig.isEngineV2Enabled()) {
         try {
+          // T061: consumidor de resultados do manager (aplica fatos aos leads).
+          enrichmentManager.startResultConsumer()
+            .catch((err) => console.error(`[enrichment] consumer do manager não iniciado: ${err.message}`));
+        } catch (err) {
+          console.error(`[enrichment] falha ao iniciar consumer do manager: ${err.message}`);
+        }
+        try {
           const { createQualificationConsumer } = require('./qualification');
           const { createLogger } = require('./logger');
           const consumer = createQualificationConsumer({

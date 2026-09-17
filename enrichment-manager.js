@@ -110,7 +110,7 @@ function createEnrichmentManager(deps = {}) {
     const tasks = await prisma.enrichmentTask.findMany({ where: { jobId, status: 'QUEUED' } });
     tasks.sort((a, b) => a.priority - b.priority || a.capability.localeCompare(b.capability));
     for (const task of tasks) {
-      const attempt = task.attempt + 1;
+      const attempt = (task.attempt || 0) + 1;
       await publishTaskMessage(task, { attempt });
       await prisma.enrichmentTask.update({ where: { id: task.id }, data: { attempt } });
     }
@@ -614,6 +614,77 @@ function createEnrichmentManager(deps = {}) {
     return job.id;
   }
 
+  // ── Consumidor durável de resultados (T061 — boot real) ────────────────────
+  // Sem isto, nada aplica os resultados publicados pelos workers em produção.
+  // ack somente após handleResult; poison (ilegível) → term; erro → nak.
+  let consumerRunning = false;
+
+  async function processDelivery(msg) {
+    let result;
+    try {
+      result = c.parsePayload(msg.data);
+    } catch (_e) {
+      await msg.term(); // payload ilegível = poison
+      return;
+    }
+    try {
+      await handleResult(result);
+      await msg.ack();
+    } catch (err) {
+      logger.error(`[enrichment-manager] erro ao aplicar resultado ${result.taskId}: ${err.message}`);
+      try { await msg.nak(); } catch (_e) { /* broker reentrega pelo ack_wait */ }
+    }
+  }
+
+  async function startResultConsumer(options = {}) {
+    const {
+      consumer = null, // injetável (testes); produção conecta sozinha
+      stream,
+      durable = 'enrichment-manager',
+      batch = 20,
+      expiresMs = 4000,
+    } = options;
+    if (consumerRunning) return;
+    consumerRunning = true;
+
+    let target = consumer;
+    if (!target) {
+      const natsStream = require('./nats-stream');
+      const nc = await natsStream.connectNats({ name: 'b2base-enrichment-manager-consumer' });
+      const jsm = await nc.jetstreamManager();
+      await natsStream.ensurePullConsumer(jsm, {
+        stream: stream || natsStream.NATS_STREAM,
+        durable,
+        filterSubject: c.RESULT_SUBJECT,
+        ackWaitMs: 30000,
+        maxDeliver: 5,
+      });
+      target = nc.jetstream().consumers.get({ stream: stream || natsStream.NATS_STREAM, durable });
+    }
+    logger.info(`[enrichment-manager] consumindo ${c.RESULT_SUBJECT} (durable=${durable})`);
+
+    (async function loop() {
+      while (consumerRunning) {
+        try {
+          const msgs = await target.fetch({ max_messages: batch, expires: expiresMs });
+          for await (const m of msgs) {
+            if (!consumerRunning) break;
+            await processDelivery(m);
+          }
+        } catch (err) {
+          if (consumerRunning && !String(err.message).match(/timeout|nothing/i)) {
+            logger.error(`[enrichment-manager] erro no loop do consumer: ${err.message}`);
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+      }
+    })();
+  }
+
+  async function stopResultConsumer() {
+    consumerRunning = false;
+  }
+
   return {
     createJob,
     planTasks,
@@ -623,6 +694,8 @@ function createEnrichmentManager(deps = {}) {
     getJobStatus,
     getProspectFacts,
     dispatchForProspect,
+    startResultConsumer,
+    stopResultConsumer,
   };
 }
 
