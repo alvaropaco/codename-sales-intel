@@ -27,7 +27,7 @@ data/
 
 # Tooling local / machine-specific
 .DS_Store
-.zcode/
+.zcode/plans/
 .serena/
 .token-savior*
 .cgcignore
