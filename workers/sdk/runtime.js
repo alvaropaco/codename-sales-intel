@@ -317,7 +317,6 @@ function createWorkerRuntime({
           entityKey: task.entityKey,
           entityType: task.entityType,
           capability: task.capability,
-          provider: task.provider || def.providers[0],
           input: task.input,
           inputHash: '',
           status: 'RUNNING',
@@ -326,7 +325,7 @@ function createWorkerRuntime({
           timeoutMs: task.timeoutMs,
           startedAt: now(),
         },
-        update: { status: 'RUNNING', startedAt: now(), attempt: task.attempt, provider: task.provider || def.providers[0] },
+        update: { status: 'RUNNING', startedAt: now(), attempt: task.attempt },
       });
     } catch (err) {
       log.warn(`runtime: falha ao marcar RUNNING da task ${task.taskId}: ${err.message}`);
@@ -365,6 +364,14 @@ function createWorkerRuntime({
         provider: lastReject.provider,
         persist: false,
       });
+    }
+    // T069: rotula a task com o provider REAL escolhido (pós-failover) — o
+    // rótulo de observabilidade precisa refletir quem executou, não quem foi
+    // preferido no planejamento. Write best-effort.
+    try {
+      await prisma.enrichmentTask.update({ where: { id: task.taskId }, data: { provider } });
+    } catch (err) {
+      log.warn(`runtime: falha ao rotular provider da task ${task.taskId}: ${err.message}`);
     }
 
     // Injeção de falha/latência por env (testes C4 do quickstart).

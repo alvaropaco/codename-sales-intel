@@ -331,4 +331,4 @@ Task: "workers/search.js + searxng.js"    (T019)
 
 **Purpose**: Achado residual pós-implementação da Phase 12 ($speckit-converge, 2026-09-16). T062/T068 permanecem abertas como rastreio de validação em staging — não duplicadas aqui.
 
-- [ ] T069 [LOW] Rotular a task com o provider REAL escolhido: mover o campo `provider` do upsert de RUNNING em `workers/sdk/runtime.js` para depois do loop de failover (usar o `provider` adquirido, não `task.provider || def.providers[0]`), com teste de failover asserindo o provider correto na row (per US8/FR-035) (partial)
+- [x] T069 [LOW] Rotular a task com o provider REAL escolhido: mover o campo `provider` do upsert de RUNNING em `workers/sdk/runtime.js` para depois do loop de failover (usar o `provider` adquirido, não `task.provider || def.providers[0]`), com teste de failover asserindo o provider correto na row (per US8/FR-035) (partial)
