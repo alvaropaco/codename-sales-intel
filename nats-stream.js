@@ -74,7 +74,7 @@ async function ensurePullConsumer(
       filter_subject: filterSubject,
       ack_policy: 'explicit',
       ack_wait: ackWaitMs * 1000 * 1000, // ms → nanoseconds
-      max_deliver,
+      max_deliver: maxDeliver,
     });
     console.log(`[nats] consumer durável criado: ${durable} (filter=${filterSubject})`);
     return true;

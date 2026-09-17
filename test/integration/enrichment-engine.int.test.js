@@ -16,6 +16,7 @@ function makeWorld() {
   // Capability única para o job completar com 1 task no cenário e2e.
   const singleCaps = {
     eligibleCapabilities: ({ plan } = {}) => ['search.news'],
+    expandRulesFor: () => [],
     getCapability: (name) => (name === 'search.news'
       ? {
         capability: 'search.news', family: 'search', tier: 'basic', enabled: true,
@@ -31,7 +32,8 @@ function makeWorld() {
 }
 
 async function fetchOne(js, durable, filterSubject, { expires = 3000 } = {}) {
-  const consumer = js.consumers.get({ durable });
+  void filterSubject;
+  const consumer = await js.consumers.get('ENRICHMENT', durable);
   const msgs = await consumer.fetch({ max_messages: 1, expires });
   for await (const m of msgs) return m;
   return null;
@@ -42,6 +44,7 @@ test('integração: stream ENRICHMENT aceita publish/consume roundtrip', { skip:
   const nc = await natsStream.connectNats({ name: 'b2base-int-test' });
   const jsm = await nc.jetstreamManager();
   await natsStream.ensureStream(jsm);
+  await jsm.streams.purge(natsStream.NATS_STREAM); // execução anterior não polui
   const js = nc.jetstream();
 
   const result = {
@@ -75,6 +78,7 @@ test('integração e2e: job → task publicada → worker executa → result apl
   const nc = await natsStream.connectNats({ name: 'b2base-int-e2e' });
   const jsm = await nc.jetstreamManager();
   await natsStream.ensureStream(jsm);
+  await jsm.streams.purge(natsStream.NATS_STREAM); // execução anterior não polui
   const js = nc.jetstream();
   const jsAdapter = {
     async publish(subject, data, opts = {}) {

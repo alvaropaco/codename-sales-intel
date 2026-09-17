@@ -91,8 +91,8 @@ function createQualificationConsumer({
       maxDeliver: 5,
     });
     const stream = natsStream.NATS_STREAM;
-    const consumer = js.consumers.get({ stream, durable: 'enrichment-qualification' });
-    const jobConsumer = js.consumers.get({ stream, durable: 'enrichment-qualification-jobs' });
+    const consumer = await js.consumers.get(stream, 'enrichment-qualification');
+    const jobConsumer = await js.consumers.get(stream, 'enrichment-qualification-jobs');
 
     (async function loop() {
       while (running) {
