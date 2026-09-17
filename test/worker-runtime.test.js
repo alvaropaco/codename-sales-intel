@@ -421,7 +421,10 @@ test('T065 failover: provider preferido rejeitado → executa pelo próximo do c
     getState: async (p) => ({ provider: p, state: 'HEALTHY' }),
   };
   let called = 0;
-  const { runtime, published } = makeRuntime({ capabilities: multiProviderCaps });
+  const rt = makeRuntime({ capabilities: multiProviderCaps });
+  const runtime = rt.runtime;
+  const runtime_deps_prisma = rt.prisma;
+  const published = rt.published;
   runtime.setRegistryForTest(registryStub);
   runtime.registerExecutors({
     'identity.domain.verify': async (task, ctx) => { called += 1; void ctx; return { status: 'COMPLETED', data: { ok: 1 } }; },
@@ -430,6 +433,24 @@ test('T065 failover: provider preferido rejeitado → executa pelo próximo do c
   assert.deepStrictEqual(acqLog, ['p1', 'p2']); // tentou o preferido, caiu para o próximo
   assert.strictEqual(called, 1);
   assert.strictEqual(published[0].status, 'COMPLETED');
+  // T069: a task fica rotulada com o provider REAL escolhido (p2), não o preferido.
+  const row = await runtime_deps_prisma.enrichmentTask.findUnique({ where: { id: 't-1' } });
+  assert.strictEqual(row.provider, 'p2');
+});
+
+test('T069 sem failover: task rotulada com o primeiro provider do catálogo', async () => {
+  const registryStub = {
+    acquire: async (provider) => ({ ok: true, ticket: { provider, release: async () => {} } }),
+    recordOutcome: async () => {},
+    getState: async (p) => ({ provider: p, state: 'HEALTHY' }),
+  };
+  const { runtime, prisma } = makeRuntime({
+    executors: { 'identity.domain.verify': OK_EXECUTOR },
+  });
+  runtime.setRegistryForTest(registryStub);
+  await runtime.processMessage(createFakeMessage(makeTask()));
+  const row = await prisma.enrichmentTask.findUnique({ where: { id: 't-1' } });
+  assert.strictEqual(row.provider, 'dns.direct');
 });
 
 test('T065 failover: todos os providers indisponíveis → FAILED com o último motivo', async () => {
