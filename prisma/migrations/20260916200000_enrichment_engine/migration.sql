@@ -39,7 +39,7 @@ CREATE TABLE "EnrichmentTask" (
     "attempt" INTEGER NOT NULL DEFAULT 0,
     "maxAttempts" INTEGER NOT NULL DEFAULT 3,
     "timeoutMs" INTEGER NOT NULL DEFAULT 30000,
-    "dependsOn" TEXT[] NOT NULL DEFAULT ARRAY()::TEXT[],
+    "dependsOn" TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
     "depth" INTEGER NOT NULL DEFAULT 0,
     "spawnedByTaskId" TEXT,
     "startedAt" TIMESTAMP(3),
