@@ -506,9 +506,8 @@ function createWorkerRuntime({
         maxDeliver: 10,
       });
     }
-    const consumer = js.consumers.get
-      ? js.consumers.get({ stream: effectiveStream, durable: effectiveDurable })
-      : js.consumers.getPullConsumerFor({ durable: effectiveDurable });
+    // API posicional (nats 2.x): get(stream, durableName) → PullConsumer
+    const consumer = await js.consumers.get(effectiveStream, effectiveDurable);
     baseLogger.info(`[worker:${name}] consumindo ${effectiveFilter} (durable=${effectiveDurable})`);
 
     (async function loop() {

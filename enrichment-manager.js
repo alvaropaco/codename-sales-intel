@@ -659,7 +659,7 @@ function createEnrichmentManager(deps = {}) {
         ackWaitMs: 30000,
         maxDeliver: 5,
       });
-      target = nc.jetstream().consumers.get({ stream: stream || natsStream.NATS_STREAM, durable });
+      target = await nc.jetstream().consumers.get(stream || natsStream.NATS_STREAM, durable);
     }
     logger.info(`[enrichment-manager] consumindo ${c.RESULT_SUBJECT} (durable=${durable})`);
 
