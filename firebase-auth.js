@@ -435,7 +435,9 @@ function createRequireAuth(prisma) {
   return async function requireAuth(req, res, next) {
     // Endpoints INTERNOS (SRE/guardião) autenticados por header interno em vez
     // de cookie de sessão — pular o guard de sessão e deixar o handler validar.
-    if (req.path.startsWith('/api/system') || req.path === '/api/system') {
+    // Nota: dentro de um middleware montado em app.use('/api', ...), req.path é
+    // RELATIVO ao mount (ex.: '/system/...'); usar req.originalUrl (path cheio).
+    if ((req.originalUrl || req.url).startsWith('/api/system')) {
       const expected = process.env.INTERNAL_RECONCILE_TOKEN;
       const provided = req.get('X-Internal-Token');
       if (expected && provided && provided === expected) {
