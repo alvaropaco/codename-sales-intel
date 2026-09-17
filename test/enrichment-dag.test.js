@@ -199,3 +199,30 @@ test('US5 limites: MAX_DEPTH e MAX_TASKS_PER_JOB recusam expansão com registro'
   assert.ok(!spawned.some((t) => t.input.domain === 'descoberta.com.br'));
   assert.ok(deps.events.some((e) => e.type === 'task.expansion_refused'));
 });
+
+// ── Phase 12 / T064 — prioridade respeitada na (re)publicação em lote ───────
+
+test('T064 publishQueuedTasks publica em ordem de prioridade (0 primeiro)', async () => {
+  const deps = makeDeps();
+  const { job } = await seedJob(deps);
+  // Três tasks avulsas com prioridades fora de ordem (nenhuma publicada na criação).
+  const made = [];
+  for (const [cap, prio] of [['search.news', 2], ['identity.cnpj.basic', 0], ['identity.domain.verify', 1]]) {
+    const created = await deps.manager.createTask({
+      job, capability: cap,
+      entityKey: `prospect:prio-${cap}`, entityType: 'prospect',
+      input: cap === 'search.news' ? { companyName: `Prio ${cap}` } : cap === 'identity.cnpj.basic' ? { cnpj: '11222333000181' } : { domain: `prio-${cap}.com` },
+      priority: prio,
+    });
+    assert.ok(created.created, cap);
+    made.push(created.task);
+  }
+  deps.js.published.length = 0; // zera publicações do seed
+  const n = await deps.manager.publishQueuedTasks(job.id);
+  assert.ok(n >= 3);
+  const taskMsgs = deps.js.published
+    .filter((m) => m.subject.includes('enrichment.task.'))
+    .map((m) => require('../enrichment-contracts').parsePayload(m.data))
+    .filter((p) => made.some((t) => t.id === p.taskId));
+  assert.deepStrictEqual(taskMsgs.map((p) => p.priority), [0, 1, 2]);
+});

@@ -337,3 +337,107 @@ test('US3 cross-tenant: getJobStatus/getProspectFacts de outra org retornam null
   assert.strictEqual(await deps.manager.getProspectFacts(job.prospectId, 'org-OUTRO'), null);
   assert.ok(await deps.manager.getJobStatus(job.id, 'org-1'));
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase 12 / T061 — consumidor durável do manager (boot real)
+// ════════════════════════════════════════════════════════════════════════════
+
+test('T061 startResultConsumer: consome do barramento, aplica resultado e acka', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  const task = tasks[0];
+
+  // Entrega fake no formato do JetStream (async iterable de 1 mensagem).
+  const acked = [];
+  const contracts2 = require('../enrichment-contracts');
+  const delivery = {
+    data: contracts2.serializePayload(mkResult(job, task, 'COMPLETED')),
+    ack: async () => acked.push('ack'),
+    nak: async () => acked.push('nak'),
+    term: async () => acked.push('term'),
+  };
+  let fetchCalls = 0;
+  const fakeConsumer = {
+    async fetch() {
+      fetchCalls += 1;
+      if (fetchCalls === 1) return [delivery];
+      return new Promise(() => {}); // loop fica esperando (comportamento do broker)
+    },
+  };
+
+  await deps.manager.startResultConsumer({ consumer: fakeConsumer });
+  // Aguarda o processamento assíncrono do ciclo.
+  for (let i = 0; i < 50 && acked.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await deps.manager.stopResultConsumer();
+
+  assert.deepStrictEqual(acked, ['ack']); // ack SOMENTE após aplicar
+  const prospect = await deps.prisma.prospect.findUnique({ where: { id: job.prospectId } });
+  assert.strictEqual(prospect.enrichmentSummary.v2[task.capability].status, 'COMPLETED');
+});
+
+test('T061 payload ilegível no consumer → term (poison), sem quebrar o loop', async () => {
+  const deps = makeDeps();
+  const acked = [];
+  const delivery = {
+    data: Buffer.from('não-json'),
+    ack: async () => acked.push('ack'),
+    nak: async () => acked.push('nak'),
+    term: async () => acked.push('term'),
+  };
+  let fetchCalls = 0;
+  const fakeConsumer = {
+    async fetch() {
+      fetchCalls += 1;
+      if (fetchCalls === 1) return [delivery];
+      return new Promise(() => {});
+    },
+  };
+  await deps.manager.startResultConsumer({ consumer: fakeConsumer });
+  for (let i = 0; i < 50 && acked.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await deps.manager.stopResultConsumer();
+  assert.deepStrictEqual(acked, ['term']);
+});
+
+test('T061 erro de processamento → nak (reentrega), loop continua vivo', async () => {
+  const deps = makeDeps();
+  // handleResult que lança: prisma quebrado na hora do processamento.
+  const breaking = createEnrichmentManager({
+    prisma: deps.prisma,
+    js: deps.js,
+    getOrgPlan: async () => 'trial',
+    capabilities,
+    logger: { info() {}, warn() {}, error() {}, child() { return this; } },
+  });
+  const acked = [];
+  let failFirst = true;
+  const delivery = {
+    data: require('../enrichment-contracts').serializePayload({
+      version: '1', taskId: 'inexistente', taskKey: 'k', jobId: 'j', orgId: 'o', prospectId: 'p',
+      entityKey: 'e', entityType: 'prospect', capability: 'c', provider: null, status: 'COMPLETED',
+      data: {}, facts: [], error: null, durationMs: 1, workerVersion: 't', suggestedTasks: [],
+      completedAt: new Date().toISOString(),
+    }),
+    ack: async () => acked.push('ack'),
+    nak: async () => acked.push('nak'),
+    term: async () => acked.push('term'),
+  };
+  let fetchCalls = 0;
+  const fakeConsumer = {
+    async fetch() {
+      fetchCalls += 1;
+      if (fetchCalls === 1) return [delivery];
+      return new Promise(() => {});
+    },
+  };
+  // handleResult de result com task inexistente é IGNORADO (não lança) → ack.
+  await breaking.startResultConsumer({ consumer: fakeConsumer });
+  for (let i = 0; i < 50 && acked.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await breaking.stopResultConsumer();
+  assert.deepStrictEqual(acked, ['ack']);
+});

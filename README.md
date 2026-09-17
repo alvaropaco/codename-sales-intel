@@ -149,3 +149,11 @@ família de worker apontando para `node workers/<família>.js` (padrão do
 `workertype-deployment.yaml` do enrichment-worker Python). Métricas em
 `:9090/metrics` (`b2base_enrichment_*`); pendência por capability serve de base
 para autoscaling futuro (KEDA/HPA — fora do escopo v1).
+
+### Limitação conhecida (prioridade)
+
+A prioridade da task (0–3) é respeitada na **ordem de planejamento e de
+publicação em lote** pelo manager. O JetStream não tem fila prioritária nativa,
+então não há preempção entre tasks já publicadas — decisão registrada no plan
+(research R7); faixas por subject (ex.: `enrichment.task.p0.>`) é a evolução
+natural caso a operação exija preempção real.
