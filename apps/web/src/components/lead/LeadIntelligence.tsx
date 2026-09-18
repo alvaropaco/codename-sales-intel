@@ -233,32 +233,52 @@ export function LeadIntelligence({
                 </p>
               )}
 
-              {/* Decomposição dos fatores (FR-007): quanto cada fator pesou */}
+              {/* Decomposição dos fatores (FR-007): contribuição de cada um
+                  para o veredito — peso × valor, renormalizado entre os
+                  fatores disponíveis (unknown não entra na conta). */}
               <div className="space-y-1 pt-1">
-                {Object.entries(recommendation.factors).map(([key, factor]) => {
-                  const width =
-                    factor.status === 'unknown' || factor.value == null
-                      ? 0
-                      : Math.min(100, Math.abs(factor.value));
-                  return (
-                    <div key={key} className="flex items-center gap-2 text-[10.5px]">
-                      <span className="w-24 shrink-0 font-semibold capitalize text-muted-foreground">
-                        {FACTOR_LABEL[key] || key}
-                      </span>
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary/50">
-                        <div
-                          className={`h-full rounded-full ${
-                            factor.status === 'used' ? 'bg-indigo-400' : 'bg-secondary'
-                          }`}
-                          style={{ width: `${width}%` }}
-                        />
-                      </div>
-                      <span className="w-14 text-right font-bold text-muted-foreground">
-                        {factor.status === 'unknown' ? '—' : `peso ${factor.weight}`}
-                      </span>
-                    </div>
+                {(() => {
+                  const factorList = Object.entries(recommendation.factors);
+                  const totalWeighted = factorList.reduce(
+                    (acc, [, f]) => (f.status !== 'unknown' && f.value != null ? acc + f.weight * f.value : acc),
+                    0
                   );
-                })}
+                  return factorList.map(([key, factor]) => {
+                    const width =
+                      factor.status === 'unknown' || factor.value == null
+                        ? 0
+                        : Math.min(100, Math.abs(factor.value));
+                    const contribution =
+                      factor.status !== 'unknown' && factor.value != null && totalWeighted > 0
+                        ? Math.round((factor.weight * factor.value) / totalWeighted * 100)
+                        : null;
+                    return (
+                      <div key={key} className="flex items-center gap-2 text-[10.5px]">
+                        <span className="w-24 shrink-0 font-semibold capitalize text-muted-foreground">
+                          {FACTOR_LABEL[key] || key}
+                        </span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary/50">
+                          <div
+                            className={`h-full rounded-full ${
+                              factor.status === 'used' ? 'bg-indigo-400' : 'bg-secondary'
+                            }`}
+                            style={{ width: `${width}%` }}
+                          />
+                        </div>
+                        <span className="w-28 shrink-0 text-right font-bold text-muted-foreground">
+                          {contribution != null ? (
+                            <>
+                              {contribution}%{' '}
+                              <span className="font-semibold text-muted-foreground/70">· peso {factor.weight}</span>
+                            </>
+                          ) : (
+                            '—'
+                          )}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           )}

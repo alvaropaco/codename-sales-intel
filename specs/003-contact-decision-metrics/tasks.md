@@ -187,3 +187,9 @@ Task: "Add fetchContactDecision to apps/web/src/services/api.ts (T010)"
 - Commits conventional em PT-BR por task ou grupo lógico (ex.: `feat(lead): computa atingibilidade e momento — 003`).
 - Nenhuma migração de schema; nenhum contrato NATS alterado (constituição II).
 - O worker Python (`scoring.py`) NÃO é tocado — substituição é de superfície (assunção da spec).
+
+---
+
+## Phase 7: Convergence
+
+- [X] T027 [P] [US2] Mostrar a contribuição efetiva de cada fator na decomposição da recomendação em `apps/web/src/components/lead/LeadIntelligence.tsx` (contribuição % = peso × valor renormalizado pelos fatores disponíveis, ao lado do rótulo atual `peso N`), de forma que o operador leia diretamente quanto cada fator pesou no veredito per FR-007 (partial)
