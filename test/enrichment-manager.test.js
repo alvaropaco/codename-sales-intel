@@ -441,3 +441,116 @@ test('T061 erro de processamento → nak (reentrega), loop continua vivo', async
   await breaking.stopResultConsumer();
   assert.deepStrictEqual(acked, ['ack']);
 });
+
+// ── Resync de tasks órfãs (worker morreu entre RUNNING e result; publish
+//    perdido no meio do lote — incidente de produção de 2026-09-17) ─────────
+
+function backdate(prisma, taskId, fields) {
+  const row = prisma.enrichmentTask.rows.find((r) => r.id === taskId);
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  for (const [k, v] of Object.entries(fields)) row[k] = v === 'old' ? old : v;
+}
+
+test('resync: task RUNNING órfã (worker morreu) é re-publicada e volta a QUEUED com attempt+1', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  const task = tasks[0];
+  const attemptBefore = task.attempt; // snapshot: fake-prisma muta a row in-place
+  await deps.prisma.enrichmentTask.update({ where: { id: task.id }, data: { status: 'RUNNING', startedAt: new Date() } });
+  backdate(deps.prisma, task.id, { startedAt: 'old' });
+
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.reclaimed, 1);
+  const updated = await deps.prisma.enrichmentTask.findUnique({ where: { id: task.id } });
+  assert.strictEqual(updated.status, 'QUEUED');
+  assert.strictEqual(updated.attempt, attemptBefore + 1);
+  assert.strictEqual(updated.lastError.type, 'ORPHANED');
+  const msgs = decoded(deps.js, 'enrichment.task.');
+  const forTask = msgs.filter((m) => m.taskId === task.id);
+  assert.strictEqual(forTask.length, 2); // publicação original (attempt 1) + resync (attempt 2)
+  assert.ok(forTask.some((m) => m.attempt === attemptBefore + 1));
+  assert.ok(forTask.every((m) => m.jobId === job.id));
+});
+
+test('resync: RUNNING órfã sem tentativas restantes vira FAILED e o job conclui', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  // Todas RUNNING órfãs; duas sem tentativas restantes, uma com.
+  for (const t of tasks) {
+    await deps.prisma.enrichmentTask.update({ where: { id: t.id }, data: { status: 'RUNNING', startedAt: new Date() } });
+    backdate(deps.prisma, t.id, { startedAt: 'old' });
+  }
+  const [recuperavel, esgotada1, esgotada2] = tasks;
+  await deps.prisma.enrichmentTask.update({ where: { id: esgotada1.id }, data: { attempt: esgotada1.maxAttempts } });
+  await deps.prisma.enrichmentTask.update({ where: { id: esgotada2.id }, data: { attempt: esgotada2.maxAttempts } });
+
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.reclaimed, 1);
+  assert.strictEqual(r.failed, 2);
+  const failedTask = await deps.prisma.enrichmentTask.findUnique({ where: { id: esgotada1.id } });
+  assert.strictEqual(failedTask.status, 'FAILED');
+  // Job não conclui: a task recuperada segue ativa (QUEUED).
+  const stillRunning = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(stillRunning.status, 'RUNNING');
+
+  // Esgota a última também → sweep finaliza o job (todas falharam → FAILED).
+  await deps.prisma.enrichmentTask.update({ where: { id: recuperavel.id }, data: { attempt: recuperavel.maxAttempts, status: 'RUNNING' } });
+  backdate(deps.prisma, recuperavel.id, { startedAt: 'old' });
+  await deps.manager.resyncStalledTasks();
+  const finalized = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(finalized.status, 'FAILED');
+  assert.ok(deps.js.published.some((m) => m.subject === contracts.JOB_COMPLETED_SUBJECT));
+});
+
+test('resync: QUEUED nunca publicada (attempt 0, velha) é publicada com attempt 1', async () => {
+  const deps = makeDeps();
+  const prospect = await seedProspect(deps.prisma);
+  const { job } = await deps.manager.createJob({ orgId: 'org-1', prospectId: prospect.id, trigger: 'manual' });
+  const spawned = await deps.manager.createTask({
+    job, capability: 'search.news', entityKey: `company:subsidiaria`, entityType: 'company',
+    input: { companyName: 'Marispan Ltda' },
+  });
+  assert.ok(spawned.created);
+  // Simula publish perdido: criada há 1h, attempt 0 (nunca publicada).
+  backdate(deps.prisma, spawned.task.id, { updatedAt: 'old' });
+
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.reclaimed, 1);
+  const updated = await deps.prisma.enrichmentTask.findUnique({ where: { id: spawned.task.id } });
+  assert.strictEqual(updated.status, 'QUEUED');
+  assert.strictEqual(updated.attempt, 1);
+  assert.ok(decoded(deps.js, 'enrichment.task.search.news').some((m) => m.taskId === spawned.task.id));
+});
+
+test('resync: tasks e QUEUED recentes não são tocadas (sem publicação duplicada)', async () => {
+  const deps = makeDeps();
+  const { tasks } = await seedJob(deps); // tasks QUEUED recém-publicadas
+  await deps.prisma.enrichmentTask.update({ where: { id: tasks[0].id }, data: { status: 'RUNNING', startedAt: new Date() } });
+
+  const before = deps.js.published.length;
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.reclaimed, 0);
+  assert.strictEqual(r.failed, 0);
+  assert.strictEqual(deps.js.published.length, before);
+  const running = await deps.prisma.enrichmentTask.findUnique({ where: { id: tasks[0].id } });
+  assert.strictEqual(running.status, 'RUNNING');
+});
+
+test('resync: job RUNNING com todas as tasks terminais é finalizado (result perdido)', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  for (const t of tasks) {
+    await deps.prisma.enrichmentTask.update({
+      where: { id: t.id },
+      data: { status: 'FAILED', completedAt: new Date(), lastError: { type: 'NOT_FOUND', message: 'x', attempt: 1 } },
+    });
+  }
+  // Simula o job órfão: todos terminais, mas o evento de conclusão se perdeu.
+  await deps.prisma.enrichmentJob.update({ where: { id: job.id }, data: { status: 'RUNNING', completedAt: null } });
+
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.reclaimed, 0);
+  const finalized = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(finalized.status, 'FAILED');
+  assert.ok(deps.js.published.some((m) => m.subject === contracts.JOB_COMPLETED_SUBJECT));
+});

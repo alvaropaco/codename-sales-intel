@@ -74,6 +74,13 @@ const WORKER_CONCURRENCY = () => envInt('ENRICHMENT_WORKER_CONCURRENCY', 8);
 const WORKER_FETCH_BATCH = () => envInt('ENRICHMENT_WORKER_FETCH_BATCH', 10);
 const WORKER_FETCH_EXPIRES_MS = () => envInt('ENRICHMENT_WORKER_FETCH_EXPIRES_MS', 5000);
 
+// ── Recuperação de tasks órfãs (worker morreu entre RUNNING e result, ou
+// publish falhou no meio do lote) ────────────────────────────────────────────
+// Precisa cobrir o maior backoff de retry (RETRY_DELAYS_MS) + tempo de
+// execução, para não roubar task de worker vivo.
+const STALE_TASK_MS = () => envInt('ENRICHMENT_STALE_TASK_MS', 10 * 60 * 1000);
+const RESYNC_INTERVAL_MS = () => envInt('ENRICHMENT_RESYNC_INTERVAL_MS', 60 * 1000);
+
 module.exports = {
   envList,
   envInt,
@@ -92,4 +99,6 @@ module.exports = {
   WORKER_CONCURRENCY,
   WORKER_FETCH_BATCH,
   WORKER_FETCH_EXPIRES_MS,
+  STALE_TASK_MS,
+  RESYNC_INTERVAL_MS,
 };

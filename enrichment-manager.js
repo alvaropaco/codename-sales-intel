@@ -685,12 +685,97 @@ function createEnrichmentManager(deps = {}) {
     consumerRunning = false;
   }
 
+  // ── Resincronização de tasks órfãs (recuperação de incidentes) ────────────
+  // Dois modos de estrago cobertos (ambos observados em produção):
+  //   a) worker morre entre marcar RUNNING e publicar o result (deploy/OOM)
+  //      → task RUNNING eterna, job nunca conclui;
+  //   b) js.publish falha no meio do lote (createJob/unblockDependents)
+  //      → task QUEUED nunca publicada, job nunca conclui.
+  // Publicar antes de atualizar o banco: se o processo morrer entre os dois,
+  // o sweep seguinte re-publica — inofensivo (Nats-Msg-Id dedup + handling
+  // idempotente no worker/manager). taskKey/attempt idempotem o resto.
+  async function resyncStalledTasks({ staleMs = config.STALE_TASK_MS() } = {}) {
+    const cutoff = new Date(now().getTime() - staleMs);
+    let reclaimed = 0;
+    let failed = 0;
+    const affectedJobs = new Set();
+
+    async function reclaim(task, { republishAttempt }) {
+      if ((task.attempt || 0) >= task.maxAttempts) {
+        await prisma.enrichmentTask.update({
+          where: { id: task.id },
+          data: {
+            status: 'FAILED',
+            completedAt: now(),
+            lastError: { type: 'ORPHANED', message: 'sem resultado após esgotar tentativas; recuperada pelo resync', attempt: task.attempt },
+          },
+        });
+        failed += 1;
+      } else {
+        await publishTaskMessage(task, { attempt: republishAttempt });
+        await prisma.enrichmentTask.update({
+          where: { id: task.id },
+          data: {
+            status: 'QUEUED',
+            attempt: republishAttempt,
+            ...(task.status === 'RUNNING'
+              ? { lastError: { type: 'ORPHANED', message: 'worker morreu antes de publicar o resultado; task recuperada', attempt: task.attempt } }
+              : {}),
+          },
+        });
+        reclaimed += 1;
+      }
+      affectedJobs.add(task.jobId);
+      onEvent('task.reclaimed', { capability: task.capability });
+    }
+
+    // a) RUNNING órfãs (worker sumiu) + RETRY/TIMEOUT presos (publish do
+    //    retry falhou antes do segundo update em applyFailure).
+    const staleActive = [
+      ...(await prisma.enrichmentTask.findMany({ where: { status: 'RUNNING', startedAt: { lt: cutoff } } })),
+      ...(await prisma.enrichmentTask.findMany({ where: { status: 'RETRY', updatedAt: { lt: cutoff } } })),
+      ...(await prisma.enrichmentTask.findMany({ where: { status: 'TIMEOUT', updatedAt: { lt: cutoff } } })),
+    ];
+    for (const task of staleActive) {
+      try {
+        await reclaim(task, { republishAttempt: (task.attempt || 0) + 1 });
+      } catch (err) {
+        logger.warn(`[enrichment-manager] resync: falha ao recuperar task ${task.id}: ${err.message}`);
+      }
+    }
+
+    // b) QUEUED publicada e perdida (attempt>0, sem result) ou nunca
+    //    publicada (attempt=0 — publish falhou logo após a criação).
+    const staleQueued = await prisma.enrichmentTask.findMany({ where: { status: 'QUEUED', updatedAt: { lt: cutoff } } });
+    for (const task of staleQueued) {
+      try {
+        await reclaim(task, { republishAttempt: (task.attempt || 0) + 1 });
+      } catch (err) {
+        logger.warn(`[enrichment-manager] resync: falha ao re-publicar task ${task.id}: ${err.message}`);
+      }
+    }
+
+    // Reavalia conclusão dos jobs afetados e de qualquer job RUNNING sem
+    // task ativa (último result perdido → job sem ninguém para concluí-lo).
+    const runningJobs = await prisma.enrichmentJob.findMany({ where: { status: 'RUNNING' } });
+    for (const job of runningJobs) {
+      try {
+        await maybeFinalizeJob(job.id);
+      } catch (err) {
+        logger.warn(`[enrichment-manager] resync: falha ao reavaliar job ${job.id}: ${err.message}`);
+      }
+    }
+
+    return { reclaimed, failed, jobsReevaluated: runningJobs.length, affectedJobs: [...affectedJobs] };
+  }
+
   return {
     createJob,
     planTasks,
     createTask,
     publishQueuedTasks,
     handleResult,
+    resyncStalledTasks,
     getJobStatus,
     getProspectFacts,
     dispatchForProspect,
@@ -746,8 +831,25 @@ function getManager({ prisma } = {}) {
     });
     scheduleRawPrune(prisma, config);
     schedulePendingGauge(prisma);
+    scheduleResync(prisma, config);
   }
   return _default;
+}
+
+/** Sweep periódico de tasks órfãs (worker morto / publish perdido) — resync. */
+let _resyncScheduled = false;
+function scheduleResync(prisma, config) {
+  if (_resyncScheduled || !prisma) return;
+  _resyncScheduled = true;
+  const run = () => _default.resyncStalledTasks()
+    .then((r) => {
+      if (r.reclaimed || r.failed) {
+        console.log(`[enrichment] resync: ${r.reclaimed} tasks re-publicadas, ${r.failed} encerradas (${r.affectedJobs.length} jobs afetados)`);
+      }
+    })
+    .catch((err) => console.error(`[enrichment] resync falhou: ${err.message}`));
+  setInterval(run, config.RESYNC_INTERVAL_MS()).unref();
+  setTimeout(run, 30 * 1000).unref();
 }
 
 /** Gauge de pendência por capability (US8/FR-034) — base p/ autoscaling futuro. */
