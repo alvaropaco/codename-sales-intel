@@ -554,3 +554,96 @@ test('resync: job RUNNING com todas as tasks terminais é finalizado (result per
   assert.strictEqual(finalized.status, 'FAILED');
   assert.ok(deps.js.published.some((m) => m.subject === contracts.JOB_COMPLETED_SUBJECT));
 });
+
+// ── Retry sem pin de provider + BLOCKED órfã + watchdog de terminação ──────
+
+test('applyFailure: retry re-publica SEM pin de provider (failover reavaliado)', async () => {
+  const deps = makeDeps();
+  const { tasks } = await seedJob(deps);
+  const task = tasks[0];
+  await deps.prisma.enrichmentTask.update({ where: { id: task.id }, data: { provider: 'brasilapi.cnpj' } });
+
+  await deps.manager.handleResult({
+    version: '1', taskId: task.id, taskKey: task.taskKey, jobId: task.jobId,
+    orgId: 'org-1', prospectId: task.prospectId, entityKey: task.entityKey, entityType: task.entityType,
+    capability: task.capability, provider: 'brasilapi.cnpj', status: 'FAILED',
+    data: {}, facts: [], error: { type: 'PROVIDER_UNAVAILABLE', message: 'BrasilAPI HTTP 403', retryable: true },
+    durationMs: 100, workerVersion: 'test', suggestedTasks: [],
+    completedAt: new Date().toISOString(),
+  });
+
+  const retries = decoded(deps.js, 'enrichment.task.').filter((m) => m.taskId === task.id);
+  const retryMsg = retries[retries.length - 1];
+  assert.strictEqual(retryMsg.provider, null); // próxima tentativa reavalia o catálogo
+  const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: task.id } });
+  assert.strictEqual(row.status, 'QUEUED');
+});
+
+test('resync: BLOCKED com dependência COMPLETED é desbloqueado e publicado', async () => {
+  const deps = makeDeps();
+  const prospect = await seedProspect(deps.prisma);
+  const { job } = await deps.manager.createJob({ orgId: 'org-1', prospectId: prospect.id, trigger: 'manual' });
+  const dep = (await deps.prisma.enrichmentTask.findMany({ where: { jobId: job.id } }))[0];
+  await deps.prisma.enrichmentTask.update({ where: { id: dep.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+  await deps.prisma.enrichmentResult.create({ data: { orgId: 'org-1', taskId: dep.id, jobId: job.id, prospectId: prospect.id, entityKey: dep.entityKey, entityType: dep.entityType, capability: dep.capability, provider: null, status: 'COMPLETED', data: { domain: 'marispan.com.br' }, confidence: null, durationMs: 1, workerVersion: 't', rawRecordId: null } });
+  const blocked = await deps.manager.createTask({
+    job, capability: 'search.news', entityKey: 'company:subsidiaria', entityType: 'company',
+    input: { companyName: 'Marispan Ltda' }, dependsOn: [dep.id],
+  });
+  assert.ok(blocked.created);
+  backdate(deps.prisma, blocked.task.id, { updatedAt: 'old' });
+
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.reclaimed, 1);
+  const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: blocked.task.id } });
+  assert.strictEqual(row.status, 'QUEUED');
+  const msgs = decoded(deps.js, 'enrichment.task.search.news');
+  const republished = msgs.find((m) => m.taskId === blocked.task.id);
+  assert.ok(republished);
+  assert.strictEqual(republished.input.domain, 'marispan.com.br'); // input mesclado da dependência
+  assert.strictEqual(republished.provider, null);
+});
+
+test('resync: BLOCKED com dependência FAILED é cancelado', async () => {
+  const deps = makeDeps();
+  const prospect = await seedProspect(deps.prisma);
+  const { job } = await deps.manager.createJob({ orgId: 'org-1', prospectId: prospect.id, trigger: 'manual' });
+  const dep = (await deps.prisma.enrichmentTask.findMany({ where: { jobId: job.id } }))[0];
+  await deps.prisma.enrichmentTask.update({ where: { id: dep.id }, data: { status: 'FAILED', completedAt: new Date() } });
+  const blocked = await deps.manager.createTask({
+    job, capability: 'search.news', entityKey: 'company:subsidiaria', entityType: 'company',
+    input: { companyName: 'Marispan Ltda' }, dependsOn: [dep.id],
+  });
+  backdate(deps.prisma, blocked.task.id, { updatedAt: 'old' });
+
+  await deps.manager.resyncStalledTasks();
+  const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: blocked.task.id } });
+  assert.strictEqual(row.status, 'CANCELLED');
+  assert.strictEqual(row.lastError.type, 'DEPENDENCY_FAILED');
+});
+
+test('resync: watchdog finaliza job RUNNING sem progresso, cancelando tasks ativas', async () => {
+  const deps = makeDeps();
+  const { job, tasks } = await seedJob(deps);
+  // 1 task ativa órfã (BLOCKED sem dependências), 2 terminais — tudo sem
+  // progresso há 3h (limiar do watchdog: 1h).
+  const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await deps.prisma.enrichmentTask.update({ where: { id: tasks[0].id }, data: { status: 'BLOCKED', dependsOn: [] } });
+  backdate(deps.prisma, tasks[0].id, { updatedAt: threeHoursAgo });
+  for (const t of tasks.slice(1)) {
+    await deps.prisma.enrichmentTask.update({
+      where: { id: t.id },
+      data: { status: 'FAILED', completedAt: threeHoursAgo, lastError: { type: 'NOT_FOUND', message: 'x', attempt: 1 } },
+    });
+    backdate(deps.prisma, t.id, { updatedAt: threeHoursAgo });
+  }
+
+  const r = await deps.manager.resyncStalledTasks();
+  assert.strictEqual(r.watchdogJobs, 1);
+  const orphan = await deps.prisma.enrichmentTask.findUnique({ where: { id: tasks[0].id } });
+  assert.strictEqual(orphan.status, 'CANCELLED');
+  assert.strictEqual(orphan.lastError.type, 'WATCHDOG');
+  const finalized = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
+  assert.strictEqual(finalized.status, 'FAILED'); // concluída=0, falhadas>0
+  assert.ok(deps.js.published.some((m) => m.subject === contracts.JOB_COMPLETED_SUBJECT));
+});

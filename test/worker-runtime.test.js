@@ -508,3 +508,20 @@ test('T066 estado do provider alimenta métrica via onMetric', async () => {
   assert.strictEqual(evt.data.state, 'OPEN');
   void runtime;
 });
+
+test('US2 erro PERMANENTE lançado pelo executor (NOT_FOUND) → retryable false', async () => {
+  const { runtime, published, trace } = makeRuntime({
+    executors: {
+      'identity.domain.verify': async () => {
+        const err = new Error('CNPJ não encontrado na base oficial');
+        err.code = 'NOT_FOUND';
+        throw err;
+      },
+    },
+  });
+  runtime.setRegistryForTest(makeRegistryStub());
+  await runtime.processMessage(createFakeMessage(makeTask(), { trace }));
+  assert.strictEqual(published[0].error.type, 'NOT_FOUND');
+  assert.strictEqual(published[0].error.retryable, false); // sem desperdício de retry
+  assert.deepStrictEqual(trace, ['persist', 'publish', 'ack']);
+});

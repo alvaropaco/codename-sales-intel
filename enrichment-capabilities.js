@@ -144,7 +144,7 @@ const CAPABILITIES = {
     timeoutMs: 15000,
     maxAttempts: 2,
     priority: 3,
-    providers: ['clearbit'],
+    providers: ['google.favicon'],
     inputSchema: { domain: 'string' },
     expand: [],
   },

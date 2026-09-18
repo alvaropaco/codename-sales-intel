@@ -538,9 +538,12 @@ function createEnrichmentManager(deps = {}) {
         data: { status, lastError: { type, message: error.message || '', provider: result.provider || null, attempt: task.attempt } },
       });
       // Re-publicação com attempt+1 e notBefore (backoff crescente — FR-010).
+      // Provider SEM pin: a próxima tentativa reavalia o failover do catálogo
+      // inteiro (ex.: BrasilAPI 403 → espelho), em vez de re-escolher o
+      // provider que acabou de falhar.
       const nextAttempt = task.attempt + 1;
       const delay = config.backoffDelayMs(task.attempt);
-      await publishTaskMessage(task, { attempt: nextAttempt, notBefore: new Date(now().getTime() + delay).toISOString() });
+      await publishTaskMessage({ ...task, provider: null }, { attempt: nextAttempt, notBefore: new Date(now().getTime() + delay).toISOString() });
       await prisma.enrichmentTask.update({
         where: { id: task.id },
         data: { status: 'QUEUED', attempt: nextAttempt },
@@ -691,6 +694,10 @@ function createEnrichmentManager(deps = {}) {
   //      → task RUNNING eterna, job nunca conclui;
   //   b) js.publish falha no meio do lote (createJob/unblockDependents)
   //      → task QUEUED nunca publicada, job nunca conclui.
+  //   c) result que desbloquearia dependência BLOCKED se perdeu → task
+  //      BLOCKED eterna.
+  //   d) watchdog de terminação: job RUNNING sem progresso além do limiar é
+  //      finalizado à força — garantia de que NENHUM job trava para sempre.
   // Publicar antes de atualizar o banco: se o processo morrer entre os dois,
   // o sweep seguinte re-publica — inofensivo (Nats-Msg-Id dedup + handling
   // idempotente no worker/manager). taskKey/attempt idempotem o resto.
@@ -755,18 +762,75 @@ function createEnrichmentManager(deps = {}) {
       }
     }
 
-    // Reavalia conclusão dos jobs afetados e de qualquer job RUNNING sem
-    // task ativa (último result perdido → job sem ninguém para concluí-lo).
+    // c) BLOCKED órfãs: o result que dispararia unblockDependents se perdeu
+    //    (worker ackou sem entregar o evento). Dependência falhou → cancela;
+    //    todas concluídas → desbloqueia com input mesclado e publica.
+    const staleBlocked = await prisma.enrichmentTask.findMany({ where: { status: 'BLOCKED', updatedAt: { lt: cutoff } } });
+    for (const dependent of staleBlocked) {
+      try {
+        const depTasks = await Promise.all((dependent.dependsOn || []).map((id) => prisma.enrichmentTask.findUnique({ where: { id } })));
+        const failedDep = depTasks.find((d) => d && ['FAILED', 'CANCELLED'].includes(d.status));
+        if (failedDep) {
+          await prisma.enrichmentTask.update({
+            where: { id: dependent.id },
+            data: { status: 'CANCELLED', completedAt: now(), lastError: { type: 'DEPENDENCY_FAILED', message: `dependência ${failedDep.id} terminou em ${failedDep.status}` } },
+          });
+          affectedJobs.add(dependent.jobId);
+          continue;
+        }
+        if (depTasks.length && depTasks.every((d) => d && d.status === 'COMPLETED')) {
+          const depResults = await Promise.all(dependent.dependsOn.map((id) => prisma.enrichmentResult.findUnique({ where: { taskId: id } })));
+          const depData = Object.assign({}, ...depResults.filter(Boolean).map((r) => r.data || {}));
+          const mergedInput = { ...depData, ...(dependent.input || {}) };
+          const attempt = (dependent.attempt || 0) + 1;
+          await publishTaskMessage({ ...dependent, input: mergedInput, provider: null }, { attempt });
+          await prisma.enrichmentTask.update({ where: { id: dependent.id }, data: { status: 'QUEUED', input: mergedInput, attempt } });
+          reclaimed += 1;
+          affectedJobs.add(dependent.jobId);
+          onEvent('task.unblocked', { capability: dependent.capability });
+        }
+      } catch (err) {
+        logger.warn(`[enrichment-manager] resync: falha ao recuperar BLOCKED ${dependent.id}: ${err.message}`);
+      }
+    }
+
+    // d) Reavalia conclusão dos jobs afetados e de qualquer job RUNNING sem
+    //    task ativa (último result perdido → job sem ninguém para concluí-lo).
+    //    Watchdog de terminação: job RUNNING sem NENHUM progresso de task por
+    //    WATCHDOG_STALE_MS → cancela as tasks ativas restantes e finaliza.
+    //    Última linha de defesa — nenhum job fica preso para sempre, seja qual
+    //    for o modo de falha que o resync não antecipe.
+    const watchdogCutoff = new Date(now().getTime() - config.WATCHDOG_STALE_MS());
     const runningJobs = await prisma.enrichmentJob.findMany({ where: { status: 'RUNNING' } });
+    let watchdogJobs = 0;
     for (const job of runningJobs) {
       try {
+        if (await maybeFinalizeJob(job.id)) continue;
+        const { tasks } = await computeCounts(job.id);
+        const lastProgress = tasks.reduce(
+          (acc, t) => Math.max(acc, new Date(t.updatedAt || t.createdAt || 0).getTime()), 0
+        );
+        if (!lastProgress || lastProgress >= watchdogCutoff.getTime()) continue;
+        for (const t of tasks) {
+          if (!ACTIVE_STATUSES.includes(t.status)) continue;
+          await prisma.enrichmentTask.update({
+            where: { id: t.id },
+            data: {
+              status: 'CANCELLED',
+              completedAt: now(),
+              lastError: { type: 'WATCHDOG', message: 'job sem progresso; task cancelada pelo watchdog de terminação', attempt: t.attempt },
+            },
+          });
+        }
         await maybeFinalizeJob(job.id);
+        watchdogJobs += 1;
+        onEvent('job.watchdog', { capability: '*' });
       } catch (err) {
         logger.warn(`[enrichment-manager] resync: falha ao reavaliar job ${job.id}: ${err.message}`);
       }
     }
 
-    return { reclaimed, failed, jobsReevaluated: runningJobs.length, affectedJobs: [...affectedJobs] };
+    return { reclaimed, failed, watchdogJobs, jobsReevaluated: runningJobs.length, affectedJobs: [...affectedJobs] };
   }
 
   return {
@@ -843,8 +907,8 @@ function scheduleResync(prisma, config) {
   _resyncScheduled = true;
   const run = () => _default.resyncStalledTasks()
     .then((r) => {
-      if (r.reclaimed || r.failed) {
-        console.log(`[enrichment] resync: ${r.reclaimed} tasks re-publicadas, ${r.failed} encerradas (${r.affectedJobs.length} jobs afetados)`);
+      if (r.reclaimed || r.failed || r.watchdogJobs) {
+        console.log(`[enrichment] resync: ${r.reclaimed} tasks re-publicadas, ${r.failed} encerradas, ${r.watchdogJobs} jobs finalizados pelo watchdog (${r.affectedJobs.length} jobs afetados)`);
       }
     })
     .catch((err) => console.error(`[enrichment] resync falhou: ${err.message}`));

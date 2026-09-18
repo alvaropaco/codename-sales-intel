@@ -413,12 +413,19 @@ function createWorkerRuntime({
     await acq.ticket.release(); // liberado em TODOS os caminhos
     const aborted = controller.signal.aborted;
     if (execErr || aborted) {
-      const type = aborted ? 'TIMEOUT' : contracts.isTransientError(execErr.code) ? execErr.code : 'INTERNAL';
+      // Erro lançado pelo executor: PERMANENTE (NOT_FOUND, INVALID_INPUT…)
+      // falha sem retry; TRANSIENTE mantém o código; desconhecido → INTERNAL.
+      const permanent = !aborted && contracts.isPermanentError(execErr.code);
+      const type = aborted
+        ? 'TIMEOUT'
+        : contracts.isTransientError(execErr.code)
+          ? execErr.code
+          : permanent ? execErr.code : 'INTERNAL';
       await registry.recordOutcome(provider, { ok: false, latencyMs: durationMs });
       return publishFailureAndAck(msg, task, {
         type,
         message: aborted ? `timeout após ${task.timeoutMs}ms` : (execErr && execErr.message) || String(execErr),
-        retryable: true,
+        retryable: aborted || !permanent,
         durationMs,
         provider,
       });

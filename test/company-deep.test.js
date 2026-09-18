@@ -94,9 +94,9 @@ test('T057 ponte deepgraph: timeout do worker Python → FAILED sem retry', asyn
 
 // ── T055 — logo com probe (provider fake) ───────────────────────────────────
 
-test('T055 company.logo: URL do Clearbit com probe ok → COMPLETED com evidência', async () => {
+test('T055 company.logo: URL do provider com probe ok → COMPLETED com evidência', async () => {
   const executors = makeExecutors({
-    logoForDomain: (domain) => `https://logo.clearbit.com/${domain}`,
+    logoForDomain: (domain) => `https://www.google.com/s2/favicons?domain=${domain}&sz=128`,
     fetchImpl: async () => ({ ok: true, status: 200 }),
   });
   const out = await executors['company.logo'](
@@ -104,13 +104,14 @@ test('T055 company.logo: URL do Clearbit com probe ok → COMPLETED com evidênc
     CTX
   );
   assert.strictEqual(out.status, 'COMPLETED');
-  assert.strictEqual(out.data.logo_url, 'https://logo.clearbit.com/marispan.com.br');
+  assert.strictEqual(out.data.logo_url, 'https://www.google.com/s2/favicons?domain=marispan.com.br&sz=128');
+  assert.strictEqual(out.provider, 'google.favicon');
   assert.strictEqual(out.facts[0].attribute, 'company.logo');
 });
 
 test('T055 company.logo: probe falha → PROVIDER_UNAVAILABLE transiente', async () => {
   const executors = makeExecutors({
-    logoForDomain: (domain) => `https://logo.clearbit.com/${domain}`,
+    logoForDomain: (domain) => `https://www.google.com/s2/favicons?domain=${domain}&sz=128`,
     fetchImpl: async () => { throw new Error('dns fail'); },
   });
   const out = await executors['company.logo'](
@@ -120,4 +121,35 @@ test('T055 company.logo: probe falha → PROVIDER_UNAVAILABLE transiente', async
   assert.strictEqual(out.status, 'FAILED');
   assert.strictEqual(out.error.type, 'PROVIDER_UNAVAILABLE');
   assert.strictEqual(out.error.retryable, true);
+});
+
+// ── Resiliência PDL: erro de provider nunca é "não encontrado" ──────────────
+
+const PDL_TASK = {
+  ...TASK,
+  taskId: 't-pdl', taskKey: 'k-pdl', capability: 'company.profile.deep',
+  input: { companyName: 'Marispan Ltda' },
+};
+
+test('company.profile.deep: PDL indisponível (HTTP 500) → PROVIDER_UNAVAILABLE transiente', async () => {
+  const executors = makeExecutors({
+    pdlCompanyEnrich: async (_input, opts) => {
+      assert.ok(opts && opts.strict, 'executor deve chamar PDL em modo strict');
+      const err = new Error('pdl HTTP 500: internal');
+      err.code = 'PROVIDER_UNAVAILABLE';
+      throw err;
+    },
+  });
+  const out = await executors['company.profile.deep'](PDL_TASK, CTX);
+  assert.strictEqual(out.status, 'FAILED');
+  assert.strictEqual(out.error.type, 'PROVIDER_UNAVAILABLE');
+  assert.strictEqual(out.error.retryable, true);
+});
+
+test('company.profile.deep: PDL sem match (404 → null) → NOT_FOUND permanente', async () => {
+  const executors = makeExecutors({ pdlCompanyEnrich: async () => null });
+  const out = await executors['company.profile.deep'](PDL_TASK, CTX);
+  assert.strictEqual(out.status, 'FAILED');
+  assert.strictEqual(out.error.type, 'NOT_FOUND');
+  assert.strictEqual(out.error.retryable, false);
 });

@@ -116,8 +116,8 @@ test('trial: deep enrich sem CNPJ marca indisponível com upsell, sem chamar fon
   assert.ok(scoreUpdate.enrichmentSummary.score_breakdown);
 });
 
-test('logoForDomain monta URL do Clearbit', async () => {
+test('logoForDomain monta URL do Google Favicons (Clearbit descontinuado)', async () => {
   const { logoForDomain } = require('../lead-enrichment');
-  assert.strictEqual(logoForDomain('dedini.com.br'), 'https://logo.clearbit.com/dedini.com.br');
+  assert.strictEqual(logoForDomain('dedini.com.br'), 'https://www.google.com/s2/favicons?domain=dedini.com.br&sz=128');
   assert.strictEqual(logoForDomain(null), null);
 });

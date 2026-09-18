@@ -184,11 +184,20 @@ async function pdlRequest(path, params, { timeoutMs = 25000 } = {}) {
   }
 }
 
-/** Empresa por nome (+cidade). Resposta PDL company vem no topo do JSON. */
-async function pdlCompanyEnrich({ companyName, city }) {
+/**
+ * Empresa por nome (+cidade). Resposta PDL company vem no topo do JSON.
+ * Com `strict`, erros de provider (chave ausente, HTTP != 200/404, rede)
+ * PROPAGAM — só match inexistente (HTTP 404) retorna null. Sem strict
+ * (legado), qualquer falha vira null.
+ */
+async function pdlCompanyEnrich({ companyName, city }, { strict = false } = {}) {
   const params = { name: companyName, country: 'br' };
   if (city) params.locality = city;
-  const json = await pdlRequest('/v5/company/enrich', params).catch(() => null);
+  const json = await pdlRequest('/v5/company/enrich', params)
+    .catch((err) => {
+      if (strict) throw Object.assign(err instanceof Error ? err : new Error(String(err)), { code: 'PROVIDER_UNAVAILABLE' });
+      return null;
+    });
   if (!json || !json.id) return null;
   return {
     pdl_id: json.id,
@@ -408,10 +417,13 @@ async function newsScan({ companyName }) {
   }));
 }
 
-/** Logo público a partir do domínio (Clearbit, sem chave). */
+/**
+ * Logo público a partir do domínio (Google Favicons, sem chave).
+ * Clearbit Logo foi descontinuado (logo.clearbit.com fora do DNS desde 2025).
+ */
 function logoForDomain(domain) {
   if (!domain) return null;
-  return `https://logo.clearbit.com/${domain}`;
+  return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
 }
 
 // ---------------------------------------------------------------------------

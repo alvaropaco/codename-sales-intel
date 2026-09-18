@@ -114,7 +114,8 @@ if (require.main === module) {
     const nc = await natsStream.connectNats({ name: 'b2base-worker-search' });
     const jsm = await nc.jetstreamManager();
     const js = nc.jetstream();
-    const runtime = createSearchWorker({ prisma, js, jsm });
+    const registry = require('../enrichment-provider-registry').getWorkerRegistry();
+    const runtime = createSearchWorker({ prisma, js, jsm, deps: { registry } });
     await runtime.start();
     const shutdown = async () => {
       await runtime.stop();

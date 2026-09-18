@@ -38,6 +38,69 @@ async function httpProbe(domain, { signal, fetchImpl = fetch } = {}) {
   }
 }
 
+/** Normaliza a resposta Receita Federal (BrasilAPI ou minhareceita) → result. */
+function cnpjBasicResult(cnpj, raw, provider) {
+  const url = provider === 'brasilapi.cnpj'
+    ? `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`
+    : `https://minhareceita.org/${cnpj}`;
+  const data = {
+    cnpj,
+    legal_name: raw.razao_social || null,
+    trade_name: raw.nome_fantasia || null,
+    registration_status: raw.descricao_situacao_cadastral || null,
+    opened_at: raw.data_inicio_atividade || null,
+    capital: raw.capital_social ?? null,
+    main_cnae: raw.cnae_fiscal_descricao || null,
+    city: raw.municipio || null,
+    state: raw.uf || null,
+  };
+  return {
+    status: 'COMPLETED',
+    provider,
+    data,
+    facts: [
+      { attribute: 'company.legal_name', value: data.legal_name, confidence: 0.99,
+        evidence: { sourceType: provider, provider, url, retrievedAt: new Date().toISOString() } },
+      { attribute: 'company.registration_status', value: data.registration_status, confidence: 0.99,
+        evidence: { sourceType: provider, provider, retrievedAt: new Date().toISOString() } },
+      { attribute: 'company.capital', value: data.capital, confidence: 0.99,
+        evidence: { sourceType: provider, provider, retrievedAt: new Date().toISOString() } },
+      { attribute: 'company.main_cnae', value: data.main_cnae, confidence: 0.99,
+        evidence: { sourceType: provider, provider, retrievedAt: new Date().toISOString() } },
+    ],
+  };
+}
+
+const notFoundErr = (cnpj) => Object.assign(new Error(`CNPJ não encontrado na base oficial: ${cnpj}`), { code: 'NOT_FOUND' });
+
+/**
+ * Espelho minhareceita.org (mesma base oficial da Receita, mesmos campos).
+ * Usado quando a BrasilAPI falha com 403/429/5xx/rede — Cloudflare bloqueia
+ * a BrasilAPI de forma intermitente em produção. 404 no espelho também é
+ * NOT_FOUND permanente (mesma base).
+ */
+async function cnpjBasicViaMinhareceita(cnpj, { signal, logger, reason }) {
+  try {
+    const res = await fetch(`https://minhareceita.org/${cnpj}`, { signal });
+    if (res.ok) {
+      const raw = await res.json();
+      if (raw && (raw.razao_social || raw.cnpj)) {
+        if (logger) logger.warn(`cnpj.basic ${cnpj}: ${reason}; servido por minhareceita.org`);
+        return cnpjBasicResult(cnpj, raw, 'minhareceita.cnpj');
+      }
+      throw notFoundErr(cnpj);
+    }
+    if (res.status === 404) throw notFoundErr(cnpj);
+    throw new Error(`minhareceita HTTP ${res.status}`);
+  } catch (err) {
+    if (err && err.code) throw err; // já classificado (NOT_FOUND)
+    if (err && err.name === 'AbortError') throw err; // timeout é da task
+    const e = new Error(`BrasilAPI e minhareceita indisponíveis (${reason}; espelho: ${err.message})`);
+    e.code = 'PROVIDER_UNAVAILABLE';
+    throw e;
+  }
+}
+
 const executors = {
   async 'identity.cnpj.resolve'(task, { logger }) {
     const { resolveCnpj } = require('../lead-enrichment');
@@ -89,7 +152,7 @@ const executors = {
     };
   },
 
-  async 'identity.cnpj.basic'(task, { signal } = {}) {
+  async 'identity.cnpj.basic'(task, { signal, logger } = {}) {
     const cnpj = String(task.input.cnpj || '').replace(/\D/g, '');
     if (cnpj.length !== 14) {
       const err = new Error(`CNPJ inválido: ${cnpj}`);
@@ -100,47 +163,18 @@ const executors = {
     try {
       res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, { signal });
     } catch (err) {
-      const e = new Error(`BrasilAPI inacessível: ${err.message}`);
-      e.code = 'NETWORK_ERROR';
-      throw e;
+      if (err && err.name === 'AbortError') throw err; // timeout é da task
+      return cnpjBasicViaMinhareceita(cnpj, { signal, logger, reason: `BrasilAPI inacessível: ${err.message}` });
     }
     if (res.status === 404 || res.status === 400) {
-      const e = new Error(`CNPJ não encontrado na base oficial: ${cnpj}`);
-      e.code = 'NOT_FOUND';
-      throw e;
+      throw notFoundErr(cnpj);
     }
     if (!res.ok) {
-      const e = new Error(`BrasilAPI HTTP ${res.status}`);
-      e.code = res.status === 429 ? 'RATE_LIMIT' : 'PROVIDER_UNAVAILABLE';
-      throw e;
+      const reason = `BrasilAPI HTTP ${res.status}`;
+      return cnpjBasicViaMinhareceita(cnpj, { signal, logger, reason });
     }
     const raw = await res.json();
-    const data = {
-      cnpj,
-      legal_name: raw.razao_social || null,
-      trade_name: raw.nome_fantasia || null,
-      registration_status: raw.descricao_situacao_cadastral || null,
-      opened_at: raw.data_inicio_atividade || null,
-      capital: raw.capital_social ?? null,
-      main_cnae: raw.cnae_fiscal_descricao || null,
-      city: raw.municipio || null,
-      state: raw.uf || null,
-    };
-    return {
-      status: 'COMPLETED',
-      provider: 'brasilapi.cnpj',
-      data,
-      facts: [
-        { attribute: 'company.legal_name', value: data.legal_name, confidence: 0.99,
-          evidence: { sourceType: 'brasilapi', provider: 'brasilapi.cnpj', url: `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, retrievedAt: new Date().toISOString() } },
-        { attribute: 'company.registration_status', value: data.registration_status, confidence: 0.99,
-          evidence: { sourceType: 'brasilapi', provider: 'brasilapi.cnpj', retrievedAt: new Date().toISOString() } },
-        { attribute: 'company.capital', value: data.capital, confidence: 0.99,
-          evidence: { sourceType: 'brasilapi', provider: 'brasilapi.cnpj', retrievedAt: new Date().toISOString() } },
-        { attribute: 'company.main_cnae', value: data.main_cnae, confidence: 0.99,
-          evidence: { sourceType: 'brasilapi', provider: 'brasilapi.cnpj', retrievedAt: new Date().toISOString() } },
-      ],
-    };
+    return cnpjBasicResult(cnpj, raw, 'brasilapi.cnpj');
   },
 };
 
@@ -180,7 +214,8 @@ if (require.main === module) {
     const nc = await natsStream.connectNats({ name: 'b2base-worker-identity' });
     const jsm = await nc.jetstreamManager();
     const js = nc.jetstream();
-    const runtime = createIdentityWorker({ prisma, js, jsm });
+    const registry = require('../enrichment-provider-registry').getWorkerRegistry();
+    const runtime = createIdentityWorker({ prisma, js, jsm, deps: { registry } });
     await runtime.start();
     const shutdown = async () => {
       await runtime.stop();

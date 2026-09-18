@@ -170,7 +170,17 @@ function createNoopRegistry() {
   };
 }
 
-module.exports = { createProviderRegistry, createNoopRegistry, getSharedRegistry };
+/**
+ * Registry de boot para workers de produção: com REDIS_URL usa o registry
+ * compartilhado (rate limit + circuit breaker ENTRE instâncias); sem Redis,
+ * cai no no-op — o worker nunca quebra por falta de Redis.
+ */
+function getWorkerRegistry() {
+  if (!process.env.REDIS_URL) return createNoopRegistry();
+  return getSharedRegistry();
+}
+
+module.exports = { createProviderRegistry, createNoopRegistry, getSharedRegistry, getWorkerRegistry };
 
 // ── Singleton para produção (lazy — ioredis só carrega quando usado) ───────
 let _shared = null;

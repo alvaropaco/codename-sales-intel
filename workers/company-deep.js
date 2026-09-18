@@ -2,7 +2,8 @@
 // workers/company-deep.js — worker da família company (specs/001-distributed-
 // enrichment). Capabilities portadas das esteiras legadas (Fase 11):
 //   - company.profile.deep : firmografia profunda (People Data Labs)
-//   - company.logo         : logo via Clearbit (com probe)
+//   - company.logo         : logo via Google Favicons (com probe; Clearbit
+//     foi descontinuado — logo.clearbit.com fora do DNS)
 //   - company.deepgraph    : PONTE com o worker Python OSINT — o serviço
 //     existente é tratado como PROVIDER via os contratos legados
 //     enrichment.company.*.v1 (research R12), sem nenhuma mudança nele.
@@ -23,7 +24,7 @@ const natsStream = require('../nats-stream');
  */
 function makeExecutors(deps = {}) {
   const {
-    pdlCompanyEnrich = (input) => require('../lead-enrichment').pdlCompanyEnrich(input),
+    pdlCompanyEnrich = (input, opts) => require('../lead-enrichment').pdlCompanyEnrich(input, opts),
     logoForDomain = (domain) => require('../lead-enrichment').logoForDomain(domain),
     fetchImpl = fetch,
     requestEnrichment = (prisma, p) => require('../nats-enrichment').requestEnrichment(prisma, p),
@@ -32,15 +33,22 @@ function makeExecutors(deps = {}) {
   } = deps;
 
   return {
-    async 'company.profile.deep'(task, { signal }) {
-      const profile = await pdlCompanyEnrich({
-        companyName: task.input.companyName,
-        city: task.input.city,
-      });
+    async 'company.profile.deep'(task, { logger }) {
+      let profile;
+      try {
+        profile = await pdlCompanyEnrich({
+          companyName: task.input.companyName,
+          city: task.input.city,
+        }, { strict: true });
+      } catch (err) {
+        // Erro de provider (chave, HTTP, rede) NUNCA é "não encontrado":
+        // falha transiente para o manager re-tentar com backoff.
+        logger.warn(`company.profile.deep: PDL indisponível para "${task.input.companyName}": ${err.message}`);
+        return { status: 'FAILED', error: { type: 'PROVIDER_UNAVAILABLE', message: `PDL indisponível: ${err.message}`, retryable: true } };
+      }
       if (!profile) {
         return { status: 'FAILED', error: { type: 'NOT_FOUND', message: 'perfil não encontrado na PDL', retryable: false } };
       }
-      void signal;
       return {
         status: 'COMPLETED',
         provider: 'pdl',
@@ -68,10 +76,10 @@ function makeExecutors(deps = {}) {
       }
       return {
         status: 'COMPLETED',
-        provider: 'clearbit',
+        provider: 'google.favicon',
         data: { logo_url: url },
         facts: [{ attribute: 'company.logo', value: url, confidence: 0.9,
-          evidence: { sourceType: 'clearbit', provider: 'clearbit', url, retrievedAt: new Date().toISOString() } }],
+          evidence: { sourceType: 'google.favicon', provider: 'google.favicon', url, retrievedAt: new Date().toISOString() } }],
       };
     },
 
@@ -156,7 +164,8 @@ if (require.main === module) {
     const nc = await natsStream.connectNats({ name: 'b2base-worker-company' });
     const jsm = await nc.jetstreamManager();
     const js = nc.jetstream();
-    const runtime = createCompanyDeepWorker({ prisma, js, jsm });
+    const registry = require('../enrichment-provider-registry').getWorkerRegistry();
+    const runtime = createCompanyDeepWorker({ prisma, js, jsm, deps: { registry } });
     await runtime.start();
     const shutdown = async () => {
       await runtime.stop();

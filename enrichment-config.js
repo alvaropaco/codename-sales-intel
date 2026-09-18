@@ -80,6 +80,10 @@ const WORKER_FETCH_EXPIRES_MS = () => envInt('ENRICHMENT_WORKER_FETCH_EXPIRES_MS
 // execução, para não roubar task de worker vivo.
 const STALE_TASK_MS = () => envInt('ENRICHMENT_STALE_TASK_MS', 10 * 60 * 1000);
 const RESYNC_INTERVAL_MS = () => envInt('ENRICHMENT_RESYNC_INTERVAL_MS', 60 * 1000);
+// Última linha de defesa: job RUNNING sem NENHUM progresso de task por este
+// período tem as tasks ativas canceladas e o job finalizado — garante que
+// nenhum job fique preso para sempre, seja qual for o modo de falha.
+const WATCHDOG_STALE_MS = () => envInt('ENRICHMENT_WATCHDOG_STALE_MS', 60 * 60 * 1000);
 
 module.exports = {
   envList,
@@ -101,4 +105,5 @@ module.exports = {
   WORKER_FETCH_EXPIRES_MS,
   STALE_TASK_MS,
   RESYNC_INTERVAL_MS,
+  WATCHDOG_STALE_MS,
 };
