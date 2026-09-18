@@ -6,6 +6,7 @@ import {
   History,
   Kanban,
   LayoutDashboard,
+  Link2,
   MessageCircle,
   Moon,
   Network,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ActiveTab } from '@/types';
 import { cn } from '@/lib/utils';
+import type { CrmBadgeState } from '@/lib/crmBadge';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -24,6 +26,19 @@ interface SidebarProps {
   isDark: boolean;
   setIsDark: (dark: boolean) => void;
   totalProspectsCount: number;
+  /** Workspace configurado no onboarding conversacional (FR-016). */
+  companyName?: string;
+  userEmail?: string;
+  /** CRM declarado na conversa — badge verde quando conectado (FR-017). */
+  crmBadge?: CrmBadgeState;
+}
+
+/** Iniciais do workspace (até 2 letras) para o avatar da organização. */
+function orgInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'B2';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -32,6 +47,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isDark,
   setIsDark,
   totalProspectsCount,
+  companyName,
+  userEmail,
+  crmBadge,
 }) => {
   const navItems = [
     { id: 'dashboard' as ActiveTab, label: 'Visão comercial', icon: LayoutDashboard, badge: null },
@@ -65,15 +83,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
+        {/* Workspace: nome da empresa + e-mail configurados no onboarding (FR-016) */}
         <button className="mb-5 flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-indigo-500/10">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-xs font-black text-white">AP</div>
-            <div>
-              <p className="text-xs font-black text-slate-950 dark:text-white">Álvaro Paco</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Organização</p>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-xs font-black text-white">
+              {orgInitials(companyName || '')}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-xs font-black text-slate-950 dark:text-white">
+                {companyName || 'Organização'}
+              </p>
+              <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                {userEmail || 'Organização'}
+              </p>
             </div>
           </div>
-          <ChevronDown className="h-4 w-4 text-slate-400" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
         </button>
 
         <div className="space-y-6">
@@ -124,6 +149,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="space-y-3 border-t border-slate-200 p-4 dark:border-white/10">
+        {/* CRM declarado na conversa com a Ava — badge verde quando conectado (FR-017) */}
+        {crmBadge?.connected ? (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            <span className="truncate text-xs font-bold text-emerald-700 dark:text-emerald-300">
+              {crmBadge.label} conectado
+            </span>
+            <Link2 className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          </div>
+        ) : (
+          <button
+            onClick={() => setActiveTab('settings')}
+            className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-indigo-500/10"
+          >
+            <Link2 className="h-3.5 w-3.5 text-slate-400" />
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Configurar CRM depois
+            </span>
+          </button>
+        )}
+
         <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/10">
           <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
             <Sparkles className="h-4 w-4" />

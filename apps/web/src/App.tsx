@@ -10,7 +10,7 @@ import { OutreachView } from '@/components/views/OutreachView';
 import { DispatchHistoryView } from '@/components/views/DispatchHistoryView';
 import { WhatsAppView } from '@/components/views/WhatsAppView';
 import { SettingsView } from '@/components/views/SettingsView';
-import { OnboardingModal } from '@/components/onboarding/OnboardingModal';
+import { AvaOnboarding } from '@/components/onboarding/ava/AvaOnboarding';
 import { ProspectModal } from '@/components/modals/ProspectModal';
 // Lazy: a tela de detalhe (com @xyflow/react e maplibre-gl) sai do bundle
 // principal — abre apenas quando o operador clica num lead (SC-001).
@@ -18,12 +18,15 @@ const LeadDetailScreen = lazy(() =>
   import('@/components/lead/LeadDetailScreen').then((m) => ({ default: m.LeadDetailScreen }))
 );
 import { ActiveTab, Prospect, PipelineAnalytics, OperationalAnalytics, CommercialProfile } from '@/types';
+import type { OnboardingResult } from '@/types/onboarding';
 import { fetchProspects, fetchPipelineAnalytics, fetchOperationalAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
+import { DONE_STORAGE_KEY } from '@/services/onboarding';
 import { createSession, getSession, logoutSession, type SessionUser } from '@/services/auth';
 import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase';
 import { getAuthErrorMessage } from '@/services/authErrors';
 import { LoginView } from '@/components/auth/LoginView';
 import { LandingView } from '@/components/auth/LandingView';
+import { crmBadgeState } from '@/lib/crmBadge';
 import { useSeo } from '@/hooks/useSeo';
 
 // Map a URL path to a tab id so direct navigation (e.g. the Gmail OAuth
@@ -90,6 +93,9 @@ export function App() {
   const [commercialProfile, setCommercialProfile] = useState<CommercialProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  // Onboarding conversacional (feature 004): resultado da conversa com a Ava.
+  // Nesta iteração vive no estado do app + sessionStorage (FR-018/FR-019).
+  const [onboardingResult, setOnboardingResult] = useState<OnboardingResult | null>(null);
 
   // Tela dedicada de detalhe do lead: o id vem da URL (deep link /leads/:id).
   const [leadDetailId, setLeadDetailId] = useState<string | null>(() => leadIdFromPath(window.location.pathname));
@@ -295,25 +301,16 @@ export function App() {
     }
   };
 
-  const handleOnboardingStepChange = async (profile: CommercialProfile) => {
-    try {
-      const saved = await saveCommercialProfile(profile);
-      setCommercialProfile(saved);
-    } catch (err) {
-      console.error('Error saving onboarding progress:', err);
-    }
-  };
-
-  // Onboarding must be shown whenever settings are missing, not only when the
-  // backend `onboardingCompleted` flag is false. This covers brand-new accounts
-  // (no CommercialSettings row) and any profile that was partially filled.
-  const profileIncomplete = !!session && !isLoadingProfile && (
-    !commercialProfile ||
-    !commercialProfile.onboardingCompleted ||
-    !(commercialProfile.companyName || '').trim() ||
-    (!commercialProfile.targetSegments.length && !commercialProfile.targetCnaes.length) ||
-    !commercialProfile.targetLocations.length
-  );
+  // Onboarding conversacional (feature 004): critério único de entrada — conta
+  // com onboarding ainda não concluído (inclui a base existente) e sem conclusão
+  // nesta sessão (flag em sessionStorage). Fail-closed (FR-001): se o perfil
+  // não carrega (fetch falha), tratamos como pendente em vez de pular a Ava.
+  const avaOnboardingGate =
+    !!session &&
+    !isLoadingProfile &&
+    commercialProfile?.onboardingCompleted !== true &&
+    !onboardingResult &&
+    sessionStorage.getItem(DONE_STORAGE_KEY) !== '1';
 
   if (authLoading) {
     return (
@@ -337,6 +334,21 @@ export function App() {
     );
   }
 
+  // Onboarding conversacional: fullscreen, sem sidebar — só volta ao app
+  // (dashboard) quando a conversa termina (FR-001/FR-015).
+  if (avaOnboardingGate) {
+    return (
+      <AvaOnboarding
+        prefill={{
+          firstName: session.name?.split(' ')[0] || undefined,
+          companyName: commercialProfile?.companyName || undefined,
+          email: session.email?.includes('@b2base.local') ? undefined : session.email,
+        }}
+        onComplete={setOnboardingResult}
+      />
+    );
+  }
+
   return (
     <Layout
       activeTab={activeTab}
@@ -351,6 +363,11 @@ export function App() {
       userName={session.name || session.phone || session.email}
       userEmail={session.phone || session.email}
       onLogout={handleLogout}
+      // Pós-onboarding (feature 004): workspace e CRM refletem a conversa com a
+      // Ava imediatamente, sem recarregar (FR-016/FR-017/SC-006).
+      companyName={onboardingResult?.companyName || commercialProfile?.companyName || undefined}
+      workspaceEmail={onboardingResult?.userEmail || (session.email.includes('@b2base.local') ? undefined : session.email)}
+      crmBadge={crmBadgeState(onboardingResult?.crm)}
     >
       {/* As views PERMANECEM MONTADAS (ocultas via CSS) enquanto a tela de
           detalhe está ativa — voltar preserva filtros e scroll das listas
@@ -421,15 +438,6 @@ export function App() {
         onClose={() => setIsCreateModalOpen(false)}
         onSuccess={loadData}
       />
-
-      {profileIncomplete && (
-        <OnboardingModal
-          profile={commercialProfile}
-          onSave={handleSaveCommercialProfile}
-          onStepChange={handleOnboardingStepChange}
-          isSaving={isSavingProfile}
-        />
-      )}
     </Layout>
   );
 }

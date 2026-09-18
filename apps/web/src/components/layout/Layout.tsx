@@ -3,6 +3,7 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { ActiveTab } from '@/types';
 import { cn } from '@/lib/utils';
+import type { CrmBadgeState } from '@/lib/crmBadge';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -18,6 +19,12 @@ interface LayoutProps {
   userName: string;
   userEmail: string;
   onLogout: () => void;
+  /** Workspace configurado no onboarding conversacional (FR-016). */
+  companyName?: string;
+  /** E-mail do workspace (FR-016) — cai no userEmail quando ausente. */
+  workspaceEmail?: string;
+  /** CRM declarado na conversa — badge verde no rodapé da sidebar (FR-017). */
+  crmBadge?: CrmBadgeState;
 }
 
 export const Layout: React.FC<LayoutProps> = ({
@@ -34,6 +41,9 @@ export const Layout: React.FC<LayoutProps> = ({
   userName,
   userEmail,
   onLogout,
+  companyName,
+  workspaceEmail,
+  crmBadge,
 }) => {
   const mobileNavItems: Array<{ id: ActiveTab; label: string; badge?: string | null }> = [
     { id: 'dashboard', label: 'Visão comercial' },
@@ -54,6 +64,9 @@ export const Layout: React.FC<LayoutProps> = ({
         isDark={isDark}
         setIsDark={setIsDark}
         totalProspectsCount={totalProspectsCount}
+        companyName={companyName}
+        userEmail={workspaceEmail || userEmail}
+        crmBadge={crmBadge}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Header
