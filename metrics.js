@@ -314,6 +314,42 @@ async function renderEnrichmentMetrics() {
   return registry.metrics();
 }
 
+// ============================================================================
+// ONBOARDING CONVERSACIONAL (Ava) — feature 004
+// ============================================================================
+const avaExtractDurationHist = enabled
+  ? new client.Histogram({
+      name: 'b2base_ava_extract_duration_seconds',
+      help: 'Duração da extração de ativos da Ava (onboarding conversacional)',
+      registers: [registry],
+    })
+  : null;
+const avaExtractFilesTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_ava_extract_files_total',
+      help: 'Arquivos processados pela extração da Ava, por status (ok/failed/unsupported)',
+      labelNames: ['status'],
+      registers: [registry],
+    })
+  : null;
+const avaExtractLlmFailures = enabled
+  ? new client.Counter({
+      name: 'b2base_ava_extract_llm_failures_total',
+      help: 'Falhas de LLM na extração de ativos da Ava',
+      registers: [registry],
+    })
+  : null;
+
+function observeAvaExtractDuration(ms) {
+  if (avaExtractDurationHist) avaExtractDurationHist.observe(ms / 1000);
+}
+function incAvaExtractFile(status) {
+  if (avaExtractFilesTotal) avaExtractFilesTotal.inc({ status });
+}
+function incAvaExtractLlmFailure() {
+  if (avaExtractLlmFailures) avaExtractLlmFailures.inc();
+}
+
 module.exports = {
   startMetricsServer,
   refreshQueueMetrics,
@@ -334,4 +370,7 @@ module.exports = {
   incEmailRateLimited: () => inc(emailsRateLimitedTotal),
   incWhatsAppSent: () => inc(whatsappSentTotal),
   incWhatsAppFailed: () => inc(whatsappFailedTotal),
+  observeAvaExtractDuration,
+  incAvaExtractFile,
+  incAvaExtractLlmFailure,
 };

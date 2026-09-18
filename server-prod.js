@@ -920,6 +920,66 @@ app.put('/api/settings/commercial-profile', async (req, res) => {
 });
 
 // ============================================================================
+// ONBOARDING CONVERSACIONAL (Ava) — extração stateless de ativos (feature 004)
+// ============================================================================
+// POST /api/onboarding/ava/extract — recebe os ativos informados na conversa
+// (site institucional, materiais, catálogo) e devolve o contexto de negócio
+// extraído. Stateless e idempotente: NADA é persistido — arquivos vivem só na
+// request (memoryStorage) e são descartados (constituição V; contrato em
+// specs/004-ai-onboarding/contracts/http-api.md).
+const multer = require('multer');
+const { createAvaExtractor } = require('./ava-extract');
+
+const avaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 5, fileSize: 20 * 1024 * 1024, fields: 10 },
+});
+const avaExtractor = createAvaExtractor({});
+
+app.post('/api/onboarding/ava/extract', avaUpload.any(), async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    // Guard global /api já autenticou; orgId vem do token (auditoria).
+    const orgId = await requireRequestOrgId(req);
+    const siteUrl = typeof req.body.siteUrl === 'string' && req.body.siteUrl.trim() ? req.body.siteUrl.trim() : null;
+    const catalogUrl = typeof req.body.catalogUrl === 'string' && req.body.catalogUrl.trim() ? req.body.catalogUrl.trim() : null;
+    const files = (req.files || []).map((f) => ({ name: f.originalname, mime: f.mimetype, buffer: f.buffer }));
+
+    if (!siteUrl && !catalogUrl && files.length === 0) {
+      return res.status(400).json({ success: false, error: { code: 'EMPTY_REQUEST' } });
+    }
+
+    const result = await avaExtractor.extractBusinessAssets({ siteUrl, catalogUrl, files });
+    metrics.observeAvaExtractDuration(Date.now() - startedAt);
+    for (const doc of result.extractedFrom.documents) metrics.incAvaExtractFile(doc.status);
+    if (!result.businessContext && result.warnings.some((w) => w.startsWith('LLM_UNAVAILABLE'))) {
+      metrics.incAvaExtractLlmFailure();
+    }
+    console.log(`[ava-extract] org=${orgId} fontes ok=${Boolean(result.businessContext)} warnings=${result.warnings.length}`);
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error && error.status === 400) {
+      return res.status(400).json({ success: false, error: { code: 'EMPTY_REQUEST' } });
+    }
+    if (error && error.status === 413) {
+      return res.status(413).json({ success: false, error: { code: 'PAYLOAD_TOO_LARGE' } });
+    }
+    console.error('[ava-extract] erro inesperado:', error.message);
+    res.status(500).json({ success: false, error: { code: 'EXTRACT_FAILED' } });
+  }
+});
+
+// Erros de multipart (multer) → 413/400 do contrato, não o 500 global.
+app.use('/api/onboarding/ava/extract', (err, req, res, _next) => {
+  const code = err && err.code;
+  if (code === 'LIMIT_FILE_SIZE' || code === 'LIMIT_FILE_COUNT') {
+    return res.status(413).json({ success: false, error: { code: 'PAYLOAD_TOO_LARGE' } });
+  }
+  console.error('[ava-extract] multipart rejeitado:', code || err.message);
+  res.status(400).json({ success: false, error: { code: 'INVALID_REQUEST' } });
+});
+
+// ============================================================================
 // PLANOS DE ASSINATURA — endpoints
 // ============================================================================
 
