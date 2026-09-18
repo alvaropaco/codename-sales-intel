@@ -67,6 +67,7 @@ export function LeadDetailScreen({
     graph,
     graphAvailable,
     addresses,
+    decision,
     states,
     enrichmentActive,
     retry,
@@ -237,8 +238,15 @@ export function LeadDetailScreen({
 
       {/* Grid de seções — cada uma com estado independente (FR-015) */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <LeadOverview prospect={prospect} />
-        <LeadIntelligence prospect={prospect} state={states.entities.status === 'empty' ? 'empty' : 'ready'} />
+        <LeadOverview prospect={prospect} decision={decision} />
+        <LeadIntelligence
+          prospect={prospect}
+          decision={decision}
+          state={states.decision.status}
+          error={states.decision.error}
+          onRetry={() => retry('decision')}
+          onEnrich={handleEnrich}
+        />
         <LeadFirmographics prospect={prospect} graph={graph} />
         <LeadDigitalPresence prospect={prospect} graph={graph} />
         <LeadContacts prospect={prospect} graph={graph} onEnrich={handleEnrich} />

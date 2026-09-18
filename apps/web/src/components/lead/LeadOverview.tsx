@@ -1,15 +1,30 @@
 import React from 'react';
 import { Building2, Calendar, MapPin, ShieldAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Prospect } from '@/types';
+import { ContactDecision, Prospect } from '@/types';
 import { formatCNPJ, formatCurrency } from '@/lib/utils';
 import { LeadSection, Field } from './shared';
 
 /**
- * LeadOverview — visão geral do lead: identidade, status comercial, score de
- * oportunidade com pontos fortes e selo de restrição de plano (trial).
+ * LeadOverview — visão geral do lead: identidade, status comercial, veredito
+ * de contato (feature 003) com pontos fortes e selo de restrição de plano.
+ * O score genérico de oportunidade segue existindo nas listas, mas aqui o
+ * veredito único da decisão de contato o substitui (FR-009).
  */
-export function LeadOverview({ prospect }: { prospect: Prospect }) {
+
+const VERDICT_BADGE: Record<string, { label: string; tone: string }> = {
+  contact_now: { label: 'Abordar agora', tone: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' },
+  contact_lower_priority: { label: 'Prioridade menor', tone: 'border-amber-500/30 bg-amber-500/10 text-amber-400' },
+  do_not_prioritize: { label: 'Não priorizar', tone: 'border-rose-500/30 bg-rose-500/10 text-rose-400' },
+};
+
+export function LeadOverview({
+  prospect,
+  decision,
+}: {
+  prospect: Prospect;
+  decision?: ContactDecision | null;
+}) {
   const restricted = Boolean(prospect.dataRestricted);
   const breakdown = prospect.enrichmentSummary?.score_breakdown as Record<string, number> | undefined;
   let strengths: string[] = [];
@@ -61,8 +76,17 @@ export function LeadOverview({ prospect }: { prospect: Prospect }) {
           </div>
         </div>
         <div className="text-right">
-          <span className="text-[10px] uppercase font-bold text-muted-foreground">Potencial comercial</span>
-          <p className="text-2xl font-black text-indigo-400">{Math.round(prospect.opportunityScore)}/100</p>
+          {decision?.recommendation && VERDICT_BADGE[decision.recommendation.verdict] ? (
+            <span
+              className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-black ${
+                VERDICT_BADGE[decision.recommendation.verdict].tone
+              }`}
+            >
+              {VERDICT_BADGE[decision.recommendation.verdict].label}
+            </span>
+          ) : (
+            <span className="text-[10px] uppercase font-bold text-muted-foreground">Lead</span>
+          )}
         </div>
       </div>
 

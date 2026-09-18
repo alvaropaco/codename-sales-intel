@@ -15,6 +15,7 @@ import {
   CompanyGraph,
   LeadAddressesResponse,
   LeadEnrichmentEntity,
+  ContactDecision,
   EmailAccount,
   OutreachCampaign,
   OutreachContactSummary,
@@ -92,6 +93,20 @@ export async function fetchLeadAddresses(id: string): Promise<LeadAddressesRespo
     dataRestricted: Boolean(json.dataRestricted),
     addresses: json.addresses || [],
   };
+}
+
+/**
+ * Painel de decisão de contato do lead (feature 003): Atingibilidade, Momento
+ * e recomendação única. 404 (lead ausente ou cross-tenant) ⇒ null.
+ */
+export async function fetchContactDecision(id: string): Promise<ContactDecision | null> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}/contact-decision`);
+  if (res.status === 404) return null;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar a decisão de contato do lead');
+  }
+  return json.data as ContactDecision;
 }
 
 // ── Planos de assinatura (trial | premium) ──────────────────────────────────

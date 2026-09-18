@@ -56,6 +56,7 @@ const natsEnrichment = require('./nats-enrichment');
 const csvImport = require('./csv-import');
 const leadEnrichment = require('./lead-enrichment');
 const enrichmentGraph = require('./enrichment-graph');
+const { computeContactDecision } = require('./contact-decision');
 const geocoding = require('./geocoding');
 const firebaseAuth = require('./firebase-auth');
 const adminAuth = require('./admin');
@@ -1126,6 +1127,45 @@ app.get('/api/prospects/:id', async (req, res) => {
   } catch (error) {
     const status = error && error.status ? error.status : 500;
     res.status(status).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/prospects/:id/contact-decision - Painel de decisão de contato
+// (feature 003): Atingibilidade, Momento e recomendação única, computados
+// on-read a partir das evidências já persistidas. O payload NUNCA contém
+// valores de e-mail/telefone — seguro a trial por construção (FR-011).
+app.get('/api/prospects/:id/contact-decision', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: req.params.id, orgId },
+    });
+    if (!prospect) {
+      return res.status(404).json({ success: false, error: 'Prospect not found' });
+    }
+
+    // Grafo é evidência complementar: falha degrada (FR-013), não derruba.
+    let graphData = null;
+    if (prospect.cnpj) {
+      try {
+        const graph = await enrichmentGraph.fetchCompanyGraph(prospect.cnpj);
+        graphData = graph && graph.available ? graph.data : null;
+      } catch (graphErr) {
+        console.error('[contact-decision] grafo indisponível:', graphErr.message);
+      }
+    }
+
+    const decision = computeContactDecision(prospect, graphData);
+    const plan = await getOrgPlan(orgId);
+    decision.dataRestricted = plan !== 'premium';
+
+    res.json({ success: true, data: decision, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error.status === 401) {
+      return res.status(401).json({ success: false, error: error.message });
+    }
+    console.error('[contact-decision] erro ao computar decisão:', error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

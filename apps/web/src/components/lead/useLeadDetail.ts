@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CompanyGraph,
+  ContactDecision,
   LeadAddressesResponse,
   LeadEnrichmentEntity,
   LeadSectionState,
@@ -8,6 +9,7 @@ import {
 } from '@/types';
 import {
   fetchCompanyGraph,
+  fetchContactDecision,
   fetchLeadAddresses,
   fetchProspect,
   fetchProspectEnrichmentEntities,
@@ -15,14 +17,15 @@ import {
 
 /**
  * useLeadDetail — carrega em paralelo as fontes da tela de detalhe completo
- * (prospect, fatos v2, grafo de enriquecimento, endereços geocodificados),
- * com estado INDEPENDENTE por seção (FR-015): a falha de uma não bloqueia as
- * demais. Deep link direto (nova aba) resolve o prospect por id via
- * GET /api/prospects/:id (404 → notFound, nunca vaza existência cross-tenant).
- * Enriquecimento em andamento é reconsultado com polling leve (FR-017).
+ * (prospect, fatos v2, grafo de enriquecimento, endereços geocodificados e
+ * painel de decisão de contato da 003), com estado INDEPENDENTE por seção
+ * (FR-015): a falha de uma não bloqueia as demais. Deep link direto (nova aba)
+ * resolve o prospect por id via GET /api/prospects/:id (404 → notFound, nunca
+ * vaza existência cross-tenant). Enriquecimento em andamento é reconsultado
+ * com polling leve (FR-017).
  */
 
-export type LeadDetailSection = 'prospect' | 'entities' | 'graph' | 'addresses';
+export type LeadDetailSection = 'prospect' | 'entities' | 'graph' | 'addresses' | 'decision';
 
 export interface SectionState {
   status: LeadSectionState;
@@ -41,6 +44,7 @@ interface Slice {
   graph: CompanyGraph | null;
   graphAvailable: boolean;
   addresses: LeadAddressesResponse | null;
+  decision: ContactDecision | null;
 }
 
 const INITIAL: Slice = {
@@ -51,6 +55,7 @@ const INITIAL: Slice = {
   graph: null,
   graphAvailable: true,
   addresses: null,
+  decision: null,
 };
 
 export function useLeadDetail(leadId: string) {
@@ -58,6 +63,7 @@ export function useLeadDetail(leadId: string) {
   const [entitiesState, setEntitiesState] = useState<SectionState>({ status: 'loading' });
   const [graphState, setGraphState] = useState<SectionState>({ status: 'loading' });
   const [addressesState, setAddressesState] = useState<SectionState>({ status: 'loading' });
+  const [decisionState, setDecisionState] = useState<SectionState>({ status: 'loading' });
 
   const [prospect, setProspect] = useState<Prospect | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -65,6 +71,7 @@ export function useLeadDetail(leadId: string) {
   const [graph, setGraph] = useState<CompanyGraph | null>(null);
   const [graphAvailable, setGraphAvailable] = useState(true);
   const [addresses, setAddresses] = useState<LeadAddressesResponse | null>(null);
+  const [decision, setDecision] = useState<ContactDecision | null>(null);
 
   const cancelledRef = useRef(false);
   // índice de retry para reativar os effects (retry por seção / reload geral)
@@ -74,6 +81,7 @@ export function useLeadDetail(leadId: string) {
     entities: 0,
     graph: 0,
     addresses: 0,
+    decision: 0,
   });
 
   const retry = useCallback((section: LeadDetailSection) => {
@@ -183,6 +191,27 @@ export function useLeadDetail(leadId: string) {
     };
   }, [leadId, notFound, reloadTick, retryTicks.addresses]);
 
+  // ── Painel de decisão de contato (feature 003) ────────────────────────────
+  useEffect(() => {
+    if (!leadId || notFound) return;
+    let localCancel = false;
+    setDecisionState((s) => (s.status === 'ready' ? s : { status: 'loading' }));
+    (async () => {
+      try {
+        const data = await fetchContactDecision(leadId);
+        if (localCancel) return;
+        setDecision(data);
+        setDecisionState({ status: data ? 'ready' : 'empty' });
+      } catch (err) {
+        if (localCancel) return;
+        setDecisionState({ status: 'error', error: err instanceof Error ? err.message : 'Erro ao carregar a decisão de contato' });
+      }
+    })();
+    return () => {
+      localCancel = true;
+    };
+  }, [leadId, notFound, reloadTick, retryTicks.decision]);
+
   // ── Polling leve enquanto o enriquecimento está em andamento (FR-017) ─────
   const enrichmentActive = Boolean(
     prospect && (!prospect.enrichmentStatus || ENRICHMENT_ACTIVE.has(prospect.enrichmentStatus))
@@ -191,15 +220,20 @@ export function useLeadDetail(leadId: string) {
     if (!enrichmentActive || notFound) return;
     const timer = setInterval(async () => {
       try {
-        const [fresh, freshEntities] = await Promise.all([
+        const [fresh, freshEntities, freshDecision] = await Promise.all([
           fetchProspect(leadId),
           fetchProspectEnrichmentEntities(leadId).catch(() => null),
+          fetchContactDecision(leadId).catch(() => null),
         ]);
         if (cancelledRef.current || !fresh) return;
         setProspect(fresh);
         if (freshEntities) {
           setEntities(freshEntities);
           setEntitiesState({ status: freshEntities.length > 0 ? 'ready' : 'empty' });
+        }
+        if (freshDecision) {
+          setDecision(freshDecision);
+          setDecisionState({ status: 'ready' });
         }
       } catch {
         // falha transitória de polling não derruba a tela; próximo tick tenta de novo
@@ -215,11 +249,13 @@ export function useLeadDetail(leadId: string) {
     graph,
     graphAvailable,
     addresses,
+    decision,
     states: {
       prospect: prospectState,
       entities: entitiesState,
       graph: graphState,
       addresses: addressesState,
+      decision: decisionState,
     },
     enrichmentActive,
     retry,

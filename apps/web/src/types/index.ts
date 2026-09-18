@@ -46,6 +46,89 @@ export interface EnrichmentSummary {
   lead_enrichment?: Record<string, unknown> | null;
 }
 
+// --- Painel de decisão de contato (feature 003, GET /api/prospects/:id/contact-decision) ---
+
+export type DecisionLevel = 'high' | 'medium' | 'low' | 'unknown';
+
+/** Evidência por trás de uma métrica — NUNCA contém valor de e-mail/telefone. */
+export interface DecisionEvidence {
+  key: string;
+  label: string;
+  detail: string;
+  confidence?: number | null;
+  date?: string | null;
+}
+
+export interface DecisionChannel {
+  type: 'email' | 'phone' | 'whatsapp';
+  classification: 'corporate' | 'generic' | 'third_party' | 'unknown';
+  confidence?: number | null;
+}
+
+export interface DecisionBasis {
+  prospect: boolean;
+  graph: boolean;
+  graph_available: boolean;
+}
+
+/** "Consigo chegar até este lead?" (FR-002). */
+export interface ReachabilityMetric {
+  level: DecisionLevel;
+  score: number | null;
+  usableChannel: boolean;
+  recommendedChannel: 'email' | 'phone' | 'whatsapp' | null;
+  channels: DecisionChannel[];
+  evidence: DecisionEvidence[];
+  basis: DecisionBasis;
+  stale: boolean;
+}
+
+/** "Este é um bom momento para abordar?" (FR-003). */
+export interface TimingMetric {
+  level: DecisionLevel;
+  score: number | null;
+  inactive: boolean | null;
+  /** FR-018: sinais oficiais ausentes (lead sem CNPJ) */
+  missingOfficialSignals: string[];
+  evidence: DecisionEvidence[];
+  basis: DecisionBasis;
+  stale: boolean;
+}
+
+export type DecisionVerdict = 'contact_now' | 'contact_lower_priority' | 'do_not_prioritize';
+
+export interface RecommendationFactor {
+  weight: number;
+  value: number | null;
+  status: 'used' | 'neutral' | 'unknown';
+}
+
+/** Recomendação única e explicável (FR-004..FR-007). */
+export interface ContactRecommendation {
+  verdict: DecisionVerdict;
+  reasons: Array<{ code: string; detail: string }>;
+  factors: {
+    reachability: RecommendationFactor;
+    timing: RecommendationFactor;
+    fit: RecommendationFactor;
+    risk: RecommendationFactor;
+  };
+  suggestedAction: 'enrich_lead' | 'start_email' | 'start_whatsapp' | 'defer' | null;
+  /** FR-015 — null quando o lead nunca recebeu contato */
+  contactedContext: { contacted: boolean; channels: string[]; lastContact: string | null } | null;
+}
+
+/** Painel completo (contrato: specs/003-contact-decision-metrics/contracts/api.md). */
+export interface ContactDecision {
+  prospectId: string;
+  generatedAt: string;
+  dataRestricted: boolean;
+  freshness: { stale: boolean; lastEvidenceAt: string | null; thresholdDays: number };
+  reachability: ReachabilityMetric;
+  timing: TimingMetric;
+  recommendation: ContactRecommendation;
+}
+
 export interface Prospect {
   id: string;
   /** CNPJ (chave de enriquecimento no BR) — null em leads importados sem identificador */
