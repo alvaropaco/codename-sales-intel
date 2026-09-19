@@ -396,12 +396,18 @@ async function recalcLeadScore(prisma, prospectOrId) {
   if (!p) return null;
 
   const { score, breakdown } = computeSignalScore(p);
+  // Feature 005 (FR-008): com análise profunda vigente (verdict preenchido),
+  // o score oficial é o da IA — o determinístico NÃO pode sobrescrevê-lo.
+  // O breakdown continua sendo gravado como evidência de referência.
+  const data = {
+    enrichmentSummary: { ...(p.enrichmentSummary || {}), score_breakdown: breakdown },
+  };
+  if (!p.verdict) {
+    data.opportunityScore = score;
+  }
   await prisma.prospect.update({
     where: { id: p.id },
-    data: {
-      opportunityScore: score,
-      enrichmentSummary: { ...(p.enrichmentSummary || {}), score_breakdown: breakdown },
-    },
+    data,
   });
   return { score, breakdown };
 }

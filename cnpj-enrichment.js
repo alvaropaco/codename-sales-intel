@@ -1,4 +1,7 @@
 const BRASIL_API_BASE_URL = 'https://brasilapi.com.br/api/cnpj/v1';
+// Feature 005: roteamento do card pós-enriquecimento (premium → Análise profunda).
+const { getOrgPlan } = require('./plan');
+const pipelineTransitions = require('./pipeline-transitions');
 
 function normalizeCnpj(cnpj) {
   return String(cnpj || '').replace(/\D/g, '');
@@ -156,15 +159,37 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
     });
     data.enrichmentError = null;
 
+    // Feature 005: premium pousa em "Análise profunda" (análise de IA dispara
+    // no gatilho de entrada do estágio); demais planos seguem para "Prontas
+    // para contato" como antes.
+    const nextStatus = pipelineTransitions.statusAfterEnrichment(
+      prospect,
+      await getOrgPlan(prisma, prospect.orgId)
+    );
     const updated = await prisma.prospect.update({
       where: { id: prospect.id },
       data: {
         ...data,
-        // Enriquecimento concluído: card em "Em Qualificação" avança
-        // automaticamente para "Prontas para contato".
-        ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
+        ...(nextStatus
+          ? {
+              status: nextStatus,
+              ...(nextStatus === 'deep_analysis' ? { analysisStatus: 'not_started' } : {}),
+            }
+          : {}),
       },
     });
+
+    // Feature 005: card pousou em "Análise profunda" (premium) — dispara a
+    // análise de IA. Fire-and-forget: falha aqui não afeta o enriquecimento.
+    if (nextStatus === 'deep_analysis') {
+      try {
+        const runner = require('./deep-analysis').getSharedRunner(prisma);
+        const enqueued = await runner.enqueue(updated, { trigger: 'auto' });
+        if (enqueued.started) enqueued.done.catch(() => {});
+      } catch (analysisErr) {
+        console.error('[deep-analysis] gatilho pós-enriquecimento falhou:', analysisErr.message);
+      }
+    }
 
     // Suíte multicanal: dispara campanhas configuradas com gatilho
     // pós-enriquecimento (email/WhatsApp). Fire-and-forget — falha aqui

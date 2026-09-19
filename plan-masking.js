@@ -195,6 +195,20 @@ function stripMaskedIncomingFields(payload) {
   return out;
 }
 
+/**
+ * Remove os campos da análise profunda de IA (feature 005) do payload —
+ * planos sem o recurso (trial) NÃO recebem nenhuma saída da análise, nem
+ * mesmo o estado/veredito (FR-018/SC-007). Retorna objeto novo.
+ */
+function stripDeepAnalysisFields(item) {
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) return item;
+  if (!('analysisStatus' in item) && !('verdict' in item)) return item;
+  const out = { ...item };
+  delete out.analysisStatus;
+  delete out.verdict;
+  return out;
+}
+
 module.exports = {
   maskText,
   maskEmail,
@@ -203,4 +217,5 @@ module.exports = {
   maskProspectForTrial,
   maskCompanyGraphForTrial,
   stripMaskedIncomingFields,
+  stripDeepAnalysisFields,
 };

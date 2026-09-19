@@ -57,6 +57,10 @@ const csvImport = require('./csv-import');
 const leadEnrichment = require('./lead-enrichment');
 const enrichmentGraph = require('./enrichment-graph');
 const { computeContactDecision } = require('./contact-decision');
+// Regras de transição do pipeline (feature 005) — módulo puro testável.
+const pipelineTransitions = require('./pipeline-transitions');
+// Análise profunda de lead por IA (feature 005) — runner compartilhado do processo.
+const deepAnalysis = require('./deep-analysis');
 const geocoding = require('./geocoding');
 const firebaseAuth = require('./firebase-auth');
 const adminAuth = require('./admin');
@@ -65,7 +69,7 @@ const adminAuth = require('./admin');
 const gmailAuth = require('./gmail-auth');
 const gmailApi = require('./gmail-api');
 const emailProvider = require('./email-provider');
-const { maskProspectForTrial, maskCompanyGraphForTrial, stripMaskedIncomingFields } = require('./plan-masking');
+const { maskProspectForTrial, maskCompanyGraphForTrial, stripMaskedIncomingFields, stripDeepAnalysisFields } = require('./plan-masking');
 // ─── Motor de enriquecimento distribuído v2 (specs/001-distributed-enrichment)
 const enrichmentConfig = require('./enrichment-config');
 const enrichmentCapabilities = require('./enrichment-capabilities');
@@ -755,7 +759,9 @@ function redactProspectForPlan(prospect, plan) {
   if (plan === 'premium' || prospect === null || typeof prospect !== 'object') {
     return prospect;
   }
-  return maskProspectForTrial(prospect);
+  // Feature 005: trial não recebe nenhuma saída da análise profunda
+  // (estado/veredito removidos antes do masking dos contatos — FR-018/SC-007).
+  return maskProspectForTrial(stripDeepAnalysisFields(prospect));
 }
 
 /**
@@ -1146,6 +1152,10 @@ app.get('/api/prospects', async (req, res) => {
         enrichmentVersion: true,
         enrichmentSummary: true,
         enrichedAt: true,
+        // Feature 005: estado mínimo da análise profunda para o card do kanban
+        // (o resumo completo só existe em GET /:id/deep-analysis).
+        analysisStatus: true,
+        verdict: true,
         createdAt: true,
         updatedAt: true,
         orgId: true
@@ -1229,6 +1239,114 @@ app.get('/api/prospects/:id/contact-decision', async (req, res) => {
   }
 });
 
+// GET /api/prospects/:id/deep-analysis — Análise profunda vigente (feature
+// 005): estado da execução + resultado (score final, veredito, resumo,
+// impressões, fatores). Contrato: specs/005-deep-lead-analysis/contracts/api.md.
+// Orgs sem o recurso recebem 403 PREMIUM_FEATURE sem nenhuma informação sobre
+// a análise no corpo (SC-007); 404 cross-tenant nunca vaza existência.
+app.get('/api/prospects/:id/deep-analysis', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const plan = await getOrgPlan(orgId);
+    if (plan !== 'premium') {
+      return res.status(403).json({
+        success: false,
+        code: 'PREMIUM_FEATURE',
+        error: 'A análise profunda por IA é um recurso do plano Premium.',
+      });
+    }
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: req.params.id, orgId },
+    });
+    if (!prospect) {
+      return res.status(404).json({ success: false, error: 'Prospect not found' });
+    }
+
+    const analysis = prospect.currentDeepAnalysisId
+      ? await prisma.deepAnalysis.findUnique({ where: { id: prospect.currentDeepAnalysisId } })
+      : null;
+    const state = prospect.analysisStatus || 'not_started';
+
+    res.json({
+      success: true,
+      data: {
+        state,
+        analysis:
+          analysis && analysis.status === 'completed'
+            ? {
+                id: analysis.id,
+                finalScore: analysis.finalScore,
+                verdict: analysis.verdict,
+                summary: analysis.summary,
+                impressions: analysis.impressions || [],
+                factorsPro: analysis.factorsPro || [],
+                factorsCon: analysis.factorsCon || [],
+                deterministicScore: analysis.deterministicScore,
+                orgContextConsidered: analysis.orgContextConsidered,
+                override: analysis.override,
+                modelVersion: analysis.modelVersion,
+                completedAt: analysis.completedAt,
+              }
+            : null,
+        errorMessage: analysis && analysis.status === 'failed' ? analysis.errorMessage : null,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[deep-analysis] erro ao carregar análise:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/prospects/:id/deep-analysis/rerun — Reexecuta a análise profunda
+// (FR-014). Execução assíncrona: o estado passa a 'running' e é sondado pelo
+// GET acima. 409 ANALYSIS_RUNNING em reexecução concorrente.
+app.post('/api/prospects/:id/deep-analysis/rerun', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const plan = await getOrgPlan(orgId);
+    if (plan !== 'premium') {
+      return res.status(403).json({
+        success: false,
+        code: 'PREMIUM_FEATURE',
+        error: 'A análise profunda por IA é um recurso do plano Premium.',
+      });
+    }
+    const prospect = await prisma.prospect.findFirst({
+      where: { id: req.params.id, orgId },
+    });
+    if (!prospect) {
+      return res.status(404).json({ success: false, error: 'Prospect not found' });
+    }
+    if (prospect.status !== 'deep_analysis') {
+      return res.status(422).json({
+        success: false,
+        code: 'STAGE_TRANSITION_BLOCKED',
+        error: 'Só é possível reexecutar a análise de leads que estão em "Análise profunda".',
+      });
+    }
+
+    const result = await deepAnalysis.getSharedRunner(prisma).enqueue(prospect, { trigger: 'manual' });
+    if (result.skipped) {
+      return res.status(409).json({
+        success: false,
+        code: 'ANALYSIS_RUNNING',
+        error:
+          result.reason === 'running'
+            ? 'A análise já está em execução — aguarde o veredito.'
+            : 'Não foi possível reexecutar a análise agora.',
+      });
+    }
+    result.done.catch((err) =>
+      console.error(`[deep-analysis] reexecução falhou (lead ${prospect.id}):`, err.message)
+    );
+    res.status(202).json({ success: true, data: { state: 'running' }, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('[deep-analysis] erro ao reexecutar análise:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST /api/prospects - Create prospect
 app.post('/api/prospects', async (req, res) => {
   try {
@@ -1249,7 +1367,7 @@ app.post('/api/prospects', async (req, res) => {
       data: {
         cnpj,
         companyName,
-        status: status || 'prospect',
+        status: pipelineTransitions.normalizeStatus(status) || 'prospect',
         industry: industry || '',
         employees: employees || 0,
         revenueEstimate: revenueEstimate || 0,
@@ -1384,32 +1502,31 @@ app.get('/api/prospects/:id/addresses', async (req, res) => {
 // ============================================================================
 // PIPELINE — regras de transição de estágio (kanban)
 // ============================================================================
-// "Em Qualificação" (prospect) é o estágio do pipeline de enriquecimento: o
-// card entra a partir de "Novas oportunidades" (lead), o enriquecimento roda,
-// e ao CONCLUIR o card avança automaticamente para "Prontas para contato"
-// (qualified). Regras:
-//   - lead → prospect: sempre permitido, COM OU SEM CNPJ. Sem CNPJ, a esteira
-//     de enriquecimento (lead-enrichment.js) tenta RESOLVER o CNPJ (base RFB
-//     + SearXNG) e, não conseguindo, enriquece via PDL (redes sociais, site,
-//     porte, pessoa de contato).
-//   - prospect → qualified: bloqueado enquanto o enriquecimento não teve
-//     conclusão (null/pending). Estados terminais (enriched/partial/
-//     unavailable/error) permitem avanço manual (escape para dados legados
-//     e falhas de pipeline).
-//   - qualified/closed → prospect: sempre bloqueado — o estágio representa
-//     um pipeline que já rodou e não pode ser "desfeito".
+// Fonte da verdade: pipeline-transitions.js (módulo puro, testes em
+// test/pipeline-transitions.test.js). Resumo (feature 005):
+//   - "Novas oportunidades" (lead) NÃO EXISTE MAIS: entradas legadas são
+//     normalizadas para 'prospect' (scripts/backfill-lead-status.js migra o
+//     banco).
+//   - "Em Qualificação" (prospect) segue sendo o estágio do enriquecimento;
+//     ao CONCLUIR, premium avança para "Análise profunda" (deep_analysis) e
+//     demais planos para "Prontas para contato" (qualified) — ver
+//     statusAfterEnrichment.
+//   - deep_analysis/qualified a partir de prospect exigem enriquecimento
+//     concluído.
+//   - Nenhum movimento manual saindo de deep_analysis enquanto a análise de
+//     IA está em execução (ANALYSIS_RUNNING); concluída, o humano pode
+//     avançar mesmo com veredito negativo (override registrado pela IA).
+//   - discarded (Descartados) é destino final: só restaura para
+//     deep_analysis (reanálise); qualified/closed → prospect segue
+//     sempre bloqueado.
 
+/**
+ * Delega as regras ao módulo puro. Retorna null quando permitida ou
+ * { code, message } com o motivo do bloqueio.
+ */
 function stageTransitionError(previousStatus, nextStatus, prospect) {
-  if (nextStatus === 'qualified') {
-    const concluded = prospect.enrichmentStatus && prospect.enrichmentStatus !== 'pending';
-    if (!concluded) {
-      return 'O lead ainda está sendo enriquecido — aguarde a conclusão do pipeline para avançar para "Prontas para contato".';
-    }
-  }
-  if (nextStatus === 'prospect' && (previousStatus === 'qualified' || previousStatus === 'closed')) {
-    return 'Não é possível retornar um lead para "Em Qualificação" depois que o enriquecimento foi concluído.';
-  }
-  return null;
+  const result = pipelineTransitions.validateTransition(previousStatus, nextStatus, prospect);
+  return result.ok ? null : { code: result.code, message: result.message };
 }
 
 /**
@@ -1550,7 +1667,11 @@ app.put('/api/prospects/:id', async (req, res) => {
 
     // Regras de transição do kanban (fonte da verdade server-side). A checagem
     // usa o CNPJ EFETIVO pós-update: "informar CNPJ + mover para Em
-    // Qualificação" na mesma requisição é permitido.
+    // Qualificação" na mesma requisição é permitido. Entradas do estágio
+    // removido ('lead') são normalizadas para 'prospect' (feature 005).
+    if (body.status !== undefined) {
+      body.status = pipelineTransitions.normalizeStatus(body.status);
+    }
     const nextStatus = body.status;
     if (nextStatus && nextStatus !== previous.status) {
       const transitionError = stageTransitionError(previous.status, nextStatus, {
@@ -1558,9 +1679,9 @@ app.put('/api/prospects/:id', async (req, res) => {
         cnpj: effectiveCnpj,
       });
       if (transitionError) {
-        const err = new Error(transitionError);
+        const err = new Error(transitionError.message);
         err.status = 422;
-        err.code = 'STAGE_TRANSITION_BLOCKED';
+        err.code = transitionError.code || 'STAGE_TRANSITION_BLOCKED';
         throw err;
       }
     }
@@ -1574,6 +1695,36 @@ app.put('/api/prospects/:id', async (req, res) => {
     // (status 'prospect'), inclusive ao trocar de coluna no kanban.
     const enteredQualification =
       prospect.status === 'prospect' && (!previous || previous.status !== 'prospect');
+
+    // Feature 005: entrada em "Análise profunda" dispara a análise de IA
+    // (FR-005). Restauração de "Descartados" reexecuta substituindo a
+    // análise anterior (FR-011/FR-014); demais entradas usam o gatilho
+    // idempotente por enrichmentVersion.
+    const enteredDeepAnalysis =
+      prospect.status === 'deep_analysis' && previous.status !== 'deep_analysis';
+    if (enteredDeepAnalysis) {
+      const trigger = previous.status === 'discarded' ? 'manual' : 'auto';
+      deepAnalysis
+        .getSharedRunner(prisma)
+        .enqueue(prospect, { trigger })
+        .then((enqueued) => {
+          if (enqueued.started) enqueued.done.catch(() => {});
+        })
+        .catch((err) => console.error(`[deep-analysis] gatilho falhou (lead ${prospect.id}):`, err.message));
+    }
+
+    // Override humano: avançar manualmente um lead reprovado pela IA é
+    // permitido, mas fica registrado na análise vigente (FR-010/transparência).
+    if (
+      previous.status === 'deep_analysis' &&
+      prospect.status === 'qualified' &&
+      previous.verdict === 'no_contact' &&
+      previous.currentDeepAnalysisId
+    ) {
+      prisma.deepAnalysis
+        .update({ where: { id: previous.currentDeepAnalysisId }, data: { override: true } })
+        .catch((err) => console.error('[deep-analysis] falha ao registrar override:', err.message));
+    }
 
     let responseData = prospect;
     if (enteredQualification) {
@@ -1629,8 +1780,8 @@ app.post('/api/prospects/bulk', async (req, res) => {
     }
 
     if (action === 'move') {
-      const validStatuses = ['lead', 'prospect', 'qualified', 'closed'];
-      if (!validStatuses.includes(status)) {
+      const normalized = pipelineTransitions.normalizeStatus(status);
+      if (!pipelineTransitions.PIPELINE_STATUSES.includes(normalized)) {
         return res.status(400).json({ success: false, error: 'Estágio de destino inválido.' });
       }
 
@@ -1638,30 +1789,32 @@ app.post('/api/prospects/bulk', async (req, res) => {
       // os permitidos — devolve `skipped` para a UI explicar o que ficou.
       const current = await prisma.prospect.findMany({
         where: { id: { in: ids }, orgId },
-        select: { id: true, status: true, enrichmentStatus: true, cnpj: true },
+        select: { id: true, status: true, enrichmentStatus: true, analysisStatus: true, cnpj: true },
       });
-      const allowed = current.filter((p) => !stageTransitionError(p.status, status, p));
+      const blockedItem = (p) => stageTransitionError(p.status, normalized, p);
+      const allowed = current.filter((p) => !blockedItem(p));
       const skipped = current.length - allowed.length;
 
       if (allowed.length === 0) {
         const firstBlocked = current[0];
-        const reason =
-          (firstBlocked && stageTransitionError(firstBlocked.status, status, firstBlocked)) ||
-          'Transição de estágio não permitida.';
+        const reason = (firstBlocked && blockedItem(firstBlocked)) || {
+          code: 'STAGE_TRANSITION_BLOCKED',
+          message: 'Transição de estágio não permitida.',
+        };
         return res
           .status(422)
-          .json({ success: false, code: 'STAGE_TRANSITION_BLOCKED', error: reason });
+          .json({ success: false, code: reason.code || 'STAGE_TRANSITION_BLOCKED', error: reason.message });
       }
 
       const result = await prisma.prospect.updateMany({
         where: { id: { in: allowed.map((p) => p.id) }, orgId },
-        data: { status },
+        data: { status: normalized },
       });
 
       // Entrou em "Em Qualificação" via lote também dispara enriquecimento
       // (antes só o PUT disparava — card movido em lote ficava pendente
       // para sempre e, com o gate de transição, ficaria travado).
-      if (status === 'prospect') {
+      if (normalized === 'prospect') {
         const entered = allowed.filter((p) => p.status !== 'prospect');
         for (const item of entered) {
           const fresh = await prisma.prospect.findUnique({ where: { id: item.id } });
@@ -1670,6 +1823,23 @@ app.post('/api/prospects/bulk', async (req, res) => {
               console.error(`[bulk] erro ao enriquecer prospect ${item.id}:`, err.message);
             });
           }
+        }
+      }
+
+      // Feature 005: entrada em "Análise profunda" via lote dispara a análise
+      // (restauração de Descartados reexecuta; demais entradas, gatilho auto).
+      if (normalized === 'deep_analysis') {
+        for (const item of allowed) {
+          const fresh = await prisma.prospect.findUnique({ where: { id: item.id } });
+          if (!fresh) continue;
+          const trigger = item.status === 'discarded' ? 'manual' : 'auto';
+          deepAnalysis
+            .getSharedRunner(prisma)
+            .enqueue(fresh, { trigger })
+            .then((enqueued) => {
+              if (enqueued.started) enqueued.done.catch(() => {});
+            })
+            .catch((err) => console.error(`[bulk] erro ao analisar prospect ${item.id}:`, err.message));
         }
       }
 
@@ -1822,9 +1992,11 @@ app.post('/api/prospects/import-csv', async (req, res) => {
             ...(record.cnpjPhones ? { cnpjPhones: record.cnpjPhones } : {}),
             employees: record.employees,
             revenueEstimate: record.revenueEstimate,
-            // Com CNPJ: entra direto na esteira de qualificação/enriquecimento.
-            // Sem CNPJ: 'lead' (Novas oportunidades), pendente de chave.
-            status: record.cnpj ? 'prospect' : 'lead',
+            // Feature 005 (FR-002): todo lead importado entra em "Em
+            // Qualificação" — o estágio 'lead' não existe mais. Sem CNPJ,
+            // fica com enrichmentStatus 'unavailable' até a chave ser
+            // informada ( PUT + CNPJ dispara a esteira).
+            status: 'prospect',
             opportunityScore: 60,
             enrichmentStatus: record.cnpj ? 'pending' : 'unavailable',
             ...(record.cnpj ? {} : { enrichmentSource: 'csv_import' }),
@@ -1931,7 +2103,10 @@ app.get('/api/analytics/pipeline', async (req, res) => {
 
     const qualified = prospects.filter(p => p.status === 'qualified').length;
     const prospect_count = prospects.filter(p => p.status === 'prospect').length;
-    const leads = prospects.filter(p => p.status === 'lead').length;
+    // Feature 005: o estágio 'lead' foi removido; os contadores refletem o
+    // pipeline novo (Análise profunda e Descartados).
+    const deep_analysis = prospects.filter(p => p.status === 'deep_analysis').length;
+    const discarded = prospects.filter(p => p.status === 'discarded').length;
     const total = prospects.length;
 
     res.json({
@@ -1940,7 +2115,8 @@ app.get('/api/analytics/pipeline', async (req, res) => {
         total_prospects: total,
         qualified,
         prospects: prospect_count,
-        leads,
+        deep_analysis,
+        discarded,
         qualification_rate: total > 0 ? (qualified / total).toFixed(2) : '0',
         closure_rate: total > 0 ? (qualified / total * 0.85).toFixed(2) : '0'
       },
@@ -2286,9 +2462,12 @@ app.post('/api/intelligence/qualify', async (req, res) => {
     }
 
     const score = Math.max(0, Math.min(100, Number(prospect.opportunityScore) || 0));
+    // Feature 005 (FR-001): banda 'lead' renomeada para 'initial' — não
+    // referencia mais o estágio removido. (Leitura de 'lead' segue aceita
+    // no client por compatibilidade.)
     const level =
       score >= 70 ? 'qualified' :
-      score >= 40 ? 'prospect' : 'lead';
+      score >= 40 ? 'prospect' : 'initial';
     // Confiança reflete o quão completo é o dado: enriquecido oficialmente dá mais
     // confiança do que um lead com dados parciais/mockados.
     const confidence =
@@ -2414,7 +2593,20 @@ app.post('/api/system/reconcile-pending', async (req, res) => {
     }).catch((err) => {
       console.error('[reconcile] endpoint SRE falhou:', err.message);
     });
-    res.json({ success: true, message: 'reconciliação de pendentes disparada', limit });
+    // Feature 005: também re-despacha análises profundas presas (running/
+    // not_started) — mesmo gatilho do boot, no padrão fire-and-forget.
+    let deepAnalysisTriggered = false;
+    try {
+      deepAnalysis.getSharedRunner(prisma).reconcile({ limit }).then((result) => {
+        console.log(`[reconcile] deep-analysis disparado por SRE:`, result);
+      }).catch((err) => {
+        console.error('[reconcile] deep-analysis SRE falhou:', err.message);
+      });
+      deepAnalysisTriggered = true;
+    } catch (err) {
+      console.error('[reconcile] deep-analysis dispatch falhou:', err.message);
+    }
+    res.json({ success: true, message: 'reconciliação de pendentes disparada', limit, deepAnalysis: deepAnalysisTriggered ? 'triggered' : 'failed' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2895,7 +3087,9 @@ async function importDiscoveredCompanyForOrg(orgId, data) {
       cnpjEmail: importEmail || null,
       cnpjOpenedAt: importOpeningDate ? new Date(importOpeningDate) : null,
       cnpjLegalNature: importLegalNature || null,
-      status: status === 'active' ? 'prospect' : 'lead',
+      // Feature 005 (FR-002): todo lead novo entra em "Em Qualificação",
+      // independentemente do status da empresa descoberta.
+      status: 'prospect',
       opportunityScore: 60,
       // Não marcamos como 'enriched': a esteira de enriquecimento (NATS) ou o
       // fallback síncrono BrasilAPI é quem completa firmografia + scoring.
@@ -4932,6 +5126,19 @@ async function start() {
     // Retoma prospects que ficaram presos em 'pending' por reinício do pod
     // (jobs de enriquecimento são em memória e não sobrevivem ao restart).
     await resumePendingEnrichments(prisma);
+
+    // Feature 005: re-despacha análises profundas presas em 'running' (pod
+    // reiniciou no meio) e leads parados em not_started — mesmo padrão da
+    // retomada de enriquecimentos acima (R6). Fire-and-forget.
+    deepAnalysis
+      .getSharedRunner(prisma)
+      .reconcile()
+      .then((result) => {
+        if (result.reconciled > 0) {
+          console.log(`[deep-analysis] reconcile no boot: ${result.reconciled} re-despachadas`);
+        }
+      })
+      .catch((err) => console.error('[deep-analysis] reconcile no boot falhou:', err.message));
 
     // Inicia workers de outreach (BullMQ)
     try {

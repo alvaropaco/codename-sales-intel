@@ -32,6 +32,7 @@ model Organization {
   enrichmentRequests EnrichmentRequest[]
   csvMappingMemories CsvMappingMemory[]
   commercialSettings CommercialSettings?
+  deepAnalyses DeepAnalysis[]
 }
 
 model CommercialSettings {
@@ -104,7 +105,7 @@ model Prospect {
   logoUrl               String?                      // logo da empresa (enriquecimento premium)
   companyName           String
   tradeName             String?
-  status                String   @default("prospect") // prospect, qualified, lead
+  status                String   @default("prospect") // prospect, deep_analysis, qualified, discarded, closed (lead removido na 005 — ver scripts/backfill-lead-status.js)
   opportunityScore      Int      @default(0)
   revenueEstimate       Int?
   employees             Int?
@@ -123,6 +124,14 @@ model Prospect {
   enrichmentVersion     Int      @default(0)
   enrichmentSummary     Json?
   enrichedAt            DateTime?
+  // ── Análise profunda de IA (feature 005) ──────────────────────────────────
+  // Estado do card no kanban; a análise vigente é apontada por
+  // currentDeepAnalysisId (histórico fica retido em DeepAnalysis).
+  analysisStatus        String   @default("not_started") // not_started, running, completed, failed
+  verdict               String?  // contact | no_contact — veredito da análise vigente (denormalizado p/ o kanban)
+  currentDeepAnalysisId String? @unique
+  currentDeepAnalysis   DeepAnalysis? @relation("ProspectCurrentAnalysis", fields: [currentDeepAnalysisId], references: [id], onDelete: SetNull)
+  deepAnalyses          DeepAnalysis[]
   activitiesCount       Int      @default(0)
   lastContact           DateTime?                     // timestamp do 1º envio real (email/whatsapp)
   contactedChannels     Json     @default("[]")       // ["email","whatsapp"] — badge "Contatado"
@@ -145,6 +154,39 @@ model Prospect {
   @@index([createdAt])
   @@index([enrichedAt])
   @@index([enrichmentStatus])
+}
+
+// Análise profunda de lead por IA (feature 005): UMA LINHA POR EXECUÇÃO.
+// A vigente é apontada por Prospect.currentDeepAnalysisId — a reexecução cria
+// nova linha e move o ponteiro, retendo o histórico (specs/005-deep-lead-
+// analysis/data-model.md). Dados que NUNCA estão aqui: contato cru do lead.
+model DeepAnalysis {
+  id                      String   @id @default(cuid())
+  prospectId              String
+  orgId                   String   // sempre = prospect.orgId (isolamento FR-016)
+  status                  String   @default("running") // running, completed, failed
+  modelVersion            String?  // modelo/alias efetivamente usado
+  finalScore              Int?     // 0–100 — obrigatório quando completed
+  verdict                 String?  // contact | no_contact — obrigatório quando completed
+  summary                 String?  // resumo completo com as impressões da IA
+  impressions             Json     @default("[]") // impressões da IA (lista de strings)
+  factorsPro              Json     @default("[]")
+  factorsCon              Json     @default("[]")
+  deterministicScore      Int?     // opportunityScore no momento da análise (referência FR-008)
+  contactDecisionSnapshot Json?    // painel de decisão 003 usado como evidência
+  orgContextConsidered    Boolean  @default(false) // false ⇒ contexto da org ausente (FR-017)
+  override                Boolean  @default(false) // veredito negativo superado por humano
+  errorMessage            String?  // motivo da falha (status = failed)
+  enrichmentVersion       Int      @default(0) // versão do enriquecimento analisada (idempotência)
+  createdAt               DateTime @default(now())
+  completedAt             DateTime?
+
+  prospect   Prospect    @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  currentForProspect Prospect? @relation("ProspectCurrentAnalysis")
+
+  @@index([prospectId])
+  @@index([orgId, createdAt])
 }
 
 // Ledger de pedidos de enriquecimento: correlaciona o event_id publicado no

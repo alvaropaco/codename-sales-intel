@@ -350,6 +350,55 @@ function incAvaExtractLlmFailure() {
   if (avaExtractLlmFailures) avaExtractLlmFailures.inc();
 }
 
+// ============================================================================
+// ANÁLISE PROFUNDA DE LEAD POR IA — feature 005
+// ============================================================================
+const deepAnalysisStarted = enabled
+  ? new client.Counter({
+      name: 'b2base_deep_analysis_started_total',
+      help: 'Análises profundas de lead iniciadas',
+      registers: [registry],
+    })
+  : null;
+const deepAnalysisCompleted = enabled
+  ? new client.Counter({
+      name: 'b2base_deep_analysis_completed_total',
+      help: 'Análises profundas concluídas, por veredito (contact/no_contact)',
+      labelNames: ['verdict'],
+      registers: [registry],
+    })
+  : null;
+const deepAnalysisFailed = enabled
+  ? new client.Counter({
+      name: 'b2base_deep_analysis_failed_total',
+      help: 'Análises profundas que falharam, por motivo (timeout/invalid_result/llm_error/quota)',
+      labelNames: ['reason'],
+      registers: [registry],
+    })
+  : null;
+const deepAnalysisDurationHist = enabled
+  ? new client.Histogram({
+      name: 'b2base_deep_analysis_duration_seconds',
+      help: 'Duração da análise profunda (da criação da linha à aplicação do veredito)',
+      registers: [registry],
+    })
+  : null;
+
+function incDeepAnalysisStarted() {
+  if (deepAnalysisStarted) deepAnalysisStarted.inc();
+}
+function incDeepAnalysisCompleted(verdict) {
+  if (deepAnalysisCompleted) deepAnalysisCompleted.inc({ verdict: String(verdict || 'unknown') });
+}
+function incDeepAnalysisFailed(reason) {
+  if (deepAnalysisFailed) deepAnalysisFailed.inc({ reason: String(reason || 'unknown') });
+}
+function observeDeepAnalysisDuration(seconds) {
+  if (deepAnalysisDurationHist && Number.isFinite(seconds)) {
+    deepAnalysisDurationHist.observe(Math.max(0, seconds));
+  }
+}
+
 module.exports = {
   startMetricsServer,
   refreshQueueMetrics,
@@ -373,4 +422,8 @@ module.exports = {
   observeAvaExtractDuration,
   incAvaExtractFile,
   incAvaExtractLlmFailure,
+  incDeepAnalysisStarted,
+  incDeepAnalysisCompleted,
+  incDeepAnalysisFailed,
+  observeDeepAnalysisDuration,
 };

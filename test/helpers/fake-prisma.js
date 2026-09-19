@@ -85,7 +85,10 @@ function makeModel(name) {
 
 function createFakePrisma() {
   return {
+    organization: makeModel('organization'),
     prospect: makeModel('prospect'),
+    deepAnalysis: makeModel('deepAnalysis'),
+    commercialSettings: makeModel('commercialSettings'),
     enrichmentJob: makeModel('enrichmentJob'),
     enrichmentTask: makeModel('enrichmentTask'),
     enrichmentResult: makeModel('enrichmentResult'),

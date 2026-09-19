@@ -22,6 +22,9 @@
 
 const { connect, StringCodec, JSONCodec, headers } = require('nats');
 const { randomUUID, createHash } = require('crypto');
+// Feature 005: roteamento do card pós-enriquecimento (premium → Análise profunda).
+const { getOrgPlan } = require('./plan');
+const pipelineTransitions = require('./pipeline-transitions');
 
 const sc = StringCodec();
 const jc = JSONCodec();
@@ -285,6 +288,13 @@ async function persistEnrichmentResult(prisma, result) {
     if (status === 'COMPLETED' || status === 'PARTIAL') {
       if (enrichmentVersion > appliedVersion) {
         const commercialPotential = toIntOrNull(summary.commercial_potential);
+        // Feature 005: premium pousa em "Análise profunda" (a análise de IA é
+        // disparada pelo deep-analysis.js via gatilho de entrada no estágio);
+        // demais planos seguem direto para "Prontas para contato" como antes.
+        const nextStatus = pipelineTransitions.statusAfterEnrichment(
+          prospect,
+          await getOrgPlan(prisma, prospect.orgId)
+        );
         await prisma.prospect.update({
           where: { id: prospect.id },
           data: {
@@ -298,11 +308,29 @@ async function persistEnrichmentResult(prisma, result) {
             enrichmentError: null,
             enrichmentVersion,
             enrichedAt: new Date(),
-            // Enriquecimento concluído: card em "Em Qualificação" avança
-            // automaticamente para "Prontas para contato".
-            ...(prospect.status === 'prospect' ? { status: 'qualified' } : {}),
+            ...(nextStatus
+              ? {
+                  status: nextStatus,
+                  ...(nextStatus === 'deep_analysis' ? { analysisStatus: 'not_started' } : {}),
+                }
+              : {}),
           },
         });
+
+        // Feature 005: card pousou em "Análise profunda" (premium) — dispara a
+        // análise de IA. Fire-and-forget: falha aqui não afeta o consumer.
+        if (nextStatus === 'deep_analysis') {
+          try {
+            const fresh = await prisma.prospect.findUnique({ where: { id: prospect.id } });
+            if (fresh) {
+              const runner = require('./deep-analysis').getSharedRunner(prisma);
+              const enqueued = await runner.enqueue(fresh, { trigger: 'auto' });
+              if (enqueued.started) enqueued.done.catch(() => {});
+            }
+          } catch (analysisErr) {
+            console.error('[deep-analysis] gatilho pós-enriquecimento falhou:', analysisErr.message);
+          }
+        }
 
         // Suíte multicanal pós-enriquecimento (email/WhatsApp). Falhas
         // isoladas não afetam o consumer.
