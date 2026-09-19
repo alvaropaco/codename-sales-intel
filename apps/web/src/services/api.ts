@@ -16,6 +16,7 @@ import {
   LeadAddressesResponse,
   LeadEnrichmentEntity,
   ContactDecision,
+  DeepAnalysisStatePayload,
   EmailAccount,
   OutreachCampaign,
   OutreachContactSummary,
@@ -107,6 +108,36 @@ export async function fetchContactDecision(id: string): Promise<ContactDecision 
     throw new Error(json.error || 'Erro ao carregar a decisão de contato do lead');
   }
   return json.data as ContactDecision;
+}
+
+// ── Análise profunda de lead por IA (feature 005) ───────────────────────────
+
+/**
+ * Estado/resultado da análise profunda vigente. Orgs sem o recurso (403
+ * PREMIUM_FEATURE) e leads inexistentes (404) devolvem null — a UI mostra o
+ * estado apropriado sem vazar existência de dados (SC-007).
+ */
+export async function fetchDeepAnalysis(id: string): Promise<DeepAnalysisStatePayload | null> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}/deep-analysis`);
+  if (res.status === 403 || res.status === 404) return null;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Erro ao carregar a análise profunda do lead');
+  }
+  return json.data as DeepAnalysisStatePayload;
+}
+
+/** Reexecuta a análise profunda do lead (FR-014). 409 = já em execução. */
+export async function rerunDeepAnalysis(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(id)}/deep-analysis/rerun`, {
+    method: 'POST',
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    if (res.status === 409) throw new Error('A análise já está em execução — aguarde o veredito.');
+    if (res.status === 403) throw new Error('A análise profunda é um recurso premium.');
+    throw new Error(json.error || 'Erro ao reexecutar a análise profunda');
+  }
 }
 
 // ── Planos de assinatura (trial | premium) ──────────────────────────────────
@@ -235,7 +266,8 @@ export async function fetchPipelineAnalytics(): Promise<PipelineAnalytics> {
       total_prospects: 0,
       qualified: 0,
       prospects: 0,
-      leads: 0,
+      deep_analysis: 0,
+      discarded: 0,
       qualification_rate: 0,
       closure_rate: 0,
     };

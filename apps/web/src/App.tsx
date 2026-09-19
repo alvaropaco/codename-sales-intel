@@ -68,7 +68,8 @@ export function App() {
     total_prospects: 0,
     qualified: 0,
     prospects: 0,
-    leads: 0,
+    deep_analysis: 0,
+    discarded: 0,
     qualification_rate: 0,
     closure_rate: 0,
   });

@@ -1,4 +1,49 @@
-export type ProspectStatus = 'qualified' | 'prospect' | 'lead' | 'contacted' | 'proposal' | 'closed';
+/**
+ * Estágios do pipeline (feature 005): `deep_analysis` é a "Análise profunda"
+ * (IA) entre Em Qualificação e Prontas para contato; `discarded` é destino
+ * final. `contacted`/`proposal` são valores legados fora do kanban.
+ */
+export type ProspectStatus =
+  | 'prospect'
+  | 'deep_analysis'
+  | 'qualified'
+  | 'closed'
+  | 'discarded'
+  | 'contacted' // legado — fora do kanban
+  | 'proposal'; // legado — fora do kanban
+
+/** Estado da análise profunda de IA (feature 005). */
+export type AnalysisStatus = 'not_started' | 'running' | 'completed' | 'failed';
+
+/** Veredito final da análise de IA sobre entrar em contato ou não. */
+export type AnalysisVerdict = 'contact' | 'no_contact';
+
+/** Análise profunda vigente (contrato: specs/005-deep-lead-analysis/contracts/api.md). */
+export interface DeepAnalysisResult {
+  id: string;
+  finalScore: number;
+  verdict: AnalysisVerdict;
+  summary: string;
+  /** impressões da IA sobre o lead (FR-013) */
+  impressions: string[];
+  factorsPro: string[];
+  factorsCon: string[];
+  /** score determinístico no momento da análise (referência, FR-008) */
+  deterministicScore: number | null;
+  /** false ⇒ contexto comercial da org ausente na análise (FR-017) */
+  orgContextConsidered: boolean;
+  /** veredito negativo superado manualmente pelo usuário */
+  override: boolean;
+  modelVersion: string | null;
+  completedAt: string;
+}
+
+/** Payload de GET /api/prospects/:id/deep-analysis. */
+export interface DeepAnalysisStatePayload {
+  state: AnalysisStatus;
+  analysis: DeepAnalysisResult | null;
+  errorMessage: string | null;
+}
 
 export type PlanType = 'trial' | 'premium';
 
@@ -165,6 +210,10 @@ export interface Prospect {
   enrichmentVersion?: number | null;
   enrichmentSummary?: EnrichmentSummary | null;
   enrichedAt?: string | null;
+  /** estado da análise profunda de IA (feature 005) — ausente para orgs sem o recurso */
+  analysisStatus?: AnalysisStatus | null;
+  /** veredito vigente da análise (payload do kanban, premium) */
+  verdict?: AnalysisVerdict | null;
   /** score de risco de crédito (0-100) e faixa — análise de risco */
   creditRiskScore?: number | null;
   creditRiskLevel?: 'low' | 'medium' | 'high' | string | null;
@@ -178,7 +227,10 @@ export interface PipelineAnalytics {
   total_prospects: number;
   qualified: number;
   prospects: number;
-  leads: number;
+  /** cards em "Análise profunda" (feature 005) */
+  deep_analysis: number;
+  /** leads descartados (pela IA ou manualmente — feature 005) */
+  discarded: number;
   qualification_rate: number;
   closure_rate: number;
 }
@@ -213,7 +265,8 @@ export interface StatusBreakdownItem {
 
 export interface QualificationResult {
   score: number;
-  level: 'qualified' | 'prospect' | 'lead';
+  /** banda de score — 'lead' é legado (renomeada para 'initial' na feature 005) */
+  level: 'qualified' | 'prospect' | 'initial' | 'lead';
   confidence: string;
 }
 

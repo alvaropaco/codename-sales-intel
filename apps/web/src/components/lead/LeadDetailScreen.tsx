@@ -17,6 +17,7 @@ import { useSeo } from '@/hooks/useSeo';
 import { useLeadDetail } from './useLeadDetail';
 import { LeadOverview } from './LeadOverview';
 import { LeadIntelligence } from './LeadIntelligence';
+import { LeadDeepAnalysis } from './LeadDeepAnalysis';
 import { LeadFirmographics } from './LeadFirmographics';
 import { LeadDigitalPresence } from './LeadDigitalPresence';
 import { LeadContacts } from './LeadContacts';
@@ -33,22 +34,27 @@ import { LeadEvidence } from './LeadEvidence';
  * (FR-009). Seções independentes alimentadas por useLeadDetail.
  */
 
+// Pipeline da feature 005: sem "Novas oportunidades" (lead removido); novos
+// estágios Análise profunda e Descartados. Valores legados permanecem listados
+// apenas para leads antigos que ainda os carregam.
 const PIPELINE_STATUSES: ProspectStatus[] = [
-  'lead',
   'prospect',
+  'deep_analysis',
   'qualified',
+  'closed',
+  'discarded',
   'contacted',
   'proposal',
-  'closed',
 ];
 
 const STATUS_LABEL: Record<string, string> = {
-  lead: 'Lead',
-  prospect: 'Prospect',
-  qualified: 'Qualificado',
-  contacted: 'Contatado',
-  proposal: 'Proposta',
-  closed: 'Fechado',
+  prospect: 'Em Qualificação',
+  deep_analysis: 'Análise profunda',
+  qualified: 'Prontas para contato',
+  closed: 'Cliente ganho',
+  discarded: 'Descartado',
+  contacted: 'Contatado (legado)',
+  proposal: 'Proposta (legado)',
 };
 
 export function LeadDetailScreen({
@@ -68,15 +74,30 @@ export function LeadDetailScreen({
     graphAvailable,
     addresses,
     decision,
+    deepAnalysis,
     states,
     enrichmentActive,
     retry,
     reload,
+    rerunAnalysis,
   } = useLeadDetail(leadId);
 
   const [enriching, setEnriching] = useState(false);
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState(false);
+  const [rerunningAnalysis, setRerunningAnalysis] = useState(false);
+
+  const handleRerunAnalysis = async () => {
+    setRerunningAnalysis(true);
+    try {
+      await rerunAnalysis();
+    } catch (err) {
+      // O hook recarrega a seção; erro de reexecução é visível nela.
+      console.error('Erro ao reexecutar análise profunda:', err);
+    } finally {
+      setRerunningAnalysis(false);
+    }
+  };
 
   // SEO próprio da tela (enquanto /leads/:id está ativa, o App fica em silêncio)
   useSeo({
@@ -182,7 +203,7 @@ export function LeadDetailScreen({
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate text-lg font-bold leading-tight text-foreground">{prospect.companyName}</h1>
                 <Badge variant={prospect.status === 'qualified' ? 'qualified' : 'prospect'}>
-                  {prospect.status.toUpperCase()}
+                  {STATUS_LABEL[prospect.status] || prospect.status}
                 </Badge>
                 {restricted && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-400">
@@ -246,6 +267,14 @@ export function LeadDetailScreen({
           error={states.decision.error}
           onRetry={() => retry('decision')}
           onEnrich={handleEnrich}
+        />
+        <LeadDeepAnalysis
+          state={states.deepAnalysis.status}
+          error={states.deepAnalysis.error}
+          payload={deepAnalysis}
+          onRetry={() => retry('deepAnalysis')}
+          onRerun={handleRerunAnalysis}
+          rerunning={rerunningAnalysis}
         />
         <LeadFirmographics prospect={prospect} graph={graph} />
         <LeadDigitalPresence prospect={prospect} graph={graph} />

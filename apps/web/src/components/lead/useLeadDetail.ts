@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CompanyGraph,
   ContactDecision,
+  DeepAnalysisStatePayload,
   LeadAddressesResponse,
   LeadEnrichmentEntity,
   LeadSectionState,
@@ -10,9 +11,11 @@ import {
 import {
   fetchCompanyGraph,
   fetchContactDecision,
+  fetchDeepAnalysis,
   fetchLeadAddresses,
   fetchProspect,
   fetchProspectEnrichmentEntities,
+  rerunDeepAnalysis,
 } from '@/services/api';
 
 /**
@@ -25,7 +28,13 @@ import {
  * com polling leve (FR-017).
  */
 
-export type LeadDetailSection = 'prospect' | 'entities' | 'graph' | 'addresses' | 'decision';
+export type LeadDetailSection =
+  | 'prospect'
+  | 'entities'
+  | 'graph'
+  | 'addresses'
+  | 'decision'
+  | 'deepAnalysis';
 
 export interface SectionState {
   status: LeadSectionState;
@@ -33,6 +42,7 @@ export interface SectionState {
 }
 
 const ENRICHMENT_POLL_MS = 8000;
+const ANALYSIS_POLL_MS = 5000;
 /** status em que o enriquecimento ainda pode produzir fatos novos */
 const ENRICHMENT_ACTIVE = new Set(['pending', 'queued', 'running', 'processing', 'in_progress']);
 
@@ -45,6 +55,7 @@ interface Slice {
   graphAvailable: boolean;
   addresses: LeadAddressesResponse | null;
   decision: ContactDecision | null;
+  deepAnalysis: DeepAnalysisStatePayload | null;
 }
 
 const INITIAL: Slice = {
@@ -56,6 +67,7 @@ const INITIAL: Slice = {
   graphAvailable: true,
   addresses: null,
   decision: null,
+  deepAnalysis: null,
 };
 
 export function useLeadDetail(leadId: string) {
@@ -64,6 +76,7 @@ export function useLeadDetail(leadId: string) {
   const [graphState, setGraphState] = useState<SectionState>({ status: 'loading' });
   const [addressesState, setAddressesState] = useState<SectionState>({ status: 'loading' });
   const [decisionState, setDecisionState] = useState<SectionState>({ status: 'loading' });
+  const [deepAnalysisState, setDeepAnalysisState] = useState<SectionState>({ status: 'loading' });
 
   const [prospect, setProspect] = useState<Prospect | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -72,6 +85,7 @@ export function useLeadDetail(leadId: string) {
   const [graphAvailable, setGraphAvailable] = useState(true);
   const [addresses, setAddresses] = useState<LeadAddressesResponse | null>(null);
   const [decision, setDecision] = useState<ContactDecision | null>(null);
+  const [deepAnalysis, setDeepAnalysis] = useState<DeepAnalysisStatePayload | null>(null);
 
   const cancelledRef = useRef(false);
   // índice de retry para reativar os effects (retry por seção / reload geral)
@@ -82,6 +96,7 @@ export function useLeadDetail(leadId: string) {
     graph: 0,
     addresses: 0,
     decision: 0,
+    deepAnalysis: 0,
   });
 
   const retry = useCallback((section: LeadDetailSection) => {
@@ -212,6 +227,61 @@ export function useLeadDetail(leadId: string) {
     };
   }, [leadId, notFound, reloadTick, retryTicks.decision]);
 
+  // ── Análise profunda de IA (feature 005) — seção independente ─────────────
+  // Orgs sem o recurso (403) e leads inexistentes (404) devolvem null → estado
+  // 'empty' honesto, sem vazar existência de dados (SC-007).
+  useEffect(() => {
+    if (!leadId || notFound) return;
+    let localCancel = false;
+    setDeepAnalysisState((s) => (s.status === 'ready' ? s : { status: 'loading' }));
+    (async () => {
+      try {
+        const payload = await fetchDeepAnalysis(leadId);
+        if (localCancel) return;
+        setDeepAnalysis(payload);
+        setDeepAnalysisState({ status: payload ? 'ready' : 'empty' });
+      } catch (err) {
+        if (localCancel) return;
+        setDeepAnalysisState({
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Erro ao carregar a análise profunda',
+        });
+      }
+    })();
+    return () => {
+      localCancel = true;
+    };
+  }, [leadId, notFound, reloadTick, retryTicks.deepAnalysis]);
+
+  // Polling leve enquanto a análise está em execução (veredito chega sozinho).
+  const analysisRunning = deepAnalysis?.state === 'running';
+  useEffect(() => {
+    if (!analysisRunning || notFound) return;
+    let pollCancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const payload = await fetchDeepAnalysis(leadId);
+        if (pollCancelled) return;
+        if (payload) {
+          setDeepAnalysis(payload);
+          setDeepAnalysisState({ status: 'ready' });
+        }
+      } catch {
+        // falha transitória de polling não derruba a seção; próximo tick tenta
+      }
+    }, ANALYSIS_POLL_MS);
+    return () => {
+      pollCancelled = true;
+      clearInterval(timer);
+    };
+  }, [analysisRunning, notFound, leadId, retryTicks.deepAnalysis]);
+
+  // Reexecuta a análise profunda (FR-014) e recarrega a seção.
+  const rerunAnalysis = useCallback(async () => {
+    await rerunDeepAnalysis(leadId);
+    setRetryTicks((prev) => ({ ...prev, deepAnalysis: prev.deepAnalysis + 1 }));
+  }, [leadId]);
+
   // ── Polling leve enquanto o enriquecimento está em andamento (FR-017) ─────
   const enrichmentActive = Boolean(
     prospect && (!prospect.enrichmentStatus || ENRICHMENT_ACTIVE.has(prospect.enrichmentStatus))
@@ -250,15 +320,18 @@ export function useLeadDetail(leadId: string) {
     graphAvailable,
     addresses,
     decision,
+    deepAnalysis,
     states: {
       prospect: prospectState,
       entities: entitiesState,
       graph: graphState,
       addresses: addressesState,
       decision: decisionState,
+      deepAnalysis: deepAnalysisState,
     },
     enrichmentActive,
     retry,
     reload,
+    rerunAnalysis,
   } as const;
 }

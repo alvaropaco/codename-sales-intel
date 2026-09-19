@@ -44,13 +44,16 @@ interface ExecutiveDashboardViewProps {
   onNavigateToTab: (tab: any) => void;
 }
 
+// Pipeline da feature 005: "Novas oportunidades" saiu; Análise profunda e
+// Descartados entram. Legados mantidos para leads antigos.
 const statusConfig = {
+  prospect: { label: 'Em Qualificação', color: '#6366f1', badge: 'prospect' as const },
+  deep_analysis: { label: 'Análise profunda', color: '#0ea5e9', badge: 'prospect' as const },
   qualified: { label: 'Pronto para contato', color: '#10b981', badge: 'qualified' as const },
-  prospect: { label: 'Lead', color: '#6366f1', badge: 'prospect' as const },
-  lead: { label: 'Nova oportunidade', color: '#3b82f6', badge: 'lead' as const },
   contacted: { label: 'Contato iniciado', color: '#f59e0b', badge: 'prospect' as const },
   proposal: { label: 'Proposta enviada', color: '#8b5cf6', badge: 'closed' as const },
   closed: { label: 'Cliente ganho', color: '#14b8a6', badge: 'closed' as const },
+  discarded: { label: 'Descartado', color: '#64748b', badge: 'closed' as const },
 };
 
 const getInitials = (name: string) =>

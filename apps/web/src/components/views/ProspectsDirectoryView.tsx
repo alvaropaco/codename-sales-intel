@@ -46,14 +46,17 @@ interface ProspectsDirectoryViewProps {
   onOpenSettings: () => void;
 }
 
+// Pipeline da feature 005: sem "Novas oportunidades"; Análise profunda e
+// Descartados entram no filtro. Legados mantidos para leads antigos.
 const statusLabels: Record<string, string> = {
   all: 'Todas',
+  prospect: 'Em Qualificação',
+  deep_analysis: 'Análise profunda',
   qualified: 'Prontas para contato',
-  prospect: 'Em avaliação',
-  lead: 'Novas oportunidades',
-  contacted: 'Contato iniciado',
-  proposal: 'Proposta enviada',
   closed: 'Cliente ganho',
+  discarded: 'Descartados',
+  contacted: 'Contato iniciado (legado)',
+  proposal: 'Proposta enviada (legado)',
 };
 
 const sizeRanges = [
@@ -794,7 +797,7 @@ export const ProspectsDirectoryView: React.FC<ProspectsDirectoryViewProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-slate-600 dark:text-muted-foreground mr-1">Momento comercial:</span>
-            {['all', 'qualified', 'prospect', 'lead', 'contacted'].map((st) => (
+            {['all', 'prospect', 'deep_analysis', 'qualified', 'closed', 'discarded'].map((st) => (
               <button
                 key={st}
                 onClick={() => setSelectedStatus(st)}
