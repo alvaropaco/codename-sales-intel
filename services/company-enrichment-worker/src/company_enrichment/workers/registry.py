@@ -60,7 +60,9 @@ LEAF_ENTITY_KINDS = {"PHONE", "ADDRESS", "TECHNOLOGY", "URL"}
 
 #: Follow-up rules: discovered entity kind -> worker types that may run next.
 FOLLOWUP_WORKERS_BY_KIND: dict[str, set[WorkerType]] = {
-    "DOMAIN": {WorkerType.BBOT, WorkerType.SPIDERFOOT, WorkerType.TECH, WorkerType.CONTACTS, WorkerType.SOCIAL},
+    # Feature 006 (FR-011): SPIDERFOOT saiu do plano incondicional — roda só
+    # como fallback de bbot fraco (graph_director._maybe_spiderfoot_fallback).
+    "DOMAIN": {WorkerType.BBOT, WorkerType.TECH, WorkerType.CONTACTS, WorkerType.SOCIAL},
     "URL": {WorkerType.TECH, WorkerType.CONTACTS},
     "EMAIL": {WorkerType.CONTACTS, WorkerType.PEOPLE},
     "PERSON": {WorkerType.SOCIAL, WorkerType.PEOPLE, WorkerType.RELATIONSHIPS},

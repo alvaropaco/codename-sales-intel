@@ -32,8 +32,11 @@ from company_enrichment.events.graph_contracts import (
     WorkerResultEventV1,
     ingest_collected_subject,
 )
+import os
+
 from company_enrichment.metrics.metrics import (
     ENRICHMENT_CASES_TOTAL,
+    ENRICHMENT_OSINT_FALLBACK_TOTAL,
     ENRICHMENT_DIRECTIVE_DURATION,
     ENRICHMENT_DIRECTIVES_COMPLETED,
     ENRICHMENT_DIRECTIVES_FAILED,
@@ -47,6 +50,7 @@ from company_enrichment.observability.otel import get_logger
 from company_enrichment.providers.firmographics import normalize_cnpj
 from company_enrichment.services.graph_planner import CompanySeedPlanner, EnrichmentGraphPlanner
 from company_enrichment.workers.capabilities import capability_for
+from company_enrichment.workers.capabilities.osint import should_fallback_spiderfoot
 from company_enrichment.workers.capability import (
     CapabilityContext,
     DirectiveOutcome,
@@ -372,6 +376,45 @@ class GraphDirector:
             )
             # If this was the last pending directive, finalize and aggregate the case.
             await self._maybe_finalize_case(ev.case_id)
+
+            # Feature 006 (FR-011): bbot fraco/vazio → spiderfoot como fallback.
+            if ev.worker_type == WorkerType.BBOT.value:
+                try:
+                    await self._maybe_spiderfoot_fallback(ev)
+                except Exception as exc:  # noqa: BLE001 — fallback nunca derruba o ingest
+                    log.warn("spiderfoot_fallback_failed", error=str(exc), case_id=str(ev.case_id))
+
+    async def _maybe_spiderfoot_fallback(self, ev: IngestCollectedV1) -> None:
+        """FR-011: agenda spiderfoot só quando o bbot veio fraco/vazio.
+
+        Idempotente pela unique (case, worker, entity) dos worker jobs.
+        """
+        min_events = int(os.environ.get("OSINT_SPIDERFOOT_MIN_EVENTS", "5"))
+        events_count = 0
+        if isinstance(ev.summary, dict):
+            events_count = int(ev.summary.get("events", 0) or 0)
+        if not should_fallback_spiderfoot(events_count, min_events=min_events):
+            return
+        case = await self._repo.get_case(ev.case_id)
+        if case is None or case.status in (CaseStatus.COMPLETED, CaseStatus.FAILED):
+            return
+        if case.directives_total >= case.max_directives:
+            return
+        ENRICHMENT_OSINT_FALLBACK_TOTAL.labels(frm="bbot", to="spiderfoot").inc()
+        log.info(
+            "spiderfoot_fallback_scheduled",
+            entity=ev.entity.entity_key,
+            bbot_events=events_count,
+        )
+        await self._schedule_followups(
+            case=case,
+            request_event_id=ev.request_event_id,
+            tenant_id=ev.tenant_id,
+            company_id=ev.company_id,
+            entity_type=ev.entity.entity_type,
+            entity_key=ev.entity.entity_key,
+            depth=ev.depth,
+        )
 
     async def _maybe_finalize_case(self, case_id: uuid.UUID) -> None:
         case = await self._repo.get_case(case_id)

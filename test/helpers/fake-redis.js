@@ -52,8 +52,14 @@ function createFakeRedis({ clock = { now: () => Date.now() } } = {}) {
       return entry ? entry.value : null;
     },
     async set(key, value, ...args) {
-      // suporta SET key val PX <ms> e SETEX-like via args
+      // suporta SET key val PX <ms> [NX] e SETEX-like via args
       if (args[0] === 'PX' && args[1] != null) {
+        // NX: só grava se a chave NÃO existir (lock de líder) — retorna null se existir
+        if (args.includes('NX')) {
+          if (live(key)) return null;
+          store.set(key, { value: String(value), expiresAt: now() + Number(args[1]) });
+          return 'OK';
+        }
         store.set(key, { value: String(value), expiresAt: now() + Number(args[1]) });
       } else {
         store.set(key, { value: String(value), expiresAt: null });

@@ -216,7 +216,7 @@ test('US2 retry transiente: re-publica attempt+1 com notBefore; task RETRY→QUE
   assert.strictEqual(stillRunning.status, 'RUNNING'); // retry em voo não conclui o job
 });
 
-test('US2 esgotamento: retry com attempt == maxAttempts → FAILED definitivo', async () => {
+test('US2 esgotamento (006): transiente esgotado → PARKED; job DEGRADED até a task concluir', async () => {
   const deps = makeDeps();
   const { job, tasks } = await seedJob(deps);
   const task = tasks[0];
@@ -225,16 +225,17 @@ test('US2 esgotamento: retry com attempt == maxAttempts → FAILED definitivo', 
     error: { type: 'PROVIDER_UNAVAILABLE', message: 'fora do ar', retryable: true },
   }));
   const row = await deps.prisma.enrichmentTask.findUnique({ where: { id: task.id } });
-  assert.strictEqual(row.status, 'FAILED');
-  assert.strictEqual(row.attempt, 1);
+  assert.strictEqual(row.status, 'PARKED'); // 006: nunca FAILED por transiente
+  assert.ok(row.nextAttemptAt, 'agendamento do sweeper presente');
   const republished = decoded(deps.js, 'enrichment.task.').filter((m) => m.attempt === 2);
-  assert.strictEqual(republished.length, 0); // esgotado: nenhuma re-publicação
+  assert.strictEqual(republished.length, 0); // esgotado: nenhuma re-publicação imediata
   let finalJob = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
   assert.strictEqual(finalJob.status, 'RUNNING'); // demais tasks ainda na fila
-  // Concluindo as restantes, o job fecha PARTIAL (1 falha definitiva + 2 sucessos).
+  // Concluindo as restantes, o job fica DEGRADED (task parked pendente) —
+  // não PARTIAL: refinaliza quando a parked concluir (sweeper).
   for (const t of tasks.slice(1)) await deps.manager.handleResult(mkResult(job, t, 'COMPLETED'));
   finalJob = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
-  assert.strictEqual(finalJob.status, 'PARTIAL');
+  assert.strictEqual(finalJob.status, 'DEGRADED');
 });
 
 test('US2 TIMEOUT: volta à fila com causa TIMEOUT registrada', async () => {
@@ -472,7 +473,7 @@ test('resync: task RUNNING órfã (worker morreu) é re-publicada e volta a QUEU
   assert.ok(forTask.every((m) => m.jobId === job.id));
 });
 
-test('resync: RUNNING órfã sem tentativas restantes vira FAILED e o job conclui', async () => {
+test('resync: RUNNING órfã sem tentativas restantes vira PARKED (006) e o job DEGRADED', async () => {
   const deps = makeDeps();
   const { job, tasks } = await seedJob(deps);
   // Todas RUNNING órfãs; duas sem tentativas restantes, uma com.
@@ -486,20 +487,21 @@ test('resync: RUNNING órfã sem tentativas restantes vira FAILED e o job conclu
 
   const r = await deps.manager.resyncStalledTasks();
   assert.strictEqual(r.reclaimed, 1);
-  assert.strictEqual(r.failed, 2);
-  const failedTask = await deps.prisma.enrichmentTask.findUnique({ where: { id: esgotada1.id } });
-  assert.strictEqual(failedTask.status, 'FAILED');
+  assert.strictEqual(r.parked, 2); // 006: esgotadas vão para PARKED (nunca FAILED)
+  const parkedTask = await deps.prisma.enrichmentTask.findUnique({ where: { id: esgotada1.id } });
+  assert.strictEqual(parkedTask.status, 'PARKED');
   // Job não conclui: a task recuperada segue ativa (QUEUED).
   const stillRunning = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
   assert.strictEqual(stillRunning.status, 'RUNNING');
 
-  // Esgota a última também → sweep finaliza o job (todas falharam → FAILED).
+  // Esgota a última também → job DEGRADED (todas parkadas/aguardando) —
+  // refinaliza quando o sweeper drenar.
   await deps.prisma.enrichmentTask.update({ where: { id: recuperavel.id }, data: { attempt: recuperavel.maxAttempts, status: 'RUNNING' } });
   backdate(deps.prisma, recuperavel.id, { startedAt: 'old' });
   await deps.manager.resyncStalledTasks();
   const finalized = await deps.prisma.enrichmentJob.findUnique({ where: { id: job.id } });
-  assert.strictEqual(finalized.status, 'FAILED');
-  assert.ok(deps.js.published.some((m) => m.subject === contracts.JOB_COMPLETED_SUBJECT));
+  assert.strictEqual(finalized.status, 'DEGRADED');
+  assert.strictEqual(deps.js.published.filter((m) => m.subject === contracts.JOB_COMPLETED_SUBJECT).length, 0);
 });
 
 test('resync: QUEUED nunca publicada (attempt 0, velha) é publicada com attempt 1', async () => {

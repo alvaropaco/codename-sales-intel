@@ -384,6 +384,91 @@ const deepAnalysisDurationHist = enabled
     })
   : null;
 
+// ============================================================================
+// RESILIÊNCIA DO ENRIQUECIMENTO — feature 006
+// ============================================================================
+const enrichmentTasksParked = enabled
+  ? new client.Gauge({
+      name: 'b2base_enrichment_tasks_parked',
+      help: 'Tasks de enriquecimento em PARKED (aguardando sweeper), por provedor e organização',
+      labelNames: ['provider', 'orgId'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentTasksParkedTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_tasks_parked_total',
+      help: 'Total de entradas em PARKED, por provedor e organização',
+      labelNames: ['provider', 'orgId'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentTasksRepublishedTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_tasks_republished_total',
+      help: 'Re-publicações do sweeper, por provedor',
+      labelNames: ['provider'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentParkExpiredTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_park_expired_total',
+      help: 'Tasks que esgotaram a janela parked (falha real), por capability',
+      labelNames: ['capability'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentFailuresRealTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_enrichment_failures_real_total',
+      help: 'Falhas terminais não-transientes, por capability, tipo de erro e organização',
+      labelNames: ['capability', 'error_type', 'orgId'],
+      registers: [registry],
+    })
+  : null;
+const enrichmentJobsDegraded = enabled
+  ? new client.Gauge({
+      name: 'b2base_enrichment_jobs_degraded',
+      help: 'Jobs em estado DEGRADED (aguardando tasks parked)',
+      registers: [registry],
+    })
+  : null;
+const enrichmentProviderCircuitState = enabled
+  ? new client.Gauge({
+      name: 'b2base_enrichment_provider_circuit_state',
+      help: 'Estado do circuito do provedor (0=HEALTHY, 1=HALF-OPEN/DEGRADED, 2=OPEN)',
+      labelNames: ['provider'],
+      registers: [registry],
+    })
+  : null;
+
+function setEnrichmentTasksParked(provider, n, orgId) {
+  const labels = orgId ? { provider: String(provider || 'unknown'), orgId } : { provider: String(provider || 'unknown') };
+  if (enrichmentTasksParked) enrichmentTasksParked.set(labels, Math.max(0, n));
+}
+function incEnrichmentTasksParked(provider, orgId) {
+  const labels = orgId ? { provider: String(provider || 'unknown'), orgId } : { provider: String(provider || 'unknown') };
+  if (enrichmentTasksParkedTotal) enrichmentTasksParkedTotal.inc(labels);
+}
+function incEnrichmentTasksRepublished(provider) {
+  if (enrichmentTasksRepublishedTotal) enrichmentTasksRepublishedTotal.inc({ provider: String(provider || 'unknown') });
+}
+function incEnrichmentParkExpired(capability) {
+  if (enrichmentParkExpiredTotal) enrichmentParkExpiredTotal.inc({ capability: String(capability || 'unknown') });
+}
+function incEnrichmentFailuresReal(capability, errorType, orgId) {
+  const labels = { capability: String(capability || 'unknown'), error_type: String(errorType || 'unknown') };
+  if (orgId) labels.orgId = String(orgId);
+  if (enrichmentFailuresRealTotal) enrichmentFailuresRealTotal.inc(labels);
+}
+function setEnrichmentJobsDegraded(n) {
+  if (enrichmentJobsDegraded) enrichmentJobsDegraded.set(Math.max(0, n));
+}
+function setEnrichmentProviderCircuit(provider, state) {
+  if (enrichmentProviderCircuitState) enrichmentProviderCircuitState.set({ provider: String(provider || 'unknown') }, Math.max(0, Math.min(2, Number(state) || 0)));
+}
+
 function incDeepAnalysisStarted() {
   if (deepAnalysisStarted) deepAnalysisStarted.inc();
 }
@@ -422,8 +507,18 @@ module.exports = {
   observeAvaExtractDuration,
   incAvaExtractFile,
   incAvaExtractLlmFailure,
+  observeAvaExtractDuration,
+  incAvaExtractFile,
+  incAvaExtractLlmFailure,
   incDeepAnalysisStarted,
   incDeepAnalysisCompleted,
   incDeepAnalysisFailed,
   observeDeepAnalysisDuration,
+  setEnrichmentTasksParked,
+  incEnrichmentTasksParked,
+  incEnrichmentTasksRepublished,
+  incEnrichmentParkExpired,
+  incEnrichmentFailuresReal,
+  setEnrichmentJobsDegraded,
+  setEnrichmentProviderCircuit,
 };

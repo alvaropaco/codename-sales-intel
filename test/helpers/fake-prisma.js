@@ -11,8 +11,10 @@ function makeId(prefix) {
 function matches(record, where = {}) {
   return Object.entries(where).every(([field, expected]) => {
     if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
-      // Operadores do Prisma suportados pelo fake: { lt, gte }
+      // Operadores do Prisma suportados pelo fake: { lt, lte, gt, gte }
       if ('lt' in expected) return new Date(record[field]) < new Date(expected.lt);
+      if ('lte' in expected) return new Date(record[field]) <= new Date(expected.lte);
+      if ('gt' in expected) return new Date(record[field]) > new Date(expected.gt);
       if ('gte' in expected) return new Date(record[field]) >= new Date(expected.gte);
       return matches(record[field] || {}, expected);
     }
@@ -29,11 +31,20 @@ function applyData(record, data) {
 }
 
 /** Cria um model fake com as operações usadas pelo motor. */
-function makeModel(name) {
+function makeModel(name, uniqueFields = []) {
   const rows = [];
   const model = {
     rows,
     async create({ data }) {
+      // Impõe @unique (006): duplicata → P2002, como no Prisma real.
+      for (const field of uniqueFields) {
+        const v = data[field];
+        if (v != null && rows.some((r) => r[field] === v)) {
+          const err = new Error(`fake-prisma: ${name}.${field} único violado (${v})`);
+          err.code = 'P2002';
+          throw err;
+        }
+      }
       const row = { id: data.id || makeId(name.slice(0, 3)) };
       rows.push(row);
       return applyData(row, data);
@@ -50,8 +61,9 @@ function makeModel(name) {
       }
       return found[0] || null;
     },
-    async findMany({ where = {} } = {}) {
-      return rows.filter((r) => matches(r, where));
+    async findMany({ where = {}, take } = {}) {
+      const found = rows.filter((r) => matches(r, where));
+      return take != null ? found.slice(0, Math.max(0, Number(take))) : found;
     },
     async update({ where, data }) {
       const key = Object.values(where)[0];
@@ -66,6 +78,11 @@ function makeModel(name) {
       const existing = rows.find((r) => r[field] === key);
       if (existing) return model.update({ where, data: update });
       return model.create({ data: { ...create, [field]: key } });
+    },
+    async updateMany({ where = {}, data }) {
+      const matched = rows.filter((r) => matches(r, where));
+      for (const r of matched) applyData(r, data);
+      return { count: matched.length };
     },
     async createMany({ data }) {
       for (const item of data) await model.create({ data: item });
@@ -91,6 +108,8 @@ function createFakePrisma() {
     prospect: makeModel('prospect'),
     deepAnalysis: makeModel('deepAnalysis'),
     commercialSettings: makeModel('commercialSettings'),
+    enrichmentTaskRetryEvent: makeModel('enrichmentTaskRetryEvent'),
+    opsNotification: makeModel('opsNotification', ['dedupKey']),
     enrichmentJob: makeModel('enrichmentJob'),
     enrichmentTask: makeModel('enrichmentTask'),
     enrichmentResult: makeModel('enrichmentResult'),

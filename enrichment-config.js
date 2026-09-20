@@ -44,7 +44,9 @@ const RAW_RETENTION_DAYS = () => envInt('RAW_RETENTION_DAYS', 90);
 
 // ── Retry: espera crescente entre tentativas (ms) + jitter (FR-010) ────────
 const RETRY_DELAYS_MS = () => {
-  const raw = String(process.env.RETRY_DELAYS_MS || '5000,15000,60000,300000');
+  // Feature 006: janela imediata estendida (último degrau = plateau de 30min,
+  // usado como mínimo de agendamento quando a task vai a PARKED).
+  const raw = String(process.env.RETRY_DELAYS_MS || '10000,30000,120000,600000,1800000');
   const parsed = raw.split(',').map((s) => parseInt(s.trim(), 10)).filter(Number.isFinite);
   return parsed.length ? parsed : [5000, 15000, 60000, 300000];
 };
@@ -79,6 +81,11 @@ const WORKER_FETCH_EXPIRES_MS = () => envInt('ENRICHMENT_WORKER_FETCH_EXPIRES_MS
 // Precisa cobrir o maior backoff de retry (RETRY_DELAYS_MS) + tempo de
 // execução, para não roubar task de worker vivo.
 const STALE_TASK_MS = () => envInt('ENRICHMENT_STALE_TASK_MS', 10 * 60 * 1000);
+
+// ── Resiliência (feature 006): sweeper de tasks PARKED ──────────────────────
+const ENRICHMENT_SWEEPER_INTERVAL_MS = () => envInt('ENRICHMENT_SWEEPER_INTERVAL_MS', 60000);
+const ENRICHMENT_PARK_WINDOW_HOURS = () => envInt('ENRICHMENT_PARK_WINDOW_HOURS', 72);
+const ENRICHMENT_SWEEPER_PROVIDER_RATE_PER_MIN = () => envInt('ENRICHMENT_SWEEPER_PROVIDER_RATE_PER_MIN', 6);
 const RESYNC_INTERVAL_MS = () => envInt('ENRICHMENT_RESYNC_INTERVAL_MS', 60 * 1000);
 // Última linha de defesa: job RUNNING sem NENHUM progresso de task por este
 // período tem as tasks ativas canceladas e o job finalizado — garante que
@@ -104,6 +111,9 @@ module.exports = {
   WORKER_FETCH_BATCH,
   WORKER_FETCH_EXPIRES_MS,
   STALE_TASK_MS,
+  ENRICHMENT_SWEEPER_INTERVAL_MS,
+  ENRICHMENT_PARK_WINDOW_HOURS,
+  ENRICHMENT_SWEEPER_PROVIDER_RATE_PER_MIN,
   RESYNC_INTERVAL_MS,
   WATCHDOG_STALE_MS,
 };

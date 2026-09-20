@@ -7,11 +7,20 @@ always attached.
 """
 from __future__ import annotations
 
+import asyncio
+import os
 import re
+import time
 from typing import Any
 
 from company_enrichment.db.graph_models import EdgeKind
+from company_enrichment.metrics.metrics import (
+    ENRICHMENT_OSINT_FALLBACK_TOTAL,
+    ENRICHMENT_OSINT_SCANS_BY_OUTCOME,
+    ENRICHMENT_OSINT_SCAN_DURATION_SECONDS,
+)
 from company_enrichment.observability.otel import get_logger
+from company_enrichment.providers.base import ProviderError
 from company_enrichment.providers.bbot import BbotEvent
 from company_enrichment.providers.spiderfoot import SpiderFootEvent
 from company_enrichment.services.entity_resolution import (
@@ -63,6 +72,21 @@ def _ev(source_type: str, url: str | None = None, provider: str | None = None) -
     }
 
 
+def should_fallback_spiderfoot(events_count: int, min_events: int | None = None) -> bool:
+    """FR-011: spiderfoot roda só como fallback — bbot vazio/insuficiente."""
+    if min_events is None:
+        min_events = int(os.environ.get("OSINT_SPIDERFOOT_MIN_EVENTS", "5"))
+    return int(events_count) < int(min_events)
+
+
+def _osint_deadline_s(tool: str, default: int) -> float:
+    env_key = f"OSINT_{tool.upper()}_DEADLINE_S"
+    try:
+        return float(os.environ.get(env_key, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 class BbotCapability(WorkerCapability):
     """BBOT reconnaissance over a domain/email/company, mapped into the graph."""
 
@@ -90,7 +114,22 @@ class BbotCapability(WorkerCapability):
             outcome.summary = {"enabled": False}
             return outcome
 
-        events = await ctx.bbot.scan(target, hints)
+        # Feature 006 (FR-010): deadline com sucesso parcial — timeout NÃO é
+        # falha; os eventos coletados até o prazo são aproveitados.
+        deadline_s = _osint_deadline_s("bbot", 240)
+        started = time.monotonic()
+        partial = False
+        try:
+            events = await asyncio.wait_for(ctx.bbot.scan(target, hints), timeout=deadline_s)
+        except asyncio.TimeoutError:
+            events = []
+            partial = True
+        except ProviderError as exc:
+            if exc.code == "BBOT_TIMEOUT":
+                events = []
+                partial = True
+            else:
+                raise
         owner_type = entity.entity_type
         owner_key = entity.entity_key
 
@@ -115,7 +154,11 @@ class BbotCapability(WorkerCapability):
             "emails": len(email_seen),
             "domains": len(domain_seen),
             "technologies": len(tech_seen),
+            "partial": partial,  # feature 006 (FR-010): concluiu no deadline?
         }
+        outcome_label = "partial" if partial else ("empty" if len(events) == 0 else "full")
+        ENRICHMENT_OSINT_SCANS_BY_OUTCOME.labels(tool="bbot", outcome=outcome_label).inc()
+        ENRICHMENT_OSINT_SCAN_DURATION_SECONDS.labels(tool="bbot").observe(time.monotonic() - started)
         return outcome
 
     def _map_event(self, ev: BbotEvent, **kw) -> None:
@@ -208,11 +251,35 @@ class SpiderFootCapability(WorkerCapability):
         if ctx.spiderfoot is None or not ctx.spiderfoot.enabled:
             outcome.status = "DISCARDED"
             outcome.error_code = "SPIDERFOOT_DISABLED"
+            outcome.summary = {"enabled": False}
             return outcome
-        events = await ctx.spiderfoot.scan(target, hints)
+
+        # Feature 006 (FR-010): deadline com sucesso parcial (mesmo trato do bbot).
+        deadline_s = _osint_deadline_s("spiderfoot", 480)
+        started = time.monotonic()
+        partial = False
+        try:
+            events = await asyncio.wait_for(ctx.spiderfoot.scan(target, hints), timeout=deadline_s)
+        except asyncio.TimeoutError:
+            events = []
+            partial = True
+        except ProviderError as exc:
+            if exc.code == "SPIDERFOOT_TIMEOUT":
+                events = []
+                partial = True
+            else:
+                raise
+
         for ev in events[:budget_max_facts]:
             self._map_event(ev, outcome, entity.entity_type, entity.entity_key)
-        outcome.summary = {"events": len(events), "discovered": len(outcome.entities)}
+        outcome.summary = {
+            "events": len(events),
+            "discovered": len(outcome.entities),
+            "partial": partial,  # feature 006 (FR-010)
+        }
+        outcome_label = "partial" if partial else ("empty" if len(events) == 0 else "full")
+        ENRICHMENT_OSINT_SCANS_BY_OUTCOME.labels(tool="spiderfoot", outcome=outcome_label).inc()
+        ENRICHMENT_OSINT_SCAN_DURATION_SECONDS.labels(tool="spiderfoot").observe(time.monotonic() - started)
         return outcome
 
     @staticmethod

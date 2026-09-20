@@ -183,4 +183,26 @@ async function sendWelcomeEmail(user) {
   }
 }
 
-module.exports = { sendWelcomeEmail, WELCOME_SUBJECT };
+/**
+ * E-mail de OPERAÇÕES (feature 006): alertas de falha de enriquecimento e
+ * digest diário. Best-effort — falha de envio é só logada (FR-017).
+ */
+async function sendOpsEmail({ to, subject, text, html }) {
+  const cfg = _fromEnv();
+  const transporter = _transporter(cfg);
+  if (!transporter || !to) return { sent: false, reason: 'not_configured' };
+  try {
+    const info = await transporter.sendMail({
+      from: `"${cfg.fromName}" <${cfg.from}>`,
+      to,
+      subject,
+      text,
+      html: html || undefined,
+    });
+    return { sent: true, messageId: info && info.messageId };
+  } catch (err) {
+    return { sent: false, reason: err.message };
+  }
+}
+
+module.exports = { sendWelcomeEmail, sendOpsEmail, WELCOME_SUBJECT };

@@ -680,7 +680,8 @@ model EnrichmentJob {
   id          String    @id @default(cuid())
   orgId       String
   prospectId  String
-  // PENDING | RUNNING | PARTIAL | COMPLETED | FAILED | CANCELLED
+  // PENDING | RUNNING | DEGRADED | PARTIAL | COMPLETED | FAILED | CANCELLED
+  // DEGRADED (006): aguardando tasks PARKED — não-terminal, refinaliza depois.
   status      String    @default("PENDING")
   // manual | api | csv_import | qualification_stage | discovery
   trigger     String
@@ -713,7 +714,9 @@ model EnrichmentTask {
   provider        String?
   input           Json
   inputHash       String
-  // PENDING | QUEUED | RUNNING | COMPLETED | FAILED | RETRY | TIMEOUT | BLOCKED | CANCELLED | SKIPPED
+  // PENDING | QUEUED | RUNNING | PARKED | COMPLETED | FAILED | RETRY | TIMEOUT | BLOCKED | CANCELLED | SKIPPED
+  // PARKED (006): erro transiente com tentativas esgotadas — aguardando o
+  // sweeper re-publicar. NUNCA termina FAILED por erro transitório (FR-001).
   status          String    @default("PENDING")
   priority        Int       @default(2) // 0=highest … 3=background
   attempt         Int       @default(0)
@@ -724,16 +727,58 @@ model EnrichmentTask {
   spawnedByTaskId String? // rastreabilidade da expansão (FR-013)
   startedAt       DateTime?
   completedAt     DateTime?
+  // ── Resiliência (feature 006) ─────────────────────────────────────────────
+  nextAttemptAt   DateTime? // agendamento do sweeper (retryAfterMs/plateau)
+  parkedAt        DateTime? // quando entrou em PARKED
+  parkCycles      Int       @default(0) // ciclos parked já contados
   lastError       Json? // { type, message, provider, attempt }
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   job    EnrichmentJob    @relation(fields: [jobId], references: [id])
   result EnrichmentResult?
+  retryEvents EnrichmentTaskRetryEvent[]
 
   @@index([jobId, status])
   @@index([status, priority])
   @@index([orgId, prospectId])
+  @@index([status, nextAttemptAt])
+}
+
+// Auditoria de retries parked (feature 006, FR-007): um ciclo = uma linha.
+// Dedup de re-publicação do sweeper: publishedAt IS NULL = ciclo vigente.
+model EnrichmentTaskRetryEvent {
+  id           String    @id @default(cuid())
+  taskId       String
+  orgId        String
+  cycle        Int
+  errorType    String
+  provider     String?
+  message      String?
+  scheduledFor DateTime
+  publishedAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  task EnrichmentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, cycle])
+  @@index([orgId, createdAt])
+}
+
+// Registro/dedup de notificações à operação (feature 006, FR-014..017).
+model OpsNotification {
+  id          String   @id @default(cuid())
+  dedupKey    String   @unique
+  kind        String   // task_failed | circuit_open | park_expired | digest
+  severity    String   @default("warning") // critical | warning | info
+  orgId       String?
+  title       String
+  payload     Json
+  channels    Json     @default("[]")
+  deliveredAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // Resultado final persistido PELO WORKER (um por task; retentativas sobrescrevem

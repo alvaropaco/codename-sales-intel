@@ -68,6 +68,7 @@ function createEnrichmentManager(deps = {}) {
     now = () => new Date(),
     onEvent = () => {}, // gancho de métricas (US8)
     assertQuota = null, // guard de cota mensal (US3) — injetável
+    onFailureReal = null, // feature 006: falha REAL (não-transiente) para notificação
   } = deps;
 
   // ── Publicação ────────────────────────────────────────────────────────────
@@ -188,6 +189,20 @@ function createEnrichmentManager(deps = {}) {
     const { tasks, counts } = await computeCounts(jobId);
     const active = tasks.filter((t) => ACTIVE_STATUSES.includes(t.status));
     if (active.length > 0) return null;
+
+    // Feature 006 (FR-009): só tasks PARKED restantes → job DEGRADED
+    // (aguardando provedor) — NÃO-terminal: refinaliza quando concluírem.
+    const parked = tasks.filter((t) => t.status === 'PARKED');
+    if (parked.length > 0) {
+      const current = await prisma.enrichmentJob.findUnique({ where: { id: jobId } });
+      if (current && current.status === 'DEGRADED') return null; // já refletido
+      const job = await prisma.enrichmentJob.update({
+        where: { id: jobId },
+        data: { status: 'DEGRADED', completedAt: null },
+      });
+      onEvent('job.degraded', { capability: '*', status: 'DEGRADED', parked: parked.length });
+      return { ...job, degraded: true };
+    }
 
     const completed = counts.completed;
     const failed = counts.failed;
@@ -552,6 +567,40 @@ function createEnrichmentManager(deps = {}) {
       return;
     }
 
+    // Feature 006 (FR-001/FR-006): erro TRANSIENTE esgotado NUNCA termina
+    // FAILED — entra em PARKED com agendamento para o sweeper re-publicar
+    // (retryAfterMs do provedor ou plateau do backoff, o que for maior).
+    if (retryable) {
+      const retryAfterMs = Number(error.retryAfterMs) || 0;
+      const plateau = config.backoffDelayMs(task.maxAttempts);
+      const nextAttemptAt = new Date(now().getTime() + Math.max(retryAfterMs, plateau));
+      const parkCycles = (task.parkCycles || 0) + 1;
+      await prisma.enrichmentTask.update({
+        where: { id: task.id },
+        data: {
+          status: 'PARKED',
+          parkedAt: now(),
+          parkCycles,
+          nextAttemptAt,
+          lastError: { type, message: error.message || '', provider: result.provider || null, attempt: task.attempt },
+        },
+      });
+      await prisma.enrichmentTaskRetryEvent.create({
+        data: {
+          taskId: task.id,
+          orgId: task.orgId,
+          cycle: parkCycles,
+          errorType: type,
+          provider: result.provider || null,
+          message: String(error.message || '').slice(0, 300),
+          scheduledFor: nextAttemptAt,
+        },
+      });
+      onEvent('task.parked', { capability: task.capability, provider: result.provider || null });
+      return;
+    }
+
+    // Falha REAL: não-transiente (entrada inválida, recurso inexistente etc.)
     await prisma.enrichmentTask.update({
       where: { id: task.id },
       data: {
@@ -560,6 +609,14 @@ function createEnrichmentManager(deps = {}) {
         lastError: { type, message: error.message || '', provider: result.provider || null, attempt: task.attempt },
       },
     });
+    if (typeof onFailureReal === 'function') {
+      try {
+        onFailureReal({
+          taskId: task.id, orgId: task.orgId, jobId: task.jobId, prospectId: task.prospectId,
+          capability: task.capability, errorType: type, message: error.message || '', provider: result.provider || null,
+        });
+      } catch (_e) { /* notificação nunca afeta o enriquecimento (FR-017) */ }
+    }
     onEvent('task.failed', { capability: task.capability });
   }
 
@@ -705,19 +762,38 @@ function createEnrichmentManager(deps = {}) {
     const cutoff = new Date(now().getTime() - staleMs);
     let reclaimed = 0;
     let failed = 0;
+    let parked = 0;
     const affectedJobs = new Set();
 
     async function reclaim(task, { republishAttempt }) {
       if ((task.attempt || 0) >= task.maxAttempts) {
+        // Feature 006 (FR-001): órfã com tentativas esgotadas NUNCA falha —
+        // vai para PARKED e o sweeper re-publica após a janela.
+        const parkedAt = now();
+        const nextAttemptAt = new Date(parkedAt.getTime() + config.backoffDelayMs(task.maxAttempts));
+        const parkCycles = (task.parkCycles || 0) + 1;
         await prisma.enrichmentTask.update({
           where: { id: task.id },
           data: {
-            status: 'FAILED',
-            completedAt: now(),
-            lastError: { type: 'ORPHANED', message: 'sem resultado após esgotar tentativas; recuperada pelo resync', attempt: task.attempt },
+            status: 'PARKED',
+            parkedAt,
+            parkCycles,
+            nextAttemptAt,
+            lastError: { type: 'ORPHANED', message: 'sem resultado após esgotar tentativas; PARKED pelo resync (006)', attempt: task.attempt },
           },
         });
-        failed += 1;
+        await prisma.enrichmentTaskRetryEvent.create({
+          data: {
+            taskId: task.id,
+            orgId: task.orgId,
+            cycle: parkCycles,
+            errorType: 'ORPHANED',
+            provider: task.provider || null,
+            message: 'sem resultado após esgotar tentativas; PARKED pelo resync (006)',
+            scheduledFor: nextAttemptAt,
+          },
+        });
+        parked += 1;
       } else {
         await publishTaskMessage(task, { attempt: republishAttempt });
         await prisma.enrichmentTask.update({
@@ -830,7 +906,13 @@ function createEnrichmentManager(deps = {}) {
       }
     }
 
-    return { reclaimed, failed, watchdogJobs, jobsReevaluated: runningJobs.length, affectedJobs: [...affectedJobs] };
+    return { reclaimed, failed, parked, watchdogJobs, jobsReevaluated: runningJobs.length, affectedJobs: [...affectedJobs] };
+  }
+
+  // Feature 006: re-publicação de task PARKED pelo sweeper (mesmo subject/
+  // payload do retry normal — nenhum contrato novo, R1).
+  async function republishParkedTask(task, { attempt } = {}) {
+    return publishTaskMessage(task, { attempt: attempt ?? (task.attempt || 0) + 1 });
   }
 
   return {
@@ -840,6 +922,8 @@ function createEnrichmentManager(deps = {}) {
     publishQueuedTasks,
     handleResult,
     resyncStalledTasks,
+    republishParkedTask,
+    maybeFinalizeJob,
     getJobStatus,
     getProspectFacts,
     dispatchForProspect,
@@ -881,7 +965,7 @@ async function defaultQuotaGuard(prisma, orgId, plan, config) {
   }
 }
 
-function getManager({ prisma } = {}) {
+function getManager({ prisma, onFailureReal } = {}) {
   if (!_default) {
     const { getOrgPlan } = require('./plan');
     const { createLogger } = require('./logger');
@@ -892,6 +976,7 @@ function getManager({ prisma } = {}) {
       getOrgPlan,
       logger: createLogger({ component: 'enrichment-manager' }),
       assertQuota: ({ orgId, plan }) => defaultQuotaGuard(prisma, orgId, plan, config),
+      onFailureReal,
     });
     scheduleRawPrune(prisma, config);
     schedulePendingGauge(prisma);

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import socket
+import sys
 import uuid
 
 from company_enrichment.ai.llm import AIGatewayClient
@@ -292,6 +294,14 @@ class App:
 
 
 def main() -> None:
+    # Feature 006 (FR-012): expõe as métricas Prometheus do worker (:9091)
+    # para o scrape do monitoring-stack (anotação de pod no helm).
+    try:
+        from prometheus_client import start_http_server
+
+        start_http_server(int(os.environ.get("WORKER_METRICS_PORT", "9091")))
+    except Exception as exc:  # noqa: BLE001 — métricas nunca derrubam o worker
+        print(f"[worker] metrics server indisponível: {exc}", file=__import__("sys").stderr)
     settings = Settings()
     asyncio.run(App(settings).run())
 

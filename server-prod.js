@@ -73,7 +73,78 @@ const { maskProspectForTrial, maskCompanyGraphForTrial, stripMaskedIncomingField
 // ─── Motor de enriquecimento distribuído v2 (specs/001-distributed-enrichment)
 const enrichmentConfig = require('./enrichment-config');
 const enrichmentCapabilities = require('./enrichment-capabilities');
-const enrichmentManager = require('./enrichment-manager').getManager({ prisma });
+// Feature 006: notificador de falhas reais (Slack tempo real + digest e-mail).
+const enrichmentNotifier = require('./enrichment-notifier').createEnrichmentNotifier({
+  prisma,
+  logger: console,
+});
+const enrichmentManager = require('./enrichment-manager').getManager({
+  prisma,
+  onFailureReal: async (info) => {
+    try {
+      const lead = await prisma.prospect.findUnique({
+        where: { id: info.prospectId },
+        select: { companyName: true, cnpj: true },
+      });
+      const metrics = require('./metrics');
+      if (metrics.isEnabled()) metrics.incEnrichmentFailuresReal(info.capability, info.errorType, info.orgId);
+      await enrichmentNotifier.notifyTaskFailed({
+        ...info,
+        companyName: lead ? lead.companyName : info.prospectId,
+        cnpj: lead ? lead.cnpj : null,
+      });
+    } catch (err) {
+      console.error('[notifier] falha real não notificada:', err.message);
+    }
+  },
+});
+// Feature 006: sweeper de tasks PARKED (re-publicação com taxa por provedor).
+const enrichmentSweeper = require('./enrichment-sweeper');
+
+// Singleton do sweeper (Redis dedicado ao lock/token bucket + re-publicação
+// via manager + métricas prom-client). Lazy — não conecta no require.
+let _sweeper = null;
+let _sweeperRedis = null;
+const _circuitOpenSince = new Map(); // provider → primeiro momento visto em OPEN
+async function getSweeperCircuitState(provider) {
+  try {
+    if (!_sweeperRedis) return 0;
+    const state = await _sweeperRedis.get(`cb:${provider}:state`);
+    if (state === 'OPEN') {
+      const first = _circuitOpenSince.get(provider) || Date.now();
+      if (!_circuitOpenSince.has(provider)) _circuitOpenSince.set(provider, first);
+      return Date.now() - first > 3600e3 ? 2 : 1;
+    }
+    _circuitOpenSince.delete(provider);
+    return state === 'HALF-OPEN' || state === 'DEGRADED' ? 1 : 0;
+  } catch (_e) {
+    return 0;
+  }
+}
+
+function getSweeper() {
+  if (_sweeper) return _sweeper;
+  const Redis = require('ioredis');
+  _sweeperRedis = new Redis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    retryStrategy: (t) => Math.min(t * 2000, 30000),
+  });
+  _sweeperRedis.on('error', (e) => console.error('[sweeper] redis:', e.message));
+  _sweeper = enrichmentSweeper.createEnrichmentSweeper({
+    prisma,
+    republishTask: (task, opts) => enrichmentManager.republishParkedTask(task, opts),
+    redis: _sweeperRedis,
+    notifier: enrichmentNotifier,
+    logger: console,
+    onMetric: (name, labels = {}) => {
+      const metrics = require('./metrics');
+      if (!metrics.isEnabled()) return;
+      if (name === 'republished') metrics.incEnrichmentTasksRepublished(labels.provider);
+      else if (name === 'park_expired') metrics.incEnrichmentParkExpired(labels.capability);
+    },
+  });
+  return _sweeper;
+}
 const outreachWorkers = require('./outreach-workers');
 const aiCampaign = require('./ai-campaign');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
@@ -2568,6 +2639,47 @@ app.post('/api/enrichment/extract', async (req, res) => {
       filters: { from: from || null, to: to || null, refresh: Boolean(refresh) },
       timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/system/enrichment-sweeper/run - Dispara um ciclo do sweeper de
+// tasks PARKED (feature 006). Interno, protegido por X-Internal-Token.
+app.post('/api/system/enrichment-sweeper/run', async (req, res) => {
+  try {
+    const expected = process.env.INTERNAL_RECONCILE_TOKEN;
+    const provided = req.get('X-Internal-Token');
+    if (!expected || provided !== expected) {
+      return res.status(403).json({ success: false, error: 'forbidden' });
+    }
+    const limit = Number(req.body && req.body.limit) || 100;
+    const result = await getSweeper().runOnce({ limit });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/system/enrichment/parked - Inspeção de tasks PARKED (operação).
+app.get('/api/system/enrichment/parked', async (req, res) => {
+  try {
+    const expected = process.env.INTERNAL_RECONCILE_TOKEN;
+    const provided = req.get('X-Internal-Token');
+    if (!expected || provided !== expected) {
+      return res.status(403).json({ success: false, error: 'forbidden' });
+    }
+    const limit = Number(req.query.limit) || 50;
+    const rows = await prisma.enrichmentTask.findMany({
+      where: { status: 'PARKED' },
+      orderBy: { parkedAt: 'asc' },
+      take: limit,
+      select: {
+        id: true, orgId: true, capability: true, provider: true,
+        parkedAt: true, nextAttemptAt: true, parkCycles: true, lastError: true,
+      },
+    });
+    res.json({ success: true, data: rows, count: rows.length });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -5126,6 +5238,100 @@ async function start() {
     // Retoma prospects que ficaram presos em 'pending' por reinício do pod
     // (jobs de enriquecimento são em memória e não sobrevivem ao restart).
     await resumePendingEnrichments(prisma);
+
+    // Feature 006: sweeper de tasks PARKED (re-publicação com taxa por
+    // provedor) — drena o backlog de forma controlada.
+    try {
+      getSweeper().startLoop();
+      console.log('[sweeper] loop de tasks PARKED iniciado');
+    } catch (err) {
+      console.error('[sweeper] falha ao iniciar loop:', err.message);
+    }
+
+    // Feature 006: gauges de resiliência (parked por provedor, jobs DEGRADED)
+    // + detector de circuito aberto > 1h (alerta deduplicado por hora).
+    const resilienceTick = async () => {
+      try {
+        const metrics = require('./metrics');
+        if (!metrics.isEnabled()) return;
+        // Gauges de resiliência: parked por provedor + jobs DEGRADED.
+        const parkedRows = await prisma.enrichmentTask.groupBy({
+          by: ['lastError', 'orgId'],
+          where: { status: 'PARKED' },
+          _count: true,
+        }).catch(() => []);
+        for (const row of parkedRows) {
+          const provider = (row.lastError && row.lastError.provider) || 'unknown';
+          metrics.setEnrichmentTasksParked(provider, row._count, row.orgId);
+        }
+        metrics.setEnrichmentJobsDegraded(
+          await prisma.enrichmentJob.count({ where: { status: 'DEGRADED' } }).catch(() => 0)
+        );
+        // Circuitos (estado no Redis do provider-registry); OPEN > 1h alerta 1×/hora.
+        const circuitKeys = await _sweeperRedis.keys('cb:*:state').catch(() => []);
+        for (const key of circuitKeys) {
+          const provider = String(key).match(/cb:(.+):state/);
+          if (!provider) continue;
+          const num = await getSweeperCircuitState(provider[1]);
+          metrics.setEnrichmentProviderCircuit(provider[1], num);
+          if (num === 2) {
+            await enrichmentNotifier
+              .notifyCircuitOpen({ provider: provider[1], affected: await prisma.enrichmentTask.count({ where: { status: 'PARKED' } }).catch(() => 0) })
+              .catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.error('[resilience] tick falhou:', err.message);
+      }
+    };
+    resilienceTick();
+    const resilienceTimer = setInterval(resilienceTick, 60000);
+    if (resilienceTimer.unref) resilienceTimer.unref();
+
+    // Feature 006 (FR-016): digest diário às 12:00 UTC — dedup por dia no
+    // próprio notifier; tick por minuto só dispara no minuto exato.
+    let digestSentOn = null;
+    const digestTick = async () => {
+      try {
+        const d = new Date();
+        if (d.getUTCHours() !== 12 || d.getUTCMinutes() !== 0) return;
+        const day = d.toISOString().slice(0, 10);
+        if (digestSentOn === day) return;
+        digestSentOn = day;
+        const since = new Date(d.getTime() - 86400e3);
+        const completed24h = await prisma.enrichmentTask.count({
+          where: { status: 'COMPLETED', updatedAt: { gte: since } },
+        }).catch(() => 0);
+        const failedTasks = await prisma.enrichmentTask.findMany({
+          where: { status: 'FAILED', updatedAt: { gte: since } },
+          select: { lastError: true },
+        }).catch(() => []);
+        const failedByReason = {};
+        for (const f of failedTasks) {
+          const t = (f.lastError && f.lastError.type) || 'UNKNOWN';
+          failedByReason[t] = (failedByReason[t] || 0) + 1;
+        }
+        const successRate = completed24h + failedTasks.length > 0
+          ? completed24h / (completed24h + failedTasks.length)
+          : 1;
+        const parkedOldest = (await prisma.enrichmentTask.findMany({
+          where: { status: 'PARKED' },
+          orderBy: { parkedAt: 'asc' },
+          take: 5,
+        }).catch(() => [])).map((t) => ({
+          companyName: t.taskKey.slice(0, 30),
+          hours: Math.round((d - new Date(t.parkedAt || t.createdAt)) / 3600e3),
+        }));
+        await enrichmentNotifier.sendDailyDigest({
+          completed24h, failedByReason, parkedOldest, successRate,
+        });
+        console.log(`[notifier] digest diário enviado (${day})`);
+      } catch (err) {
+        console.error('[notifier] digest diário falhou:', err.message);
+      }
+    };
+    const digestTimer = setInterval(digestTick, 60000);
+    if (digestTimer.unref) digestTimer.unref();
 
     // Feature 005: re-despacha análises profundas presas em 'running' (pod
     // reiniciou no meio) e leads parados em not_started — mesmo padrão da

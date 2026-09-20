@@ -147,10 +147,17 @@ function createWorkerRuntime({
     }
   }
 
-  function buildFailureEvent(task, { type, message, retryable, durationMs, provider }) {
+  function buildFailureEvent(task, { type, message, retryable, durationMs, provider, retryAfterMs }) {
     return buildResultEvent(task, {
       status: 'FAILED',
-      error: { type, message: String(message || ''), retryable },
+      error: {
+        type,
+        message: String(message || ''),
+        retryable,
+        // Feature 006 (R3): janela recomendada pelo circuito do provedor —
+        // o manager a usa como nextAttemptAt de PARKED.
+        ...(retryAfterMs != null ? { retryAfterMs: Number(retryAfterMs) } : {}),
+      },
       durationMs,
       provider,
     });
@@ -362,6 +369,9 @@ function createWorkerRuntime({
         retryable: type !== 'CAPABILITY_DISABLED',
         durationMs: 0,
         provider: lastReject.provider,
+        // Feature 006 (R3): o manager agenda PARKED/nextAttemptAt respeitando
+        // o retryAfterMs recomendado pelo circuito do provedor.
+        retryAfterMs: lastReject.retryAfterMs,
         persist: false,
       });
     }

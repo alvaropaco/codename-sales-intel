@@ -24,6 +24,24 @@ ENRICHMENT_JOB_DURATION = Histogram(
     "End-to-end enrichment job duration in seconds",
     buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 600),
 )
+# Feature 006 (FR-012): desfecho dos scans OSINT (full/partial/empty) —
+# parcial é SUCESSO com deadline (nunca FAILED por timeout).
+ENRICHMENT_OSINT_SCANS_BY_OUTCOME = Counter(
+    "enrichment_osint_scans_by_outcome_total",
+    "Scans OSINT por ferramenta e desfecho (full/partial/empty)",
+    ["tool", "outcome"],
+)
+ENRICHMENT_OSINT_SCAN_DURATION_SECONDS = Histogram(
+    "enrichment_osint_scan_duration_seconds",
+    "Duração real do scan OSINT por ferramenta",
+    ["tool"],
+)
+ENRICHMENT_OSINT_FALLBACK_TOTAL = Counter(
+    "enrichment_osint_fallback_total",
+    "Ativações de fallback entre ferramentas OSINT (ex.: bbot→spiderfoot)",
+    ["from", "to"],
+)
+
 ENRICHMENT_ACTIVE_JOBS = Gauge(
     "enrichment_active_jobs",
     "Number of jobs currently being processed by this worker",
