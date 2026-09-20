@@ -81,11 +81,24 @@ function extractContactEvidence(prospect) {
  * Monta o prompt da análise. O bloco de contexto da org vem de
  * org-context.js — inclui a degradação honesta quando não configurado (FR-017).
  */
+const CONSERVATIVE_BLOCK = [
+  '',
+  'MODO CONSERVADOR (contexto da organização não configurado):',
+  'Sem o contexto comercial, um "contact" genérico não tem valor — o padrão observado',
+  'é aprovar praticamente tudo. Portanto, só emita "contact" se os PRÓPRIOS DADOS do',
+  'lead forem claramente fortes: canal de contato utilizável (e-mail corporativo ou',
+  'telefone), empresa operando (site no ar, situação ativa) e aderência B2B evidente.',
+  'Na dúvida, prefira "no_contact" e explique o que faltaria para afirmar o contrário.',
+].join('\n');
+
 function buildPrompt({ orgContext, prospect, enrichmentSummary, contactDecision, deterministicScore } = {}) {
   const p = prospect || {};
   const ctx = orgContext && typeof orgContext.renderForPrompt === 'function'
     ? orgContext.renderForPrompt()
     : '(NÃO CONFIGURADO — o cliente não descreveu o próprio negócio na plataforma.)\nNÃO invente nome de empresa, produto, serviço, diferenciais, site ou preços.';
+  const system = orgContext && orgContext.configured
+    ? SYSTEM_PROMPT
+    : SYSTEM_PROMPT + CONSERVATIVE_BLOCK;
 
   const summary = {};
   for (const key of SAFE_SUMMARY_KEYS) {
@@ -115,7 +128,7 @@ function buildPrompt({ orgContext, prospect, enrichmentSummary, contactDecision,
     },
   };
 
-  return { system: SYSTEM_PROMPT, user: JSON.stringify(payload) };
+  return { system, user: JSON.stringify(payload) };
 }
 
 function asStringArray(value) {

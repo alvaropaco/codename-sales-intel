@@ -150,3 +150,34 @@ test('verdictStatusAfter mapeia veredito para próximo estágio', () => {
   assert.strictEqual(verdictStatusAfter('no_contact'), 'discarded');
   assert.throws(() => verdictStatusAfter('outra-coisa'));
 });
+
+// ── Degradação conservadora quando a org não tem contexto (hotfix 98%) ─────
+
+test('buildPrompt sem contexto da org instrui viés conservador no veredito', () => {
+  const orgContext = buildOrgContext({ orgName: 'Org', settings: {} });
+  const { system } = buildPrompt({
+    orgContext,
+    prospect: PROSPECT_FIXTURE,
+    enrichmentSummary: {},
+    contactDecision: null,
+    deterministicScore: 10,
+  });
+  assert.match(system, /N[ÃA]O CONFIGURADO/i);
+  assert.match(system, /conservador/i);
+  assert.match(system, /no_contact/);
+});
+
+test('buildPrompt com contexto da org não aplica o viés conservador', () => {
+  const orgContext = buildOrgContext({
+    orgName: 'Org',
+    settings: { productDescription: 'Software de gestão fiscal' },
+  });
+  const { system } = buildPrompt({
+    orgContext,
+    prospect: PROSPECT_FIXTURE,
+    enrichmentSummary: {},
+    contactDecision: null,
+    deterministicScore: 50,
+  });
+  assert.doesNotMatch(system, /conservador/i);
+});
