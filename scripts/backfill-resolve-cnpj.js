@@ -78,38 +78,47 @@ async function backfillResolveCnpj(prisma, opts = {}) {
   }
 
   let resolved = 0;
-  for (const row of rows) {
-    const lead = {
-      companyName: row.companyName,
-      city: row.city,
-      state: row.state,
-    };
-    const found = await resolve(lead);
-    if (!found || !found.cnpj) {
-      log(`[backfill-cnpj] sem match: ${row.companyName.slice(0, 50)}`);
-      continue;
-    }
-    if (!dry) {
-      await prisma.prospect.update({
-        where: { id: row.id },
-        data: {
-          cnpj: found.cnpj,
-          taxIdType: 'br_cnpj',
-          enrichmentSource: `cnpj-resolver:${found.source}`,
-          enrichmentError: null,
-        },
+  let index = 0;
+  const concurrency = Math.max(1, Number(opts.concurrency) || 1);
+  const worker = async () => {
+    while (index < rows.length) {
+      const row = rows[index++];
+      const lead = {
+        companyName: row.companyName,
+        city: row.city,
+        state: row.state,
+      };
+      const found = await resolve(lead).catch((err) => {
+        log(`[backfill-cnpj] erro resolvendo ${row.companyName.slice(0, 40)}: ${err.message}`);
+        return null;
       });
-      const fresh = await prisma.prospect.findUnique({ where: { id: row.id } });
-      await dispatch(fresh).catch((err) =>
-        log(`[backfill-cnpj] re-enriquecimento falhou (${found.cnpj}): ${err.message}`)
+      if (!found || !found.cnpj) {
+        log(`[backfill-cnpj] sem match: ${row.companyName.slice(0, 50)}`);
+        continue;
+      }
+      if (!dry) {
+        await prisma.prospect.update({
+          where: { id: row.id },
+          data: {
+            cnpj: found.cnpj,
+            taxIdType: 'br_cnpj',
+            enrichmentSource: `cnpj-resolver:${found.source}`,
+            enrichmentError: null,
+          },
+        });
+        const fresh = await prisma.prospect.findUnique({ where: { id: row.id } });
+        await dispatch(fresh).catch((err) =>
+          log(`[backfill-cnpj] re-enriquecimento falhou (${found.cnpj}): ${err.message}`)
+        );
+      }
+      resolved += 1;
+      log(
+        `[backfill-cnpj] resolvido: ${row.companyName.slice(0, 50)} → ${found.cnpj} ` +
+        `(${found.source}, conf ${found.confidence})`
       );
     }
-    resolved += 1;
-    log(
-      `[backfill-cnpj] resolvido: ${row.companyName.slice(0, 50)} → ${found.cnpj} ` +
-      `(${found.source}, conf ${found.confidence})`
-    );
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, rows.length || 1) }, worker));
 
   return { scanned: rows.length, resolved };
 }
