@@ -126,6 +126,7 @@ async function resolveWithAi(lead, deps = {}) {
       maxTokens: 300,
       jsonMode: true,
       tag: 'cnpj-resolver',
+      ...(process.env.DEEP_ANALYSIS_LLM_MODEL ? { model: process.env.DEEP_ANALYSIS_LLM_MODEL } : {}),
     });
     variants = parseVariants(content);
   } catch (err) {
@@ -172,6 +173,7 @@ async function resolveWithAi(lead, deps = {}) {
       maxTokens: 250,
       jsonMode: true,
       tag: 'cnpj-resolver',
+      ...(process.env.DEEP_ANALYSIS_LLM_MODEL ? { model: process.env.DEEP_ANALYSIS_LLM_MODEL } : {}),
     });
     const match = parseMatch(content, MATCH_CONFIDENCE_THRESHOLD);
     if (!match) return null;
