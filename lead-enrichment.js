@@ -21,6 +21,8 @@
 
 const csvImport = require('./csv-import');
 const natsEnrichment = require('./nats-enrichment');
+// Feature 005: roteamento do card pós-enriquecimento (premium → Análise profunda).
+const pipelineTransitions = require('./pipeline-transitions');
 const mcpCnpj = require('./mcp-cnpj');
 const plan = require('./plan');
 
@@ -527,14 +529,22 @@ async function _process(prisma, prospectId) {
  * notícias (SearXNG) e logo. TRIAL: marca indisponível com upsell —
  * enriquecimento avançado é exclusivo do plano Premium.
  */
-async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = {}) {
+async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial', deps = {} } = {}) {
   if (orgPlan !== 'premium') {
+    const nextStatus = pipelineTransitions.statusAfterEnrichment(
+      { ...prospect, enrichmentStatus: 'unavailable' },
+      orgPlan
+    );
     await prisma.prospect.update({
       where: { id: prospect.id },
       data: {
         enrichmentStatus: 'unavailable',
         enrichmentSource: 'lead-enrichment',
         enrichmentError: 'CNPJ não localizado. Enriquecimento avançado (redes sociais, contatos, jurídico, notícias) é exclusivo do plano Premium.',
+        // Feature 005 (FR-004): enriquecimento concluído — card avança.
+        ...(nextStatus
+          ? { status: nextStatus, ...(nextStatus === 'deep_analysis' ? { analysisStatus: 'not_started' } : {}) }
+          : {}),
       },
     });
     // Score honesto mesmo no trial: pontua com os sinais já coletados.
@@ -546,8 +556,16 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
   const summaryLead = {};
   let found = false;
 
+  const src = {
+    pdlCompanyEnrich: deps.pdlCompanyEnrich || pdlCompanyEnrich,
+    pdlPersonEnrich: deps.pdlPersonEnrich || pdlPersonEnrich,
+    legalScan: deps.legalScan || legalScan,
+    newsScan: deps.newsScan || newsScan,
+    enqueueAnalysis: deps.enqueueAnalysis || null,
+  };
+
   if (PDL_API_KEY) {
-    const company = await pdlCompanyEnrich({
+    const company = await src.pdlCompanyEnrich({
       companyName: prospect.companyName,
       city: prospect.city,
     }).catch(() => null);
@@ -557,7 +575,7 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
       summaryLead.linkedin = company.linkedin_url;
     }
 
-    const person = await pdlPersonEnrich({
+    const person = await src.pdlPersonEnrich({
       email: prospect.cnpjEmail,
       contactName: prospect.contactName,
       companyName: prospect.companyName,
@@ -569,13 +587,13 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
     }
   }
 
-  const legal = await legalScan({ companyName: prospect.companyName, cnpj: prospect.cnpj }).catch(() => []);
+  const legal = await src.legalScan({ companyName: prospect.companyName, cnpj: prospect.cnpj }).catch(() => []);
   if (legal.length) {
     found = found || legal.length > 0;
     summaryLead.legal = legal;
   }
 
-  const news = await newsScan({ companyName: prospect.companyName }).catch(() => []);
+  const news = await src.newsScan({ companyName: prospect.companyName }).catch(() => []);
   if (news.length) {
     summaryLead.news = news;
     found = true;
@@ -583,6 +601,12 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
 
   const domain = prospect.domain || (summaryLead.company && summaryLead.company.website) || null;
 
+  // Feature 005 (FR-004): enriquecimento concluído — o card avança sozinho
+  // (premium → "Análise profunda"; demais planos → "Prontas para contato").
+  const nextStatus = pipelineTransitions.statusAfterEnrichment(
+    { ...prospect, enrichmentStatus: found ? 'partial' : 'unavailable' },
+    orgPlan
+  );
   await prisma.prospect.update({
     where: { id: prospect.id },
     data: {
@@ -596,6 +620,9 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
         ? null
         : 'CNPJ não localizado nas bases consultadas; sem dados externos adicionais',
       enrichmentSummary: { ...(prospect.enrichmentSummary || {}), lead_enrichment: summaryLead },
+      ...(nextStatus
+        ? { status: nextStatus, ...(nextStatus === 'deep_analysis' ? { analysisStatus: 'not_started' } : {}) }
+        : {}),
     },
   });
 
@@ -605,6 +632,23 @@ async function _deepEnrichWithoutCnpj(prisma, prospect, { orgPlan = 'trial' } = 
   await recalcLeadScore(prisma, fresh).catch((err) =>
     console.error('[lead-enrichment] recalc final falhou:', err.message)
   );
+
+  // Feature 005 (FR-005): card pousou em "Análise profunda" — dispara a
+  // análise de IA. Fire-and-forget: falha aqui não afeta o enriquecimento.
+  if (nextStatus === 'deep_analysis' && fresh) {
+    try {
+      const enqueue = src.enqueueAnalysis
+        ? src.enqueueAnalysis
+        : async (p) => {
+            const runner = require('./deep-analysis').getSharedRunner(prisma);
+            return runner.enqueue(p, { trigger: 'auto' });
+          };
+      const enqueued = await enqueue(fresh);
+      if (enqueued && enqueued.started) enqueued.done.catch(() => {});
+    } catch (analysisErr) {
+      console.error('[lead-enrichment] gatilho da análise profunda falhou:', analysisErr.message);
+    }
+  }
 }
 
 module.exports = {

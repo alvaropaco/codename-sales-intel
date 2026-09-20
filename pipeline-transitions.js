@@ -107,12 +107,17 @@ function blocked(message) {
 }
 
 /**
- * Para onde o card vai quando o enriquecimento CONCLUI (consumidores NATS e
- * fluxo básico): premium pousa em "Análise profunda" para a análise de IA
- * (FR-004); demais planos seguem direto para "Prontas para contato"
- * (comportamento preservado, FR-018). Retorna null quando o card não deve
- * se mover (defensivo: sem conclusão de enriquecimento ou fora de
- * "Em Qualificação").
+ * Para onde o card vai quando o enriquecimento CONCLUI (todos os pontos de
+ * conclusão: NATS, BrasilAPI, PDL/lead-enrichment): premium pousa em
+ * "Análise profunda" para a análise de IA (FR-004); demais planos seguem
+ * direto para "Prontas para contato" (comportamento preservado, FR-018).
+ * Retorna null quando o card não deve se mover (fora de "Em Qualificação"
+ * ou chamada indevida com enriquecimento ainda pendente).
+ *
+ * ⚠️ `prospect.enrichmentStatus` deve ser o valor PÓS-conclusão ('enriched'/
+ * 'partial'/'unavailable') — o consumidor conclui o enriquecimento neste
+ * mesmo update. Chamar com a row pré-update ('pending') faz o card nunca
+ * avançar (bug de produção corrigido na 005).
  *
  * @param {{ status: string, enrichmentStatus?: string|null }} prospect
  * @param {string} orgPlan 'trial' | 'premium'

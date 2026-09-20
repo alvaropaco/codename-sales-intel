@@ -292,7 +292,8 @@ async function persistEnrichmentResult(prisma, result) {
         // disparada pelo deep-analysis.js via gatilho de entrada no estágio);
         // demais planos seguem direto para "Prontas para contato" como antes.
         const nextStatus = pipelineTransitions.statusAfterEnrichment(
-          prospect,
+          // Status PÓS-conclusão (o update abaixo grava 'enriched'/'partial').
+          { ...prospect, enrichmentStatus: status === 'PARTIAL' ? 'partial' : 'enriched' },
           await getOrgPlan(prisma, prospect.orgId)
         );
         await prisma.prospect.update({

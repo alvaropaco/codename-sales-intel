@@ -163,7 +163,8 @@ async function enrichProspectWithCnpj(prisma, prospectOrId) {
     // no gatilho de entrada do estágio); demais planos seguem para "Prontas
     // para contato" como antes.
     const nextStatus = pipelineTransitions.statusAfterEnrichment(
-      prospect,
+      // Status PÓS-conclusão (o update abaixo grava data.enrichmentStatus).
+      { ...prospect, enrichmentStatus: enrichment.enrichmentStatus || 'enriched' },
       await getOrgPlan(prisma, prospect.orgId)
     );
     const updated = await prisma.prospect.update({

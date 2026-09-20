@@ -121,3 +121,79 @@ test('logoForDomain monta URL do Google Favicons (Clearbit descontinuado)', asyn
   assert.strictEqual(logoForDomain('dedini.com.br'), 'https://www.google.com/s2/favicons?domain=dedini.com.br&sz=128');
   assert.strictEqual(logoForDomain(null), null);
 });
+
+// ── Feature 005 (FR-004): conclusão do enriquecimento avança o card ────────
+
+test('trial sem CNPJ: card avança automaticamente para "Prontas para contato"', async () => {
+  const { _deepEnrichWithoutCnpj } = require('../lead-enrichment');
+  const updates = [];
+  const prismaStub = {
+    prospect: {
+      findUnique: async () => ({ id: 'p1', orgId: 'org_trial', status: 'prospect' }),
+      update: async ({ data }) => {
+        updates.push(data);
+        return { id: 'p1' };
+      },
+    },
+  };
+  const prospect = { id: 'p1', orgId: 'org_trial', companyName: 'Alguem LTDA', city: 'X', cnpj: null, status: 'prospect' };
+  await _deepEnrichWithoutCnpj(prismaStub, prospect, { orgPlan: 'trial' });
+  const statusUpdate = updates.find((u) => u.status);
+  assert.strictEqual(statusUpdate.status, 'qualified');
+  assert.strictEqual(statusUpdate.analysisStatus, undefined); // trial não entra em análise
+});
+
+test('premium sem CNPJ: card avança para "Análise profunda" e dispara a análise (FR-004/FR-005)', async () => {
+  const { _deepEnrichWithoutCnpj } = require('../lead-enrichment');
+  const updates = [];
+  const prismaStub = {
+    prospect: {
+      findUnique: async () => ({
+        id: 'p1', orgId: 'org_prem', status: 'deep_analysis', analysisStatus: 'not_started',
+      }),
+      update: async ({ data }) => {
+        updates.push(data);
+        return { id: 'p1' };
+      },
+    },
+  };
+  let enqueued = 0;
+  const prospect = {
+    id: 'p1', orgId: 'org_prem', companyName: 'Alguem LTDA', city: 'X', cnpj: null, status: 'prospect',
+    contactName: 'Fulano', cnpjEmail: 'fulano@empresa.com.br',
+  };
+  await _deepEnrichWithoutCnpj(prismaStub, prospect, {
+    orgPlan: 'premium',
+    deps: {
+      legalScan: async () => [],
+      newsScan: async () => [],
+      pdlCompanyEnrich: async () => null,
+      pdlPersonEnrich: async () => null,
+      enqueueAnalysis: async () => { enqueued += 1; },
+    },
+  });
+  const statusUpdate = updates.find((u) => u.status);
+  assert.strictEqual(statusUpdate.status, 'deep_analysis');
+  assert.strictEqual(statusUpdate.analysisStatus, 'not_started');
+  assert.strictEqual(enqueued, 1);
+});
+
+test('fora de "Em Qualificação" a conclusão do PDL não move o card (defensivo)', async () => {
+  const { _deepEnrichWithoutCnpj } = require('../lead-enrichment');
+  const updates = [];
+  const prismaStub = {
+    prospect: {
+      findUnique: async () => ({ id: 'p1', orgId: 'org_prem', status: 'deep_analysis' }),
+      update: async ({ data }) => {
+        updates.push(data);
+        return { id: 'p1' };
+      },
+    },
+  };
+  const prospect = { id: 'p1', orgId: 'org_prem', companyName: 'X', city: 'X', cnpj: null, status: 'deep_analysis' };
+  await _deepEnrichWithoutCnpj(prismaStub, prospect, {
+    orgPlan: 'premium',
+    deps: { legalScan: async () => [], newsScan: async () => [] },
+  });
+  assert.strictEqual(updates.find((u) => u.status), undefined);
+});
