@@ -23,8 +23,9 @@ const { buildOrgContext } = require('./org-context');
 const { getOrgPlan } = require('./plan');
 
 // deepseek-v4-flash é reasoning: os tokens de raciocínio entram na mesma
-// cota do JSON — 2000 evita resumo cortado (e JSON inválido) na produção.
-const DEFAULT_MAX_TOKENS = 2000;
+// cota do JSON. Em produção, 2000 truncou ~10% das respostas (finish por
+// comprimento → JSON inválido); 6000 cobre os casos longos com folga.
+const DEFAULT_MAX_TOKENS = 6000;
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_TIMEOUT_MS = 45000;
 
