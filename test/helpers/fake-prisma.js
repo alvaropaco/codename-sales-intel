@@ -16,6 +16,8 @@ function matches(record, where = {}) {
       if ('gte' in expected) return new Date(record[field]) >= new Date(expected.gte);
       return matches(record[field] || {}, expected);
     }
+    // Coluna nullable nunca setada é `null` no Prisma real (undefined aqui)
+    if (expected === null) return record[field] == null;
     return record[field] === expected;
   });
 }

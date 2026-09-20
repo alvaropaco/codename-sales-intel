@@ -353,7 +353,23 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
     console.warn(`[lead-enrichment] busca SearXNG falhou: ${err.message}`);
   }
 
-  // b) Base RFB local — busca full-text por nome (lenta: >45s no MCP atual),
+  // b) Estágio assistido por IA (feature 005): LLM cria variações de busca da
+  //    razão social e julga candidatos confirmados por lookup oficial RFB.
+  //    O CNPJ NUNCA vem da memória do modelo — só de resultados reais.
+  try {
+    const ai = await require('./cnpj-ai-resolver').resolveWithAi(
+      { companyName, city, state },
+      {
+        getCompanyByCnpj: deps.getCompanyByCnpj || mcpCnpj.getCompanyByCnpj,
+        ...(deps.searxSearch ? { searxSearch: deps.searxSearch } : {}),
+      }
+    );
+    if (ai) return ai;
+  } catch (err) {
+    console.warn(`[lead-enrichment] estágio IA falhou: ${err.message}`);
+  }
+
+  // c) Base RFB local — busca full-text por nome (lenta: >45s no MCP atual),
   //    fica como último recurso com timeout generoso.
   const searchFn = deps.searchCompanies || (mcpCnpj.isMcpConfigured() ? mcpCnpj.searchCompanies : null);
   if (searchFn) {
@@ -379,22 +395,6 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
     } catch (err) {
       console.warn(`[lead-enrichment] busca RFB falhou: ${err.message}`);
     }
-  }
-
-  // c) Estágio assistido por IA (feature 005): LLM cria variações de busca da
-  //    razão social e julga candidatos confirmados por lookup oficial RFB.
-  //    O CNPJ NUNCA vem da memória do modelo — só de resultados reais.
-  try {
-    const ai = await require('./cnpj-ai-resolver').resolveWithAi(
-      { companyName, city, state },
-      {
-        getCompanyByCnpj: deps.getCompanyByCnpj || mcpCnpj.getCompanyByCnpj,
-        ...(deps.searxSearch ? { searxSearch: deps.searxSearch } : {}),
-      }
-    );
-    if (ai) return ai;
-  } catch (err) {
-    console.warn(`[lead-enrichment] estágio IA falhou: ${err.message}`);
   }
 
   return null;
