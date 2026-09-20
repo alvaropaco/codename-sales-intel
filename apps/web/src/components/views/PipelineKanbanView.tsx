@@ -13,19 +13,22 @@ import {
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Prospect, ProspectStatus } from '@/types';
+import { ActiveTab, Prospect, ProspectStatus } from '@/types';
 import { formatCNPJ, formatCurrency } from '@/lib/utils';
 import {
   updateProspect,
   bulkUpdateProspects,
   rerunDeepAnalysis,
   fetchPlan,
+  fetchCommercialProfile,
 } from '@/services/api';
 
 interface PipelineKanbanViewProps {
   prospects: Prospect[];
   onSelectProspect: (prospect: Prospect) => void;
   onRefresh: () => void;
+  /** navegação para a aba de configurações (CTA do banner de perfil) */
+  onNavigateToTab?: (tab: ActiveTab) => void;
 }
 
 interface ColumnConfig {
@@ -66,10 +69,12 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
   prospects,
   onSelectProspect,
   onRefresh,
+  onNavigateToTab,
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [isPremium, setIsPremium] = useState(true);
+  const [profileIncomplete, setProfileIncomplete] = useState(false);
   const [cardBusyId, setCardBusyId] = useState<string | null>(null);
 
   // Banner premium (FR-018): orgs sem o recurso veem a coluna com aviso e
@@ -84,10 +89,21 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
         // falha ao obter o plano não derruba o kanban; assume premium e
         // deixa o backend validar as ações
       });
+    // Aviso de perfil incompleto (org premium sem contexto comercial): as
+    // análises de IA rodam em modo conservador — vale completar o cadastro.
+    if (isPremium) {
+      fetchCommercialProfile()
+        .then((profile) => {
+          if (!cancelled) {
+            setProfileIncomplete(!profile.productDescription && !profile.valueProposition);
+          }
+        })
+        .catch(() => {});
+    }
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isPremium]);
 
   const handleMoveStage = async (prospect: Prospect, newStatus: ProspectStatus) => {
     try {
@@ -215,6 +231,27 @@ export const PipelineKanbanView: React.FC<PipelineKanbanViewProps> = ({
           A Análise profunda por IA — veredito automático sobre score e contato — é um recurso do
           plano <strong>Premium</strong>. Seus leads continuam avançando direto para "Prontas para
           contato" após o enriquecimento.
+        </div>
+      )}
+
+      {/* Aviso de perfil comercial incompleto (org premium): a IA decide
+          sem saber o que a organização vende — vereditos em modo conservador. */}
+      {isPremium && profileIncomplete && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs font-semibold text-amber-800 backdrop-blur-md dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <CircleAlert className="h-4 w-4 shrink-0" />
+          Complete seu perfil comercial (o que sua empresa vende, diferenciais e perfil ideal de
+          cliente) para que a análise profunda emita vereditos aderentes ao seu negócio — hoje ela
+          roda sem esse contexto.
+          {onNavigateToTab && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 rounded-lg border-amber-300 px-3 text-[11px] font-bold text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:text-amber-200 dark:hover:bg-amber-500/20"
+              onClick={() => onNavigateToTab('settings')}
+            >
+              Completar perfil
+            </Button>
+          )}
         </div>
       )}
 

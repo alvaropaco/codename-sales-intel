@@ -381,6 +381,22 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
     }
   }
 
+  // c) Estágio assistido por IA (feature 005): LLM cria variações de busca da
+  //    razão social e julga candidatos confirmados por lookup oficial RFB.
+  //    O CNPJ NUNCA vem da memória do modelo — só de resultados reais.
+  try {
+    const ai = await require('./cnpj-ai-resolver').resolveWithAi(
+      { companyName, city, state },
+      {
+        getCompanyByCnpj: deps.getCompanyByCnpj || mcpCnpj.getCompanyByCnpj,
+        ...(deps.searxSearch ? { searxSearch: deps.searxSearch } : {}),
+      }
+    );
+    if (ai) return ai;
+  } catch (err) {
+    console.warn(`[lead-enrichment] estágio IA falhou: ${err.message}`);
+  }
+
   return null;
 }
 

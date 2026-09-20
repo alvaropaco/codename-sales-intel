@@ -402,6 +402,7 @@ export function App() {
             prospects={prospects}
             onSelectProspect={(p) => openLeadDetail(p.id)}
             onRefresh={loadData}
+            onNavigateToTab={navigateToTab}
           />
         )}
 
