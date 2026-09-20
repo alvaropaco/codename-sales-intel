@@ -18,6 +18,9 @@ const { callLlm, parseJsonLoose } = require('./llm-client');
 const { isValidCnpj } = require('./csv-import');
 
 const MATCH_CONFIDENCE_THRESHOLD = 0.7;
+// Sem confirmação oficial RFB, a evidência é só snippet de busca — exige
+// confiança bem maior do juiz (fonte marcada como 'ia-snippet').
+const MATCH_CONFIDENCE_THRESHOLD_SNIPPET = 0.85;
 const MAX_VARIANTS = 5;
 const MAX_CANDIDATES = 4;
 
@@ -31,7 +34,7 @@ const VARIANTS_SYSTEM = [
 
 const MATCH_SYSTEM = [
   'Você verifica se um CNPJ candidato corresponde à empresa buscada.',
-  'Recebe a empresa procurada (razão social, cidade, estado) e candidatos com dados oficiais (razão social RFB, município, UF).',
+  'Recebe a empresa procurada (razão social, cidade, estado) e candidatos: com dados oficiais (razão social RFB, município, UF) ou apenas com evidência de snippet da web (campo evidencia).',
   'Considere abreviações, ordem das palavras e grafias sem acento como equivalentes.',
   'Homônima em cidade diferente NÃO é match. Não invente CNPJ fora da lista.',
   'Responda APENAS com JSON: {"cnpj": "<o escolhido>", "confidence": <0-1>, "reason": "<curto>"}',
@@ -137,37 +140,52 @@ async function resolveWithAi(lead, deps = {}) {
 
   // 2) Busca por variação (degrada silenciosamente; sem resultados → null)
   let candidates = [];
+  const snippets = new Map(); // cnpj → melhor evidência de snippet
   for (const variant of variants.slice(0, MAX_VARIANTS)) {
     const query = lead.city ? `${variant} ${lead.city} CNPJ` : `${variant} CNPJ`;
     const results = await search(query).catch(() => []);
+    for (const r of results || []) {
+      const text = `${r.title || ''} ${r.content || ''}`;
+      for (const c of extractCandidatesFromResults([r])) {
+        if (!snippets.has(c)) {
+          snippets.set(c, `${(r.title || '').slice(0, 120)} — ${(r.content || '').slice(0, 200)}`);
+        }
+      }
+    }
     candidates.push(...extractCandidatesFromResults(results));
     if (candidates.length >= MAX_CANDIDATES) break;
   }
   candidates = [...new Set(candidates)].slice(0, MAX_CANDIDATES);
   if (candidates.length === 0) return null;
 
-  // 3) Lookup oficial RFB (point lookup rápido) — dados reais para o juiz
+  // 3) Lookup oficial RFB (point lookup rápido) — quando disponível, é a
+  //    evidência forte; sem cobertura no dataset, os snippets das buscas
+  //    servem de evidência com limiar mais rigoroso.
   const official = [];
   for (const cnpj of candidates) {
     const company = await lookup(cnpj).catch(() => null);
     if (company) official.push(company);
   }
-  if (official.length === 0) return null;
+  const threshold = official.length > 0 ? MATCH_CONFIDENCE_THRESHOLD : MATCH_CONFIDENCE_THRESHOLD_SNIPPET;
+  const sourceLabel = official.length > 0 ? 'ia' : 'ia-snippet';
 
-  // 4) Juiz do LLM: escolhe o match contra os dados oficiais
+  // 4) Juiz do LLM: escolhe o match contra a evidência coletada
   try {
-    const { content, model } = await llm({
-      system: MATCH_SYSTEM,
-      user: JSON.stringify({
-        procurada: { razao_social: lead.companyName, cidade: lead.city || null, uf: lead.state || null },
-        candidatos: official.map((c) => ({
+    const judgeCandidates = official.length > 0
+      ? official.map((c) => ({
           cnpj: c.cnpj,
           razao_social: c.legalName || null,
           nome_fantasia: c.tradeName || null,
           municipio: c.city || null,
           uf: c.state || null,
           situacao: c.status || c.situation || null,
-        })),
+        }))
+      : candidates.map((cnpj) => ({ cnpj, evidencia: snippets.get(cnpj) || null }));
+    const { content, model } = await llm({
+      system: MATCH_SYSTEM,
+      user: JSON.stringify({
+        procurada: { razao_social: lead.companyName, cidade: lead.city || null, uf: lead.state || null },
+        candidatos: judgeCandidates,
       }),
       temperature: 0.1,
       maxTokens: 250,
@@ -175,12 +193,12 @@ async function resolveWithAi(lead, deps = {}) {
       tag: 'cnpj-resolver',
       ...(process.env.DEEP_ANALYSIS_LLM_MODEL ? { model: process.env.DEEP_ANALYSIS_LLM_MODEL } : {}),
     });
-    const match = parseMatch(content, MATCH_CONFIDENCE_THRESHOLD);
+    const match = parseMatch(content, threshold);
     if (!match) return null;
     const chosen = official.find((c) => normalizeCnpj(c.cnpj) === match.cnpj);
     return {
       cnpj: match.cnpj,
-      source: 'ia',
+      source: sourceLabel,
       confidence: match.confidence,
       matchedName: (chosen && (chosen.legalName || chosen.tradeName)) || match.reason || null,
       model: model || null,

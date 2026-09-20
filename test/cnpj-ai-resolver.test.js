@@ -171,3 +171,40 @@ test('resolveWithAi: falha de busca não derruba o fluxo (degrada para null)', a
   }));
   assert.strictEqual(r, null);
 });
+
+test('resolveWithAi sem cobertura RFB: snippet com confiança alta aceita (fonte ia-snippet)', async () => {
+  const r = await resolveWithAi(LEAD, fakeDeps({
+    getCompanyByCnpj: async () => null, // dataset RFB não cobre a empresa
+    searxSearch: async () => [
+      { title: 'KUHN DO BRASIL S.A.', content: 'CNPJ 06.216.625/0001-71 — Passo Fundo/RS — máquinas agrícolas', url: 'https://x' },
+    ],
+    callLlm: async ({ user }) => {
+      if (!user.includes('candidatos')) return { content: VARIANTS_JSON, model: 'fake' };
+      return {
+        content: JSON.stringify({ cnpj: '06216625000171', confidence: 0.9, reason: 'razão social e cidade batem' }),
+        model: 'fake',
+      };
+    },
+  }));
+  assert.ok(r, 'deveria aceitar com evidência de snippet + confiança 0.9');
+  assert.strictEqual(r.source, 'ia-snippet');
+  assert.strictEqual(r.confidence, 0.9);
+  assert.strictEqual(r.cnpj, '06216625000171');
+});
+
+test('resolveWithAi sem cobertura RFB: confiança média não basta (limiar 0.85)', async () => {
+  const r = await resolveWithAi(LEAD, fakeDeps({
+    getCompanyByCnpj: async () => null,
+    searxSearch: async () => [
+      { title: 'KUHN', content: 'CNPJ 06.216.625/0001-71', url: 'https://x' },
+    ],
+    callLlm: async ({ user }) => {
+      if (!user.includes('candidatos')) return { content: VARIANTS_JSON, model: 'fake' };
+      return {
+        content: JSON.stringify({ cnpj: '06216625000171', confidence: 0.7, reason: 'talvez' }),
+        model: 'fake',
+      };
+    },
+  }));
+  assert.strictEqual(r, null);
+});
