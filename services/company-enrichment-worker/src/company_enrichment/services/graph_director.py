@@ -22,6 +22,7 @@ from typing import Any
 from company_enrichment.db.graph_models import CaseStatus, EdgeKind, WorkerDirectiveStatus
 from company_enrichment.db.graph_repository import GraphRepository
 from company_enrichment.events.graph_contracts import (
+    worker_directive_subject,
     EntityDiscoveredV1,
     GraphEntityRef,
     IngestCollectedV1,
@@ -45,6 +46,7 @@ from company_enrichment.metrics.metrics import (
     ENRICHMENT_ENTITY_DISCOVERED_EVENTS,
     ENRICHMENT_FACTS_WRITTEN,
     ENRICHMENT_GRAPH_GUARD_REJECTIONS,
+    ENRICHMENT_ORPHAN_SWEEP_TOTAL,
 )
 from company_enrichment.observability.otel import get_logger
 from company_enrichment.providers.firmographics import normalize_cnpj
@@ -383,6 +385,47 @@ class GraphDirector:
                     await self._maybe_spiderfoot_fallback(ev)
                 except Exception as exc:  # noqa: BLE001 — fallback nunca derruba o ingest
                     log.warn("spiderfoot_fallback_failed", error=str(exc), case_id=str(ev.case_id))
+
+    async def sweep_orphan_collected(self, *, min_age_s: int = 7200, limit: int = 200) -> int:
+        """Feature 006 (follow-up): re-dirige diretivas órfãs COLLECTED.
+
+        O worker coletou os dados e publicou o ingest, mas a persistência não
+        concluiu a diretiva (evento perdido/falho). Sem re-drive o caso nunca
+        finaliza e o lead fica preso em "processamento". Reset para REQUESTED
+        + re-publicação do evento requested — o worker re-executa de forma
+        idempotente (unique por case/worker/entity).
+        """
+        orphans = await self._repo.list_collected_orphans(min_age_s=min_age_s, limit=limit)
+        republished = 0
+        for job in orphans:
+            await self._repo.reset_directive_to_requested(job.id)
+            event = WorkerDirectiveRequestedV1(
+                case_id=job.case_id,
+                request_event_id=job.request_event_id,
+                tenant_id=job.tenant_id,
+                company_id=job.company_id,
+                worker_type=job.worker_type,
+                entity=GraphEntityRef(
+                    entity_type=job.entity_type,
+                    entity_key=job.entity_key,
+                    target_company_id=job.target_company_id,
+                ),
+                target=job.target,
+                depth=job.depth,
+            )
+            await self._publish(
+                worker_directive_subject(job.worker_type),
+                event.model_dump(mode="json"),
+            )
+            ENRICHMENT_ORPHAN_SWEEP_TOTAL.labels(outcome="republished").inc()
+            republished += 1
+        if orphans:
+            log.info(
+                "orphan_sweep",
+                scanned=len(orphans),
+                republished=republished,
+            )
+        return republished
 
     async def _maybe_spiderfoot_fallback(self, ev: IngestCollectedV1) -> None:
         """FR-011: agenda spiderfoot só quando o bbot veio fraco/vazio.

@@ -42,6 +42,12 @@ ENRICHMENT_OSINT_FALLBACK_TOTAL = Counter(
     ["from", "to"],
 )
 
+ENRICHMENT_ORPHAN_SWEEP_TOTAL = Counter(
+    "enrichment_orphan_sweep_total",
+    "Diretivas órfãs COLLECTED re-dirigidas pelo sweeper",
+    ["outcome"],
+)
+
 ENRICHMENT_ACTIVE_JOBS = Gauge(
     "enrichment_active_jobs",
     "Number of jobs currently being processed by this worker",

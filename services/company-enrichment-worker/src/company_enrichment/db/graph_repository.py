@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -43,6 +43,33 @@ class EntityUpsert:
 class GraphRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
+
+    # --- Resiliência (feature 006): órfãs COLLECTED ---
+    async def list_collected_orphans(self, *, min_age_s: int, limit: int = 200) -> list:
+        """Diretivas COLLECTED cujo ingest se perdeu há mais de `min_age_s`.
+
+        O worker coletou os dados e publicou o ingest, mas a persistência não
+        concluiu a diretiva — sem re-drive o caso nunca finaliza.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=min_age_s)
+        result = await self._s.execute(
+            select(EnrichmentWorkerJob)
+            .where(
+                EnrichmentWorkerJob.status == WorkerDirectiveStatus.COLLECTED,
+                EnrichmentWorkerJob.updated_at < cutoff,
+            )
+            .order_by(EnrichmentWorkerJob.updated_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def reset_directive_to_requested(self, job_id: uuid.UUID) -> None:
+        """Volta a diretiva para REQUESTED para re-execução pelo worker."""
+        await self._s.execute(
+            update(EnrichmentWorkerJob)
+            .where(EnrichmentWorkerJob.id == job_id)
+            .values(status=WorkerDirectiveStatus.REQUESTED)
+        )
 
     # --- Cases ---
     async def create_case(

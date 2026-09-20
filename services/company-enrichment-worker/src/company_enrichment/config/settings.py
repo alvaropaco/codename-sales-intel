@@ -160,6 +160,10 @@ class Settings(BaseSettings):
     bbot_max_events: int = Field(default=2000, validation_alias="BBOT_MAX_EVENTS")
 
     # --- SpiderFoot (complementary passive recon; enabled by default) ---
+    # Feature 006 (follow-up): sweeper de diretivas órfãs COLLECTED
+    orphan_sweep_interval_s: int = Field(default=300, validation_alias="ORPHAN_SWEEP_INTERVAL_S")
+    orphan_min_age_s: int = Field(default=7200, validation_alias="ORPHAN_MIN_AGE_S")
+    orphan_sweep_limit: int = Field(default=200, validation_alias="ORPHAN_SWEEP_LIMIT")
     spiderfoot_enabled: bool = Field(default=True, validation_alias="SPIDERFOOT_ENABLED")
     spiderfoot_bin: str | None = Field(default=None, validation_alias="SPIDERFOOT_BIN")
     spiderfoot_timeout_seconds: int = Field(

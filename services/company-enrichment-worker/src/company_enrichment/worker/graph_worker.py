@@ -78,10 +78,12 @@ class GraphModeWorker:
         self._ready = True
         log.info("graph_worker_started", types=self._worker_types, consumers=len(self._subs))
         pending_task = asyncio.create_task(self._report_pending_loop())
+        sweep_task = asyncio.create_task(self._sweep_orphans_loop())
         try:
             while not self._shutdown_event.is_set():
                 await self._drain_once()
         finally:
+            sweep_task.cancel()
             pending_task.cancel()
             try:
                 await pending_task
@@ -132,6 +134,35 @@ class GraphModeWorker:
                     )
                 )
         return subs
+
+    async def _sweep_orphans_loop(self) -> None:
+        """Feature 006 (follow-up): re-dirige diretivas órfãs COLLECTED.
+
+        Diretiva cujo ingest se perdeu fica COLLECTED para sempre — o caso
+        nunca finaliza e o lead fica preso em "processamento". O sweep
+        re-publica o evento requested e o worker re-executa (idempotente).
+        """
+        interval = self._settings.orphan_sweep_interval_s
+        min_age = self._settings.orphan_min_age_s
+        limit = self._settings.orphan_sweep_limit
+        log.info("orphan_sweep_started", interval=interval, min_age=min_age, limit=limit)
+        while not self._shutdown_event.is_set():
+            try:
+                async with self._session_factory() as s:
+                    repo = GraphRepository(s)
+                    director = self._director_factory(repo)
+                    republished = await director.sweep_orphan_collected(
+                        min_age_s=min_age, limit=limit
+                    )
+                    await s.commit()
+                if republished:
+                    log.info("orphan_swept", republished=republished)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("orphan_sweep_failed", error=str(exc)[:300])
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
+            except TimeoutError:
+                pass
 
     async def _report_pending_loop(self) -> None:
         """Periodically report NATS pending counts for each managed consumer."""
