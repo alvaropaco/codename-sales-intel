@@ -361,7 +361,7 @@ async function resolveCnpj({ companyName, city, state }, deps = {}) {
       { companyName, city, state },
       {
         getCompanyByCnpj: deps.getCompanyByCnpj || mcpCnpj.getCompanyByCnpj,
-        ...(deps.searxSearch ? { searxSearch: deps.searxSearch } : {}),
+        searxSearch: deps.searxSearch || searxSearch,
       }
     );
     if (ai) return ai;
