@@ -126,7 +126,7 @@ async function resolveWithAi(lead, deps = {}) {
       system: VARIANTS_SYSTEM,
       user: JSON.stringify({ razao_social: lead.companyName, cidade: lead.city || null, uf: lead.state || null }),
       temperature: 0.2,
-      maxTokens: 300,
+      maxTokens: 1000, // reasoning: raciocínio consome a cota antes do JSON
       jsonMode: true,
       tag: 'cnpj-resolver',
       ...(process.env.DEEP_ANALYSIS_LLM_MODEL ? { model: process.env.DEEP_ANALYSIS_LLM_MODEL } : {}),
@@ -188,7 +188,7 @@ async function resolveWithAi(lead, deps = {}) {
         candidatos: judgeCandidates,
       }),
       temperature: 0.1,
-      maxTokens: 250,
+      maxTokens: 2000, // reasoning: raciocínio consome a cota antes do JSON
       jsonMode: true,
       tag: 'cnpj-resolver',
       ...(process.env.DEEP_ANALYSIS_LLM_MODEL ? { model: process.env.DEEP_ANALYSIS_LLM_MODEL } : {}),
