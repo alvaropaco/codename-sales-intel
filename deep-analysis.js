@@ -22,7 +22,9 @@ const { computeContactDecision } = require('./contact-decision');
 const { buildOrgContext } = require('./org-context');
 const { getOrgPlan } = require('./plan');
 
-const DEFAULT_MAX_TOKENS = 900;
+// deepseek-v4-flash é reasoning: os tokens de raciocínio entram na mesma
+// cota do JSON — 2000 evita resumo cortado (e JSON inválido) na produção.
+const DEFAULT_MAX_TOKENS = 2000;
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_TIMEOUT_MS = 45000;
 
