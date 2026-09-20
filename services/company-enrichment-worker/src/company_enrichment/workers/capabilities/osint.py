@@ -15,9 +15,8 @@ from typing import Any
 
 from company_enrichment.db.graph_models import EdgeKind
 from company_enrichment.metrics.metrics import (
-    ENRICHMENT_OSINT_FALLBACK_TOTAL,
-    ENRICHMENT_OSINT_SCANS_BY_OUTCOME,
     ENRICHMENT_OSINT_SCAN_DURATION_SECONDS,
+    ENRICHMENT_OSINT_SCANS_BY_OUTCOME,
 )
 from company_enrichment.observability.otel import get_logger
 from company_enrichment.providers.base import ProviderError
@@ -121,7 +120,7 @@ class BbotCapability(WorkerCapability):
         partial = False
         try:
             events = await asyncio.wait_for(ctx.bbot.scan(target, hints), timeout=deadline_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             events = []
             partial = True
         except ProviderError as exc:
@@ -260,7 +259,7 @@ class SpiderFootCapability(WorkerCapability):
         partial = False
         try:
             events = await asyncio.wait_for(ctx.spiderfoot.scan(target, hints), timeout=deadline_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             events = []
             partial = True
         except ProviderError as exc:

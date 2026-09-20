@@ -51,7 +51,7 @@ class GraphRepository:
         O worker coletou os dados e publicou o ingest, mas a persistência não
         concluiu a diretiva — sem re-drive o caso nunca finaliza.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=min_age_s)
+        cutoff = datetime.now(UTC) - timedelta(seconds=min_age_s)
         result = await self._s.execute(
             select(EnrichmentWorkerJob)
             .where(

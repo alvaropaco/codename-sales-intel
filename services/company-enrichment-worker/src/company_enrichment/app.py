@@ -301,7 +301,7 @@ def main() -> None:
 
         start_http_server(int(os.environ.get("WORKER_METRICS_PORT", "9091")))
     except Exception as exc:  # noqa: BLE001 — métricas nunca derrubam o worker
-        print(f"[worker] metrics server indisponível: {exc}", file=__import__("sys").stderr)
+        print(f"[worker] metrics server indisponível: {exc}", file=sys.stderr)
     settings = Settings()
     asyncio.run(App(settings).run())
 

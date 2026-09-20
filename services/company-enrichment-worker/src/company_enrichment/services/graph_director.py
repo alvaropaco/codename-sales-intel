@@ -15,6 +15,7 @@ backstop (at-least-once is expected).
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from typing import Any
@@ -22,7 +23,6 @@ from typing import Any
 from company_enrichment.db.graph_models import CaseStatus, EdgeKind, WorkerDirectiveStatus
 from company_enrichment.db.graph_repository import GraphRepository
 from company_enrichment.events.graph_contracts import (
-    worker_directive_subject,
     EntityDiscoveredV1,
     GraphEntityRef,
     IngestCollectedV1,
@@ -32,12 +32,10 @@ from company_enrichment.events.graph_contracts import (
     WorkerDirectiveRequestedV1,
     WorkerResultEventV1,
     ingest_collected_subject,
+    worker_directive_subject,
 )
-import os
-
 from company_enrichment.metrics.metrics import (
     ENRICHMENT_CASES_TOTAL,
-    ENRICHMENT_OSINT_FALLBACK_TOTAL,
     ENRICHMENT_DIRECTIVE_DURATION,
     ENRICHMENT_DIRECTIVES_COMPLETED,
     ENRICHMENT_DIRECTIVES_FAILED,
@@ -47,6 +45,7 @@ from company_enrichment.metrics.metrics import (
     ENRICHMENT_FACTS_WRITTEN,
     ENRICHMENT_GRAPH_GUARD_REJECTIONS,
     ENRICHMENT_ORPHAN_SWEEP_TOTAL,
+    ENRICHMENT_OSINT_FALLBACK_TOTAL,
 )
 from company_enrichment.observability.otel import get_logger
 from company_enrichment.providers.firmographics import normalize_cnpj
