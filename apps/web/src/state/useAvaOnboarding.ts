@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AVA_QUESTIONS, getQuestion, previousAnsweredQuestion, type PromptContext } from '@/lib/avaScript';
+import { AVA_QUESTIONS, getQuestion, pendingInteractionMessage, previousAnsweredQuestion, type PromptContext } from '@/lib/avaScript';
 import { reactionFor } from '@/lib/avaReactions';
 import { createOnboardingService } from '@/services/onboarding';
 import type {
@@ -93,9 +93,28 @@ export function useAvaOnboarding({ prefill, onComplete }: UseAvaOnboardingOption
   const currentQuestionId: QuestionId | null =
     state.stepIndex < AVA_QUESTIONS.length ? AVA_QUESTIONS[state.stepIndex].id : null;
 
-  /** Última mensagem revelada — a UI só aciona input/chips para ela. */
-  const activeMessage: ChatMessage | null =
-    visibleCount > 0 ? displayMessages[visibleCount - 1] : null;
+  // ------------------------------------------------------------------
+  // Gate de interação (008 — FR-002): o composer/chips pertencem à
+  // MENSAGEM DE INTERAÇÃO PENDENTE (pergunta corrente), nunca à "última
+  // mensagem do transcript" — um resultado de extração (ou recibo/correção)
+  // chegando depois dela não a desativa. `revealedPromptRef` mantém a
+  // pergunta acionável depois de revelada mesmo se novas mensagens entrarem
+  // no meio (o "···" cobre o intervalo).
+  // ------------------------------------------------------------------
+  const pendingPrompt: ChatMessage | null = useMemo(
+    () => pendingInteractionMessage(displayMessages, currentQuestionId),
+    [displayMessages, currentQuestionId]
+  );
+  const revealedPromptRef = useRef<Set<string>>(new Set());
+  const pendingPromptIndex = useMemo(() => {
+    if (!pendingPrompt) return -1;
+    return displayMessages.findIndex((m) => m.id === pendingPrompt.id);
+  }, [displayMessages, pendingPrompt]);
+  useEffect(() => {
+    if (pendingPromptIndex >= 0 && visibleCount > pendingPromptIndex && pendingPrompt) {
+      revealedPromptRef.current.add(pendingPrompt.id);
+    }
+  }, [pendingPromptIndex, visibleCount, pendingPrompt]);
 
   function reactionContext(latest: OnboardingState): PromptContext {
     return {
@@ -151,7 +170,10 @@ export function useAvaOnboarding({ prefill, onComplete }: UseAvaOnboardingOption
       const result = service.revise(questionId);
       if (result.ok) {
         setInjected((prev) => prev.filter((inj) => state.messages.some((m) => m.id === inj.anchorId)));
-        setVisibleCount(0);
+        // 008 (FR-007): sem replay do transcript — o histórico revelado
+        // permanece e apenas o prompt re-anexado entra com "···".
+        const latest = service.getState().messages;
+        setVisibleCount(Math.max(latest.length - 1, 0));
         lastReactionRef.current = undefined;
       }
       setState(service.getState());
@@ -166,6 +188,7 @@ export function useAvaOnboarding({ prefill, onComplete }: UseAvaOnboardingOption
     setVisibleCount(0);
     setTyping(false);
     lastReactionRef.current = undefined;
+    revealedPromptRef.current = new Set();
     setState(service.getState());
   }, [service]);
 
@@ -182,6 +205,13 @@ export function useAvaOnboarding({ prefill, onComplete }: UseAvaOnboardingOption
   // ------------------------------------------------------------------
   const [extracting, setExtracting] = useState(false);
   const [extractionSlow, setExtractionSlow] = useState(false);
+
+  /** Gate de interação (008): ver comentário em pendingPrompt acima. */
+  const inputReady =
+    !!pendingPrompt &&
+    (visibleCount > pendingPromptIndex || revealedPromptRef.current.has(pendingPrompt.id)) &&
+    !typing &&
+    !extracting;
 
   const runExtraction = useCallback(async () => {
     setExtracting(true);
@@ -230,7 +260,10 @@ export function useAvaOnboarding({ prefill, onComplete }: UseAvaOnboardingOption
   return {
     state,
     visibleMessages: displayMessages.slice(0, visibleCount),
-    activeMessage,
+    /** Mensagem de interação pendente (008) — options/chips dela. */
+    pendingPrompt,
+    /** Composer/chips ativos: pergunta pendente revelada e sem "···"/extração. */
+    inputReady,
     typing,
     currentQuestionId,
     isSummaryPhase: state.stepIndex >= AVA_QUESTIONS.length && !state.completed,

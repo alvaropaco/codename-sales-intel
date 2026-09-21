@@ -205,6 +205,7 @@ function createAvaExtractor(deps = {}) {
   }
 
   async function extractBusinessAssets({ siteUrl, catalogUrl, files }) {
+    const startedAt = Date.now(); // 008 (FR-010): duração para diagnóstico de lentidão
     const warnings = [];
     const inputFiles = Array.isArray(files) ? files : [];
 
@@ -328,6 +329,7 @@ function createAvaExtractor(deps = {}) {
 
     // Log SOMENTE com metadados — nunca o conteúdo das fontes (D9/constituição V).
     logger.info('[ava-extract] extração concluída', {
+      durationMs: Date.now() - startedAt,
       site: extractedFrom.site ? extractedFrom.site.status : null,
       catalog: extractedFrom.catalog ? extractedFrom.catalog.status : null,
       documents: extractedFrom.documents.map((d) => ({ name: d.name, status: d.status, chars: d.chars })),

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createOnboardingService } from './onboarding';
+import { pendingInteractionMessage } from '@/lib/avaScript';
 import type { BusinessContext } from '@/types/onboarding';
 
 function makeStorage() {
@@ -104,9 +105,13 @@ describe('extração durante a conversa (FR-024)', () => {
     const state = service.getState();
     expect(state.businessContext?.products[0].name).toBe('Máquina X');
     expect(state.assets.every((a) => a.status === 'extracted')).toBe(true);
-    const last = state.messages[state.messages.length - 1];
-    expect(last.from).toBe('ava');
-    expect(last.text).toContain('Máquina X');
+    // 008 — invariante I1: a confirmação entra ANTES da interação pendente
+    // (site institucional), que permanece a última acionável.
+    const confirmation = state.messages.find((m) => m.text?.includes('Máquina X'));
+    expect(confirmation?.from).toBe('ava');
+    const pendingPrompt = pendingInteractionMessage(state.messages, 'siteInstitucional');
+    expect(pendingPrompt?.questionId).toBe('siteInstitucional');
+    expect(state.messages.indexOf(confirmation!)).toBeLessThan(state.messages.indexOf(pendingPrompt!));
   });
 
   it('sem ativos pendentes não chama o endpoint', async () => {

@@ -51,11 +51,12 @@ export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
     setOtherMode(false);
   }, [ctrl.currentQuestionId]);
 
-  const active = ctrl.activeMessage;
-  const activeIsCurrent =
-    !!active && active.from === 'ava' && active.questionId === ctrl.currentQuestionId && !ctrl.typing;
-  const chipsActive = activeIsCurrent && active!.kind === 'chips';
-  const inputActive = activeIsCurrent && active!.kind === 'input';
+  // Gate de interação (008): o composer/chips pertencem à pergunta pendente —
+  // mensagens de status chegando depois dela não a desativam.
+  const pending = ctrl.pendingPrompt;
+  const pendingIsCurrent = ctrl.inputReady && !!pending;
+  const chipsActive = pendingIsCurrent && pending!.kind === 'chips';
+  const inputActive = pendingIsCurrent && pending!.kind === 'input';
 
   const currentQuestion = ctrl.currentQuestionId ? getQuestion(ctrl.currentQuestionId) : null;
   const skippable = currentQuestion ? isSkippable(currentQuestion) : false;
@@ -115,6 +116,7 @@ export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
             answers={ctrl.state.answers}
             assets={ctrl.state.assets}
             businessContext={ctrl.state.businessContext}
+            confirmDisabled={ctrl.extracting}
             onRevise={(questionId) => ctrl.revise(questionId)}
             onConfirm={handleConfirm}
           />
@@ -136,8 +138,8 @@ export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
 
           {!ctrl.typing && !ctrl.extracting && chipsActive && !otherMode && (
             <ChipsRow
-              options={active!.options ?? []}
-              multi={active!.multi}
+              options={pending!.options ?? []}
+              multi={pending!.multi}
               allowOther={currentQuestion?.allowOther}
               skippable={skippable}
               onAnswer={(value) => ctrl.submitAnswer(value, 'chip')}

@@ -5,7 +5,7 @@
  * textos da persona (FR-002). Decisões D1/D10 de specs/004-ai-onboarding/research.md.
  */
 
-import type { ChipOption, QuestionId, ValidationReason } from '@/types/onboarding';
+import type { ChatMessage, ChipOption, QuestionId, ValidationReason } from '@/types/onboarding';
 
 /** Contexto disponível para interpolação nos prompts (respostas anteriores + sessão). */
 export interface PromptContext {
@@ -106,8 +106,46 @@ export function previousAnsweredQuestion(
   return null;
 }
 
-/** Valida uma resposta para a pergunta (FR-010). Pura. */
-export function validateAnswer(
+/**
+ * Inserção ordenada de mensagens de status (008 — invariante I1): o resultado
+ * da leitura de ativos entra imediatamente ANTES da interação pendente — a
+ * última mensagem que é prompt de pergunta (questionId) ou o marcador de
+ * resumo (kind 'summary') — para que a pergunta aguardando resposta permaneça
+ * a última acionável. Sem interação pendente, anexa no fim (comportamento da
+ * 004). Imutável.
+ */
+export function insertBeforePendingInteraction(
+  messages: ChatMessage[],
+  message: ChatMessage
+): ChatMessage[] {
+  let index = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].questionId || messages[i].kind === 'summary') {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return [...messages, message];
+  return [...messages.slice(0, index), message, ...messages.slice(index)];
+}
+
+/**
+ * Mensagem de interação pendente para o gate da UI (008): o composer/chips
+ * pertencem a ESTA mensagem — nunca à última mensagem do transcript — de modo
+ * que um resultado de extração chegando tarde não desativa a pergunta.
+ */
+export function pendingInteractionMessage(
+  messages: ChatMessage[],
+  currentQuestionId: QuestionId | null
+): ChatMessage | null {
+  if (!currentQuestionId) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].questionId === currentQuestionId) return messages[i];
+  }
+  return null;
+}
+
+/** Valida uma resposta para a pergunta (FR-010). Pura. */export function validateAnswer(
   question: AvaQuestion,
   value: string | string[]
 ): { ok: true } | { ok: false; reason: ValidationReason } {

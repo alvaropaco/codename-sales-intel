@@ -94,3 +94,64 @@ describe('corrigir resposta anterior (FR-012/FR-014)', () => {
     expect(s.getState().stepIndex).toBe(3);
   });
 });
+
+describe('008 — revise a partir do fim: fluxo sempre concluível (FR-007)', () => {
+  function serviceAtEnd() {
+    const { service, storage } = makeService();
+    service.answer('nome', 'Ana', 'text');
+    service.answer('empresa', 'Acme', 'text');
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+      service.skip(q);
+    }
+    service.answer('email', 'ana@acme.com', 'text');
+    service.skip('siteInstitucional');
+    service.skip('materiais');
+    service.answer('catalogo', 'nao', 'chip');
+    return { service, storage };
+  }
+
+  it('revise no estado de resumo reabre a pergunta e o fluxo reconclui até complete()', () => {
+    const { service, storage } = serviceAtEnd();
+    expect(service.getState().stepIndex).toBe(12);
+
+    // "Corrigir resposta anterior" a partir do fim: reabre a empresa.
+    expect(service.revise('empresa').ok).toBe(true);
+    expect(service.getState().stepIndex).toBe(1);
+
+    // Refaz empresa e as perguntas seguintes até o resumo.
+    service.answer('empresa', 'Nova Acme', 'text');
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+      service.skip(q);
+    }
+    service.answer('email', 'ana@acme.com', 'text');
+    service.skip('siteInstitucional');
+    service.skip('materiais');
+    service.answer('catalogo', 'nao', 'chip');
+
+    const state = service.getState();
+    expect(state.stepIndex).toBe(12);
+    const result = service.complete();
+    expect(result).not.toBeNull();
+    expect(result?.companyName).toBe('Nova Acme');
+    expect(storage.map.get('b2base.avaOnboardingDone')).toBe('1');
+  });
+
+  it('revisões repetidas até a primeira pergunta mantêm a conversa concluível', () => {
+    const { service } = serviceAtEnd();
+    for (let round = 0; round < 3; round++) {
+      expect(service.revise('nome').ok).toBe(true);
+      expect(service.getState().stepIndex).toBe(0);
+      service.answer('nome', `Ana ${round}`, 'text');
+      service.answer('empresa', 'Acme', 'text');
+      for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+        service.skip(q);
+      }
+      service.answer('email', 'ana@acme.com', 'text');
+      service.skip('siteInstitucional');
+      service.skip('materiais');
+      service.answer('catalogo', 'nao', 'chip');
+      expect(service.getState().stepIndex).toBe(12);
+    }
+    expect(service.complete()?.userName).toBe('Ana 2');
+  });
+});

@@ -122,7 +122,10 @@ export type ExtractionPayload = {
 
 export type ExtractionOutcome =
   | { ok: true; businessContext: BusinessContext | null }
-  | { ok: false; reason: 'NOTHING_TO_EXTRACT' | 'REQUEST_FAILED' };
+  | {
+      ok: false;
+      reason: 'NOTHING_TO_EXTRACT' | 'REQUEST_FAILED' | 'TIMEOUT' | 'SUPERSEDED';
+    };
 
 export interface AddFilesResult {
   accepted: File[];

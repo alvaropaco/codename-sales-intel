@@ -14,6 +14,7 @@ import {
   SKIP_LABEL,
   correctionMessage,
   getQuestion,
+  insertBeforePendingInteraction,
   isSkippable,
   validateAnswer,
   validateUrlText,
@@ -77,6 +78,8 @@ export interface OnboardingServiceDeps {
   prefill?: PromptContext;
   /** Cliente de extração injetável (testes); default: POST ao endpoint. */
   extract?: (payload: ExtractionPayload) => Promise<ExtractionResponse>;
+  /** Teto de espera da extração em ms (008 — FR-004). Default: 60_000. */
+  extractionTimeoutMs?: number;
 }
 
 let assetSeq = 0;
@@ -157,10 +160,21 @@ function answerEcho(question: AvaQuestion, value: string | string[]): string {
 export function createOnboardingService(deps: OnboardingServiceDeps) {
   const prefill: PromptContext = deps.prefill ?? {};
   const extractFn = deps.extract || defaultExtract;
+  // Teto de espera da extração (008 — FR-004): o "···" nunca persiste além dele.
+  const extractionTimeoutMs = deps.extractionTimeoutMs ?? 60_000;
+  // Época de corrida (008): resultado de fetch cuja extração já foi superada
+  // (timeout estourado ou extração mais recente) é descartado sem tocar o estado.
+  let extractionEpoch = 0;
+  let extractionInFlight = false;
   let awaitingCatalogUrl = false;
   // Aguardando a confirmação de nome de empresa genérico (Edge Case da spec).
   let awaitingCompanyConfirmation = false;
   let state = buildInitialState();
+
+  /** Observabilidade sem dados de cliente (008 — FR-010, constituição VII). */
+  function emit(event: string, meta: Record<string, unknown> = {}): void {
+    console.info('[ava-onboarding]', { event, ...meta });
+  }
 
   function buildInitialState(): OnboardingState {
     awaitingCatalogUrl = false;
@@ -330,6 +344,9 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
       if (state.completed) return buildResult();
       const required = AVA_QUESTIONS.filter((q) => q.required);
       const allAnswered = required.every((q) => state.answers[q.id]);
+      // Guarda do settle (008 — FR-005): a confirmação espera a extração em
+      // voo terminar (ou estourar o teto) para incluir o contexto de negócio.
+      if (extractionInFlight) return null;
       if (!allAnswered || state.stepIndex < AVA_QUESTIONS.length) return null;
 
       const crmValue = state.answers.crm?.value;
@@ -457,6 +474,13 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
      * Extração dos ativos pendentes durante a conversa (FR-024): chama o
      * endpoint stateless, guarda o contexto de negócio no estado e a Ava
      * confirma em linguagem natural o que absorveu (ou o que falhou).
+     *
+     * 008: (a) teto de espera — fetch que não resolve em `extractionTimeoutMs`
+     * vira aviso conversacional + conversa segue (FR-004); (b) época de corrida
+     * — resultado de fetch de uma extração superada é descartado sem tocar o
+     * estado; (c) mensagens de resultado entram ANTES da interação pendente
+     * (invariante I1) para que a pergunta aguardando resposta permaneça a
+     * última acionável.
      */
     async extractBusinessContext(): Promise<ExtractionOutcome> {
       const siteUrl = state.assets.find((a) => a.type === 'site' && a.url)?.url ?? null;
@@ -468,12 +492,36 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
         return { ok: false, reason: 'NOTHING_TO_EXTRACT' };
       }
 
+      const epoch = ++extractionEpoch;
+      extractionInFlight = true;
       for (const asset of state.assets) {
         if (asset.status === 'pending') asset.status = 'extracting';
       }
 
+      /** Settle da chamada vigente: libera a confirmação do resumo (FR-005). */
+      const settle = (outcome: ExtractionOutcome): ExtractionOutcome => {
+        if (epoch === extractionEpoch) {
+          extractionInFlight = false;
+          emit('extraction_settled', { reason: outcome.ok ? 'ok' : outcome.reason });
+        }
+        return outcome;
+      };
+
       try {
-        const response = await extractFn({ siteUrl, catalogUrl, files });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const response = await Promise.race([
+          extractFn({ siteUrl, catalogUrl, files }).finally(() => clearTimeout(timer)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('EXTRACTION_TIMEOUT')), extractionTimeoutMs);
+          }),
+        ]);
+
+        // Corrida vencida: outra extração passou a ser a vigente — descarta.
+        if (epoch !== extractionEpoch) {
+          emit('late_result_discarded');
+          return settle({ ok: false, reason: 'SUPERSEDED' });
+        }
+
         state.businessContext = response.businessContext;
         for (const asset of state.assets) {
           if (asset.status === 'extracting') asset.status = 'extracted';
@@ -489,41 +537,64 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
         }
 
         const context = response.businessContext;
-        if (context && context.products.length > 0) {
-          const names = context.products.map((p) => p.name).slice(0, 3).join(', ');
-          state.messages.push({
-            id: nextMessageId(),
-            from: 'ava',
-            kind: 'text',
-            text:
-              `Pronto, absorvi tudo! 🧠 Identifiquei ${context.products.length === 1 ? 'o produto' : 'os produtos'} ` +
-              `${names}${context.valueProposition ? ` — "${context.valueProposition}"` : ''}. ` +
-              'Vou usar isso pra falar a língua do seu negócio nas prospecções.',
-          });
-        } else {
-          state.messages.push({
-            id: nextMessageId(),
-            from: 'ava',
-            kind: 'text',
-            text:
-              'Li o que mandou, mas não consegui absorver conteúdo aproveitável agora — ' +
-              'pode ser o formato. Sem crise: dá pra complementar depois nas configurações. 🙂',
-          });
+        const confirmation: ChatMessage = context && context.products.length > 0
+          ? {
+              id: nextMessageId(),
+              from: 'ava',
+              kind: 'text',
+              text:
+                `Pronto, absorvi tudo! 🧠 Identifiquei ${context.products.length === 1 ? 'o produto' : 'os produtos'} ` +
+                `${context.products.map((p) => p.name).slice(0, 3).join(', ')}` +
+                `${context.valueProposition ? ` — "${context.valueProposition}"` : ''}. ` +
+                'Vou usar isso pra falar a língua do seu negócio nas prospecções.',
+            }
+          : {
+              id: nextMessageId(),
+              from: 'ava',
+              kind: 'text',
+              text:
+                'Li o que mandou, mas não consegui absorver conteúdo aproveitável agora — ' +
+                'pode ser o formato. Sem crise: dá pra complementar depois nas configurações. 🙂',
+            };
+        state.messages = insertBeforePendingInteraction(state.messages, confirmation);
+        return settle({ ok: true, businessContext: context });
+      } catch (error) {
+        const timedOut = error instanceof Error && error.message === 'EXTRACTION_TIMEOUT';
+
+        // Corrida vencida (timeout estourado já foi tratado pela chamada vigente
+        // ou outra extração começou): descarta silenciosamente.
+        if (epoch !== extractionEpoch) {
+          emit('late_result_discarded');
+          return settle({ ok: false, reason: 'SUPERSEDED' });
         }
-        return { ok: true, businessContext: context };
-      } catch {
+        if (timedOut) emit('extraction_timeout');
+
         for (const asset of state.assets) {
-          if (asset.status === 'extracting') asset.status = 'failed';
+          if (asset.status === 'extracting') {
+            asset.status = 'failed';
+            if (timedOut) asset.warning = 'EXTRACTION_TIMEOUT';
+          }
         }
-        state.messages.push({
-          id: nextMessageId(),
-          from: 'ava',
-          kind: 'text',
-          text:
-            'Não consegui processar seus materiais agora — parece um problema de conexão. ' +
-            'A conversa segue normalmente, tentamos de novo mais tarde. 🙂',
-        });
-        return { ok: false, reason: 'REQUEST_FAILED' };
+        const notice: ChatMessage = timedOut
+          ? {
+              id: nextMessageId(),
+              from: 'ava',
+              kind: 'text',
+              text:
+                'A leitura dos seus ativos está demorando mais que o esperado — vou seguir ' +
+                'sem ela pra não te travar. Dá pra complementar esses materiais depois, nas ' +
+                'configurações. 🙂',
+            }
+          : {
+              id: nextMessageId(),
+              from: 'ava',
+              kind: 'text',
+              text:
+                'Não consegui processar seus materiais agora — parece um problema de conexão. ' +
+                'A conversa segue normalmente, tentamos de novo mais tarde. 🙂',
+            };
+        state.messages = insertBeforePendingInteraction(state.messages, notice);
+        return settle({ ok: false, reason: timedOut ? 'TIMEOUT' : 'REQUEST_FAILED' });
       }
     },
 

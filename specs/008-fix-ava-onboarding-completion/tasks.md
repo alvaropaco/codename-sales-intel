@@ -28,7 +28,7 @@ Web app existente: `apps/web/src/` (vitest, ambiente node) + módulo de rota na 
 
 **Purpose**: Confirmar que a suíte existente está verde antes de qualquer mudança.
 
-- [ ] T001 Rodar baseline dos testes web existentes (`pnpm --dir apps/web test`) e registrar resultado — todos os testes da 004 (`onboarding.test.ts`, `onboarding.assets.test.ts`, `onboarding.complete.test.ts`, `onboarding.revise.test.ts`, `avaScript.test.ts`) devem passar sem alterações
+- [x] T001 Rodar baseline dos testes web existentes (`pnpm --dir apps/web test`) e registrar resultado — todos os testes da 004 (`onboarding.test.ts`, `onboarding.assets.test.ts`, `onboarding.complete.test.ts`, `onboarding.revise.test.ts`, `avaScript.test.ts`) devem passar sem alterações
 
 ---
 
@@ -38,9 +38,9 @@ Web app existente: `apps/web/src/` (vitest, ambiente node) + módulo de rota na 
 
 **⚠️ CRITICAL**: Nenhuma story começa antes deste fase completar.
 
-- [ ] T002 [P] Estender tipo `ExtractionOutcome` com motivo `'TIMEOUT'` em apps/web/src/types/onboarding.ts (delta do data-model.md §1)
-- [ ] T003 [P] Escrever testes FALHANDO para o helper puro `insertBeforePendingInteraction` em apps/web/src/lib/avaScript.test.ts (invariante I1 do data-model.md: insere antes da última mensagem com `questionId` ou `kind 'summary'`; anexa no fim sem interação pendente; imutável — não muta array/entradas de origem)
-- [ ] T004 Implementar `insertBeforePendingInteraction(messages, message): ChatMessage[]` em apps/web/src/lib/avaScript.ts (export puro, imutável; faz T003 passar)
+- [x] T002 [P] Estender tipo `ExtractionOutcome` com motivo `'TIMEOUT'` em apps/web/src/types/onboarding.ts (delta do data-model.md §1)
+- [x] T003 [P] Escrever testes FALHANDO para o helper puro `insertBeforePendingInteraction` em apps/web/src/lib/avaScript.test.ts (invariante I1 do data-model.md: insere antes da última mensagem com `questionId` ou `kind 'summary'`; anexa no fim sem interação pendente; imutável — não muta array/entradas de origem)
+- [x] T004 Implementar `insertBeforePendingInteraction(messages, message): ChatMessage[]` em apps/web/src/lib/avaScript.ts (export puro, imutável; faz T003 passar)
 
 **Checkpoint**: Tipos e invariante de ordem prontos — stories podem começar.
 
@@ -54,15 +54,15 @@ Web app existente: `apps/web/src/` (vitest, ambiente node) + módulo de rota na 
 
 ### Tests for User Story 1 ⚠️ (constituição III — escrever PRIMEIRO, falhar antes)
 
-- [ ] T005 [P] [US1] Escrever teste de regressão FALHANDO do relato (quickstart Cenário 1) em apps/web/src/services/onboarding.completion.test.ts: extração fake controlável que resolve APÓS as respostas das perguntas 11 e 12; afirmar (a) mensagem "Pronto, absorvi tudo…" inserida ANTES da última interação pendente, (b) `stepIndex === 12`, (c) `complete()` devolve `OnboardingResult` com `businessContext`; incluir variante materiais: anexos na pergunta 11 mantêm o prompt de materiais como última interação ("Pronto, seguir 📎" alcançável)
+- [x] T005 [P] [US1] Escrever teste de regressão FALHANDO do relato (quickstart Cenário 1) em apps/web/src/services/onboarding.completion.test.ts: extração fake controlável que resolve APÓS as respostas das perguntas 11 e 12; afirmar (a) mensagem "Pronto, absorvi tudo…" inserida ANTES da última interação pendente, (b) `stepIndex === 12`, (c) `complete()` devolve `OnboardingResult` com `businessContext`; incluir variante materiais: anexos na pergunta 11 mantêm o prompt de materiais como última interação ("Pronto, seguir 📎" alcançável)
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Aplicar `insertBeforePendingInteraction` na inserção das 4 mensagens de resultado em `extractBusinessContext` (sucesso com produtos, sucesso sem conteúdo aproveitável, falha de conexão — e o futuro aviso de timeout) em apps/web/src/services/onboarding.ts (faz T005 passar)
-- [ ] T007 [P] [US1] Escrever testes FALHANDO para o helper puro de gate da UI em apps/web/src/lib/avaScript.test.ts: `pendingInteractionMessage(messages, currentQuestionId)` retorna a última mensagem com `questionId === currentQuestionId` (mesmo com mensagens de status depois dela) ou `null`
-- [ ] T008 Implementar `pendingInteractionMessage` em apps/web/src/lib/avaScript.ts (faz T007 passar)
-- [ ] T009 [US1] Trocar o gate de interação em apps/web/src/state/useAvaOnboarding.ts: expor `pendingPrompt` (mensagem de interação pendente via helper T008) + `inputReady` (pendente revelada — `visibleCount` > índice dela — e sem `typing`/`extracting`); remover a derivação `activeMessage`/`activeIsCurrent` baseada em "última mensagem"; preservar pacing (jitter 800–1600 ms), reações injetadas e `otherMode`
-- [ ] T010 [US1] Consumir o novo gate em apps/web/src/components/onboarding/ava/AvaOnboarding.tsx: `chipsActive`/`inputActive` derivam de `pendingPrompt`+`inputReady` (chips usam options/multi da mensagem pendente); condições do rodapé (`!typing && !extracting`) e botão "Corrigir resposta anterior" (`!isSummaryPhase`) inalterados
+- [x] T006 [US1] Aplicar `insertBeforePendingInteraction` na inserção das 4 mensagens de resultado em `extractBusinessContext` (sucesso com produtos, sucesso sem conteúdo aproveitável, falha de conexão — e o futuro aviso de timeout) em apps/web/src/services/onboarding.ts (faz T005 passar)
+- [x] T007 [P] [US1] Escrever testes FALHANDO para o helper puro de gate da UI em apps/web/src/lib/avaScript.test.ts: `pendingInteractionMessage(messages, currentQuestionId)` retorna a última mensagem com `questionId === currentQuestionId` (mesmo com mensagens de status depois dela) ou `null`
+- [x] T008 Implementar `pendingInteractionMessage` em apps/web/src/lib/avaScript.ts (faz T007 passar)
+- [x] T009 [US1] Trocar o gate de interação em apps/web/src/state/useAvaOnboarding.ts: expor `pendingPrompt` (mensagem de interação pendente via helper T008) + `inputReady` (pendente revelada — `visibleCount` > índice dela — e sem `typing`/`extracting`); remover a derivação `activeMessage`/`activeIsCurrent` baseada em "última mensagem"; preservar pacing (jitter 800–1600 ms), reações injetadas e `otherMode`
+- [x] T010 [US1] Consumir o novo gate em apps/web/src/components/onboarding/ava/AvaOnboarding.tsx: `chipsActive`/`inputActive` derivam de `pendingPrompt`+`inputReady` (chips usam options/multi da mensagem pendente); condições do rodapé (`!typing && !extracting`) e botão "Corrigir resposta anterior" (`!isSummaryPhase`) inalterados
 
 **Checkpoint**: Cenário do relato conclui até o resumo; suíte web verde; US1 funciona de forma independente.
 
@@ -76,13 +76,13 @@ Web app existente: `apps/web/src/` (vitest, ambiente node) + módulo de rota na 
 
 ### Tests for User Story 2 ⚠️ (constituição III)
 
-- [ ] T011 [P] [US2] Escrever testes FALHANDO em apps/web/src/services/onboarding.completion.test.ts (fake timers): (a) teto — `extract` fake que resolve após `extractionTimeoutMs` injetado baixo (ex.: 50 ms) retorna `{ ok: false, reason: 'TIMEOUT' }`, ativos ficam `status 'failed'` com `warning 'EXTRACTION_TIMEOUT'`, aviso conversacional inserido antes da interação pendente e a conversa segue até resumo; (b) descarte — resolução do fetch APÓS o timeout não muta estado nem anexa mensagem; (c) época — extração mais recente supera a anterior (resultado da antiga descartado); (d) settle — `complete()` retorna `null` durante extração em voo e o resultado após settle (inclusive após `TIMEOUT`)
+- [x] T011 [P] [US2] Escrever testes FALHANDO em apps/web/src/services/onboarding.completion.test.ts (fake timers): (a) teto — `extract` fake que resolve após `extractionTimeoutMs` injetado baixo (ex.: 50 ms) retorna `{ ok: false, reason: 'TIMEOUT' }`, ativos ficam `status 'failed'` com `warning 'EXTRACTION_TIMEOUT'`, aviso conversacional inserido antes da interação pendente e a conversa segue até resumo; (b) descarte — resolução do fetch APÓS o timeout não muta estado nem anexa mensagem; (c) época — extração mais recente supera a anterior (resultado da antiga descartado); (d) settle — `complete()` retorna `null` durante extração em voo e o resultado após settle (inclusive após `TIMEOUT`)
 
 ### Implementation for User Story 2
 
-- [ ] T012 [US2] Implementar teto + época + guarda em apps/web/src/services/onboarding.ts: `deps.extractionTimeoutMs` (default 60000), `Promise.race` com timer no `extractBusinessContext`, contador `extractionEpoch` com descarte silencioso de corridas vencidas, `complete()` retorna `null` enquanto corrida vigente em voo (contrato v1.1)
-- [ ] T013 [US2] Emitir eventos estruturados (FR-010) em apps/web/src/services/onboarding.ts: `console.info('[ava-onboarding]', { event })` para `extraction_timeout`, `late_result_discarded` e `extraction_settled` (com `{ reason }`) — sem nenhum dado de cliente (constituição V/VII)
-- [ ] T014 [US2] Habilitar confirmação pós-settle na UI: prop `confirmDisabled?: boolean` em apps/web/src/components/onboarding/ava/AvaSummary.tsx (desabilita "Tudo certo — concluir ✨", mantém ajuste por item ativo) e wiring `confirmDisabled={ctrl.extracting}` em apps/web/src/components/onboarding/ava/AvaOnboarding.tsx
+- [x] T012 [US2] Implementar teto + época + guarda em apps/web/src/services/onboarding.ts: `deps.extractionTimeoutMs` (default 60000), `Promise.race` com timer no `extractBusinessContext`, contador `extractionEpoch` com descarte silencioso de corridas vencidas, `complete()` retorna `null` enquanto corrida vigente em voo (contrato v1.1)
+- [x] T013 [US2] Emitir eventos estruturados (FR-010) em apps/web/src/services/onboarding.ts: `console.info('[ava-onboarding]', { event })` para `extraction_timeout`, `late_result_discarded` e `extraction_settled` (com `{ reason }`) — sem nenhum dado de cliente (constituição V/VII)
+- [x] T014 [US2] Habilitar confirmação pós-settle na UI: prop `confirmDisabled?: boolean` em apps/web/src/components/onboarding/ava/AvaSummary.tsx (desabilita "Tudo certo — concluir ✨", mantém ajuste por item ativo) e wiring `confirmDisabled={ctrl.extracting}` em apps/web/src/components/onboarding/ava/AvaOnboarding.tsx
 
 **Checkpoint**: Teto, descarte e settle verdes; US1+US2 funcionam juntas.
 
@@ -96,11 +96,11 @@ Web app existente: `apps/web/src/` (vitest, ambiente node) + módulo de rota na 
 
 ### Tests for User Story 3 ⚠️ (constituição III)
 
-- [ ] T015 [P] [US3] Estender apps/web/src/services/onboarding.revise.test.ts: conversa até a pergunta 12 → `revise` de pergunta anterior (ex.: 'empresa') → responder a partir dela até o resumo → `complete()` devolve resultado; respostas/ativos das perguntas posteriores descartados (semântica 004 mantida)
+- [x] T015 [P] [US3] Estender apps/web/src/services/onboarding.revise.test.ts: conversa até a pergunta 12 → `revise` de pergunta anterior (ex.: 'empresa') → responder a partir dela até o resumo → `complete()` devolve resultado; respostas/ativos das perguntas posteriores descartados (semântica 004 mantida)
 
 ### Implementation for User Story 3
 
-- [ ] T016 [US3] Remover o replay em apps/web/src/state/useAvaOnboarding.ts: `revise` deixa de fazer `setVisibleCount(0)` e posiciona `visibleCount` no índice do prompt re-anexado (histórico permanece; apenas o novo prompt entra com "···"); limpeza de reações injetadas com âncora removida permanece
+- [x] T016 [US3] Remover o replay em apps/web/src/state/useAvaOnboarding.ts: `revise` deixa de fazer `setVisibleCount(0)` e posiciona `visibleCount` no índice do prompt re-anexado (histórico permanece; apenas o novo prompt entra com "···"); limpeza de reações injetadas com âncora removida permanece
 
 **Checkpoint**: Correção retroativa concluível e sem replay — todas as stories funcionam.
 
@@ -110,9 +110,9 @@ Web app existente: `apps/web/src/` (vitest, ambiente node) + módulo de rota na 
 
 **Purpose**: Observabilidade do servidor e gates de qualidade finais.
 
-- [ ] T017 [P] Adicionar log estruturado de duração/resultado em ava-extract.js (1 linha via `logger` já injetável — `{ event: 'ava_extract', outcome, durationMs, warnings: n }`, sem conteúdo de cliente; FR-010/constituição VII)
-- [ ] T018 Rodar gates completos: `pnpm --dir apps/web test` (suíte toda verde, incluindo testes da 004 sem edição — se algum teste de onboarding.assets.test.ts assumir a ordem bugada das mensagens, atualizá-lo citando a invariante I1), `pnpm --dir apps/web build` (tsc strict), `pnpm test` (raiz, node --test)
-- [ ] T019 Validar quickstart.md cenários 1–5 ponta a ponta contra a implementação final e marcar tasks concluídas
+- [x] T017 [P] Adicionar log estruturado de duração/resultado em ava-extract.js (1 linha via `logger` já injetável — `{ event: 'ava_extract', outcome, durationMs, warnings: n }`, sem conteúdo de cliente; FR-010/constituição VII)
+- [x] T018 Rodar gates completos: `pnpm --dir apps/web test` (suíte toda verde, incluindo testes da 004 sem edição — se algum teste de onboarding.assets.test.ts assumir a ordem bugada das mensagens, atualizá-lo citando a invariante I1), `pnpm --dir apps/web build` (tsc strict), `pnpm test` (raiz, node --test)
+- [x] T019 Validar quickstart.md cenários 1–5 ponta a ponta contra a implementação final e marcar tasks concluídas
 
 ---
 

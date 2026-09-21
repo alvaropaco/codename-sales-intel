@@ -17,6 +17,8 @@ interface AvaSummaryProps {
   answers: Partial<Record<QuestionId, Answer>>;
   assets: BusinessAsset[];
   businessContext: BusinessContext | null;
+  /** 008 (FR-005): desabilita a confirmação enquanto a extração está em voo. */
+  confirmDisabled?: boolean;
   onRevise: (questionId: QuestionId) => void;
   onConfirm: () => void;
 }
@@ -44,7 +46,14 @@ function formatValue(
   }
 }
 
-export function AvaSummary({ answers, assets, businessContext, onRevise, onConfirm }: AvaSummaryProps) {
+export function AvaSummary({
+  answers,
+  assets,
+  businessContext,
+  confirmDisabled = false,
+  onRevise,
+  onConfirm,
+}: AvaSummaryProps) {
   return (
     <div className="w-full rounded-2xl border border-indigo-400/30 bg-gradient-to-b from-indigo-500/10 to-white/[0.02] p-5 shadow-lg shadow-indigo-500/10">
       <div className="mb-4 flex items-center gap-2">
@@ -106,9 +115,15 @@ export function AvaSummary({ answers, assets, businessContext, onRevise, onConfi
       <button
         type="button"
         onClick={onConfirm}
-        className="mt-5 w-full rounded-xl bg-indigo-500 px-4 py-3 text-sm font-black text-white shadow-lg shadow-indigo-500/25 transition hover:bg-indigo-400"
+        disabled={confirmDisabled}
+        className={cn(
+          'mt-5 w-full rounded-xl px-4 py-3 text-sm font-black text-white shadow-lg transition',
+          confirmDisabled
+            ? 'cursor-not-allowed bg-slate-700 shadow-none'
+            : 'bg-indigo-500 shadow-indigo-500/25 hover:bg-indigo-400'
+        )}
       >
-        Tudo certo — concluir ✨
+        {confirmDisabled ? 'Ava terminando de ler seus materiais…' : 'Tudo certo — concluir ✨'}
       </button>
     </div>
   );

@@ -9,9 +9,11 @@ import {
   isSkippable,
   getQuestion,
   previousAnsweredQuestion,
+  insertBeforePendingInteraction,
+  pendingInteractionMessage,
   type PromptContext,
 } from './avaScript';
-import type { Answer, QuestionId } from '@/types/onboarding';
+import type { Answer, ChatMessage, QuestionId } from '@/types/onboarding';
 
 const EXPECTED_ORDER: QuestionId[] = [
   'nome',
@@ -157,5 +159,70 @@ describe('validação conversacional (FR-010)', () => {
     const msg = correctionMessage(getQuestion('email'), 'INVALID_EMAIL');
     expect(msg.length).toBeGreaterThan(0);
     expect(msg.toLowerCase()).not.toContain('erro');
+  });
+});
+
+describe('insertBeforePendingInteraction (008 — invariante I1)', () => {
+  const question = (id: QuestionId, text = 'pergunta'): ChatMessage => ({
+    id: `q-${id}`,
+    from: 'ava',
+    kind: 'input',
+    text,
+    questionId: id,
+  });
+  const status = (id: string, text = 'Pronto, absorvi tudo! 🧠'): ChatMessage => ({
+    id,
+    from: 'ava',
+    kind: 'text',
+    text,
+  });
+
+  it('insere mensagem de status antes da pergunta pendente (chegada tardia)', () => {
+    const messages = [question('nome'), question('materiais'), question('catalogo')];
+    const out = insertBeforePendingInteraction(messages, status('s1'));
+    expect(out.map((m) => m.id)).toEqual(['q-nome', 'q-materiais', 's1', 'q-catalogo']);
+    // A pergunta pendente permanece a última mensagem do transcript.
+    expect(out[out.length - 1].questionId).toBe('catalogo');
+  });
+
+  it('insere antes do marcador de resumo quando não há mais perguntas', () => {
+    const summary: ChatMessage = { id: 'sum', from: 'ava', kind: 'summary', text: null };
+    const out = insertBeforePendingInteraction([question('catalogo'), summary], status('s1'));
+    expect(out.map((m) => m.id)).toEqual(['q-catalogo', 's1', 'sum']);
+  });
+
+  it('anexa no fim quando não há interação pendente', () => {
+    const out = insertBeforePendingInteraction([status('s0')], status('s1'));
+    expect(out.map((m) => m.id)).toEqual(['s0', 's1']);
+  });
+
+  it('é imutável — array e entradas de origem preservados', () => {
+    const messages = [question('nome'), question('materiais')];
+    const copy = [...messages];
+    const message = status('s1');
+    const out = insertBeforePendingInteraction(messages, message);
+    expect(messages).toEqual(copy);
+    expect(out).not.toBe(messages);
+    expect(out[1]).toBe(message);
+  });
+});
+
+describe('pendingInteractionMessage (008 — gate da UI)', () => {
+  const question = (id: QuestionId): ChatMessage => ({
+    id: `q-${id}`,
+    from: 'ava',
+    kind: 'input',
+    text: 'pergunta',
+    questionId: id,
+  });
+
+  it('retorna a mensagem da pergunta pendente mesmo com status depois dela', () => {
+    const messages: ChatMessage[] = [question('materiais'), question('catalogo'), { id: 's1', from: 'ava', kind: 'text', text: 'absorvi' }];
+    expect(pendingInteractionMessage(messages, 'catalogo')?.id).toBe('q-catalogo');
+  });
+
+  it('retorna null quando a pergunta não está no transcript', () => {
+    expect(pendingInteractionMessage([question('nome')], 'catalogo')).toBeNull();
+    expect(pendingInteractionMessage([], 'nome')).toBeNull();
   });
 });
