@@ -48,7 +48,15 @@ async function connectNats({ name = 'b2base-backend' } = {}) {
 /** Garante que o stream existe (idempotente). Usado pelo motor v2. */
 async function ensureStream(jsm, { name = NATS_STREAM, subjects = ['enrichment.>'] } = {}) {
   try {
-    await jsm.streams.info(name);
+    const info = await jsm.streams.info(name);
+    // Stream existente pode não conhecer subjects novos (ex.: discovery.> do
+    // motor de discovery) — update ADITIVO e idempotente, nunca remove.
+    const current = (info.config && info.config.subjects) || [];
+    const missing = subjects.filter((s) => !current.includes(s));
+    if (missing.length) {
+      await jsm.streams.update(name, { subjects: [...current, ...missing] });
+      console.log(`[nats] stream atualizado: ${name} (+${missing.join(', ')})`);
+    }
     return false;
   } catch (_e) {
     await jsm.streams.add({ name, subjects, retention: 'limits', storage: 'file' });

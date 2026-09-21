@@ -940,6 +940,38 @@ function normalizeCommercialProfilePayload(body = {}) {
 let DEFAULT_ORG_ID;
 
 // ============================================================================
+// DISCOVERY ENGINE (specs/006-discovery-engine)
+// ============================================================================
+// Publisher JetStream lazy: sem NATS o engine roda igual (só sem eventos).
+const natsStreamMod = require('./nats-stream');
+const { createDiscoveryEngine, makeNatsPublisher } = require('./discovery');
+const { createDiscoveryApi } = require('./discovery/api');
+
+const discoveryPublisher = (() => {
+  let jsPromise = null;
+  return async (message) => {
+    try {
+      if (!natsStreamMod.isNatsEnabled()) return;
+      if (!jsPromise) jsPromise = natsStreamMod.connectNats({ name: 'b2base-discovery' }).then((nc) => nc.jetstream());
+      const js = await jsPromise;
+      await makeNatsPublisher(js, { logger: console })(message);
+    } catch (err) {
+      console.warn(`[discovery] publisher indisponível: ${err.message}`);
+    }
+  };
+})();
+
+const discoveryEngine = createDiscoveryEngine({
+  prisma,
+  publish: discoveryPublisher,
+  registry: process.env.REDIS_URL
+    ? require('./discovery/provider-registry').createDiscoveryRegistry({ redis: new (require('ioredis'))(process.env.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 2 }) })
+    : null,
+  logger: console,
+});
+createDiscoveryApi({ app, prisma, engine: discoveryEngine, requireRequestOrgId });
+
+// ============================================================================
 // API ENDPOINTS
 // ============================================================================
 

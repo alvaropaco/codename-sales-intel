@@ -187,6 +187,14 @@ function canonicalKey(type, value) {
       const v = String(value || '').trim();
       return v ? `funding:${nameKey(v) || v.toLowerCase()}` : null;
     }
+    case 'technology': {
+      const slug = normalizeName(value).replace(/\s+/g, '-');
+      return slug ? `tech:${slug}` : null;
+    }
+    case 'social_profile': {
+      const u = normalizeUrl(value);
+      return u ? `social:${createHash('sha256').update(u).digest('hex').slice(0, 24)}` : null;
+    }
     default:
       return null;
   }

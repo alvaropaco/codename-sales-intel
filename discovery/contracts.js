@@ -58,7 +58,7 @@ const PROVIDER_CATALOG = {
   exa: { capabilities: ['web.search'], paid: true, kind: 'api', secrets: ['EXA_API_KEY'] },
   crtsh: { capabilities: ['digital.domains'], paid: false, kind: 'collector', secrets: [] },
   'dns-rdap': { capabilities: ['digital.infrastructure'], paid: false, kind: 'collector', secrets: [] },
-  projectdiscovery: { capabilities: ['digital.domains'], paid: false, kind: 'collector', secrets: [] },
+  projectdiscovery: { capabilities: ['digital.domains'], paid: false, kind: 'collector', secrets: ['PROJECTDISCOVERY_API_KEY'] },
   'http-metadata': { capabilities: ['digital.contacts', 'digital.infrastructure'], paid: false, kind: 'collector', secrets: [] },
   jusbrasil: { capabilities: ['legal.cases', 'legal.documents'], paid: true, kind: 'api', secrets: ['JUSBRASIL_TOKEN'] },
   escavador: { capabilities: ['legal.cases', 'legal.documents'], paid: true, kind: 'api', secrets: ['ESCAVADOR_TOKEN'] },
