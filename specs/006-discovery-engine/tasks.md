@@ -1,16 +1,16 @@
 # Tasks: B2Base Discovery Engine
 
 ## Phase 1: Setup
-- [ ] T001 [P] Create discovery/ module and fixtures.
-- [ ] T002 [P] Create provider defaults, capability taxonomy and secret references.
-- [ ] T003 [P] Add job/provider/enrichment metrics.
+- [x] T001 [P] Create discovery/ module and fixtures.
+- [x] T002 [P] Create provider defaults, capability taxonomy and secret references.
+- [x] T003 [P] Add job/provider/enrichment metrics.
 ## Phase 2: Foundational
-- [ ] T004 [P] Add Prisma models/migration for DiscoveryJob, DiscoveryProviderRun, DiscoveryEntity, DiscoveryRelationship, DiscoveryEvidence, DiscoveryCandidate and DiscoverySignal.
-- [ ] T005 [P] Add provider contracts and registry for discovery + enrichment capabilities.
-- [ ] T006 [P] Add normalization, canonical keys, identifiers and confidence helpers.
+- [x] T004 [P] Add Prisma models/migration for DiscoveryJob, DiscoveryProviderRun, DiscoveryEntity, DiscoveryRelationship, DiscoveryEvidence, DiscoveryCandidate and DiscoverySignal.
+- [x] T005 [P] Add provider contracts and registry for discovery + enrichment capabilities.
+- [x] T006 [P] Add normalization, canonical keys, identifiers and confidence helpers.
 - [ ] T007 [P] Add NATS discovery.*.v1 events and idempotent consumption.
-- [ ] T008 [P] Add tenant-scoped persistence, temporal observations and idempotent upserts.
-- [ ] T009 Write foundational contract/normalizer/persistence tests first.
+- [x] T008 [P] Add tenant-scoped persistence, temporal observations and idempotent upserts.
+- [x] T009 Write foundational contract/normalizer/persistence tests first.
 ## Phase 3: User Story 1 — Commercial Discovery
 - [ ] T010 [P] Implement CNPJ MCP provider.
 - [ ] T011 [P] Implement SearXNG provider.

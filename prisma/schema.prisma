@@ -863,3 +863,171 @@ model GeocodeCache {
   source        String // brasilapi | nominatim
   fetchedAt     DateTime @default(now()) // base do TTL de 90 dias
 }
+
+// ── Discovery Engine (specs/006-discovery-engine) ───────────────────────────
+// Pipeline discovery → enrichment → intelligence. Entidade canônica +
+// perfis por domínio + evidência imutável; nada de colunas nullable por
+// provider no DiscoveryEntity (data-model.md, princípio 1).
+
+// Job de descoberta: fan-out para providers, fan-in de observações.
+model DiscoveryJob {
+  id             String    @id @default(cuid())
+  orgId          String
+  // queued | running | partial | completed | failed | cancelled
+  status         String    @default("queued")
+  // api | prospect | manual
+  trigger        String
+  query          Json // { criteria, seed } — o que foi pedido
+  providerConfig Json // snapshot de providers/limites (sem segredos)
+  providersTotal  Int      @default(0)
+  providersDone   Int      @default(0)
+  providersFailed Int      @default(0)
+  itemsFound      Int      @default(0)
+  estimatedCost   Float    @default(0) // soma dos runs, em centavos
+  lastError       Json?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  runs       DiscoveryProviderRun[]
+  candidates DiscoveryCandidate[]
+
+  @@index([orgId, createdAt])
+}
+
+// Execução de UM provider dentro do job (rate/custo/erro por provider).
+model DiscoveryProviderRun {
+  id            String    @id @default(cuid())
+  orgId         String
+  jobId         String
+  provider      String
+  capability    String
+  // pending | running | completed | failed | skipped
+  status        String    @default("pending")
+  attempt       Int       @default(0)
+  requests      Int       @default(0)
+  items         Int       @default(0)
+  estimatedCost Float     @default(0)
+  errorCode     String?
+  errorMessage  String?
+  lastCursor    String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  job DiscoveryJob @relation(fields: [jobId], references: [id])
+
+  @@unique([jobId, provider])
+  @@index([orgId, status])
+}
+
+// Entidade canônica multi-tipo (company, person, domain, legal_case, …).
+// Identidade = (orgId, type, canonicalKey) — redelivery NÃO duplica (SC-005).
+model DiscoveryEntity {
+  id           String   @id @default(cuid())
+  orgId        String
+  type         String
+  canonicalKey String
+  displayName  String?
+  identifiers  Json     @default("{}")
+  attributes   Json     @default("{}")
+  confidence   Float    @default(0)
+  // active | merged | archived
+  status       String   @default("active")
+  firstSeenAt  DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([orgId, type, canonicalKey])
+  @@index([orgId, type, lastSeenAt])
+}
+
+// Relação tipada entre entidades (HAS_DOMAIN, OWNS, RAISED, …).
+model DiscoveryRelationship {
+  id           String    @id @default(cuid())
+  orgId        String
+  fromEntityId String
+  toEntityId   String
+  type         String
+  confidence   Float     @default(0)
+  metadata     Json      @default("{}")
+  observedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([orgId, fromEntityId, toEntityId, type])
+  @@index([orgId, fromEntityId])
+  @@index([orgId, toEntityId])
+}
+
+// Prova de origem IMUTÁVEL por fato; conflitos COEXISTEM (FR-025).
+// rawHash estável deduplica redelivery (SC-005).
+model DiscoveryEvidence {
+  id             String    @id @default(cuid())
+  orgId          String
+  jobId          String?
+  providerRunId  String?
+  entityId       String?
+  relationshipId String?
+  // official_registry | ct_log | dns | http | search | estimated | reported | inferred | funding | legal
+  evidenceType   String
+  sourceProvider String
+  sourceUrl      String?
+  sourceRef      String?
+  observedValue  Json
+  observedAt     DateTime?
+  capturedAt     DateTime  @default(now())
+  confidence     Float     @default(0)
+  rawHash        String
+  metadata       Json      @default("{}")
+
+  @@unique([orgId, rawHash])
+  @@index([orgId, entityId])
+  @@index([providerRunId])
+}
+
+// Projeção de venda sobre a entidade canônica (importável para Prospect).
+model DiscoveryCandidate {
+  id                 String    @id @default(cuid())
+  orgId              String
+  jobId              String
+  companyEntityId    String?
+  cnpj               String?
+  name               String?
+  domain             String?
+  location           Json?
+  confidence         Float     @default(0)
+  // discovered | imported | dismissed
+  status             String    @default("discovered")
+  dedupeKey          String
+  evidenceCount      Int       @default(0)
+  importedProspectId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  job DiscoveryJob @relation(fields: [jobId], references: [id])
+
+  @@unique([orgId, dedupeKey])
+  @@index([orgId, status, confidence])
+}
+
+// Sinal derivado de inteligência — NUNCA substitui a evidência de origem.
+model DiscoverySignal {
+  id              String    @id @default(cuid())
+  orgId           String
+  companyEntityId String
+  type            String // recent_funding | expansion_signal | new_domain | hiring_signal | legal_risk_signal | technology_adoption
+  value           Json      @default("{}")
+  confidence      Float     @default(0)
+  evidenceIds     String[]  @default([])
+  observedAt      DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([orgId, companyEntityId, type])
+  @@index([orgId, type, observedAt])
+}

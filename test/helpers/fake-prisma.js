@@ -12,10 +12,12 @@ function matches(record, where = {}) {
   return Object.entries(where).every(([field, expected]) => {
     if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
       // Operadores do Prisma suportados pelo fake: { lt, lte, gt, gte }
-      if ('lt' in expected) return new Date(record[field]) < new Date(expected.lt);
-      if ('lte' in expected) return new Date(record[field]) <= new Date(expected.lte);
-      if ('gt' in expected) return new Date(record[field]) > new Date(expected.gt);
-      if ('gte' in expected) return new Date(record[field]) >= new Date(expected.gte);
+      // Comparação numérica quando o limite é número; data caso contrário.
+      const coerce = (v) => (typeof v === 'number' ? Number(v) : new Date(v));
+      if ('lt' in expected) return coerce(record[field]) < coerce(expected.lt);
+      if ('lte' in expected) return coerce(record[field]) <= coerce(expected.lte);
+      if ('gt' in expected) return coerce(record[field]) > coerce(expected.gt);
+      if ('gte' in expected) return coerce(record[field]) >= coerce(expected.gte);
       return matches(record[field] || {}, expected);
     }
     // Coluna nullable nunca setada é `null` no Prisma real (undefined aqui)
@@ -25,7 +27,20 @@ function matches(record, where = {}) {
 }
 
 function applyData(record, data) {
-  Object.assign(record, JSON.parse(JSON.stringify(data)));
+  // Operadores numéricos do Prisma: { increment: n } / { decrement: n }
+  for (const [field, value] of Object.entries(data)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if ('increment' in value) {
+        record[field] = (Number(record[field]) || 0) + Number(value.increment);
+        continue;
+      }
+      if ('decrement' in value) {
+        record[field] = (Number(record[field]) || 0) - Number(value.decrement);
+        continue;
+      }
+    }
+    record[field] = value;
+  }
   record.updatedAt = new Date();
   return record;
 }
@@ -118,6 +133,14 @@ function createFakePrisma() {
     // Contratos legados (worker Python / ponte deepgraph)
     enrichmentRequest: makeModel('enrichmentRequest'),
     cnpjEnrichment: makeModel('cnpjEnrichment'),
+    // Discovery Engine (specs/006-discovery-engine)
+    discoveryJob: makeModel('discoveryJob'),
+    discoveryProviderRun: makeModel('discoveryProviderRun'),
+    discoveryEntity: makeModel('discoveryEntity'),
+    discoveryRelationship: makeModel('discoveryRelationship'),
+    discoveryEvidence: makeModel('discoveryEvidence'),
+    discoveryCandidate: makeModel('discoveryCandidate'),
+    discoverySignal: makeModel('discoverySignal'),
   };
 }
 

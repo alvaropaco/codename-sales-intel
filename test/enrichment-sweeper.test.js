@@ -49,7 +49,7 @@ function setup({ ratePerMin = 6, parkWindowHours = 72 } = {}) {
   return {
     clock, prisma, redis, published, parkExpired, sweeper, makeSweeper,
     now: () => clock.now(),
-    seed: (over) => prisma.enrichmentTask.create({ data: parkedFixture({ parkedAt: new Date(clock.start), nextAttemptAt: new Date(clock.start), ...over }) }),
+    seed: (over) => prisma.enrichmentTask.create({ data: parkedFixture({ parkedAt: new Date(clock.t), nextAttemptAt: new Date(clock.t), ...over }) }),
   };
 }
 
@@ -130,7 +130,7 @@ test('lock de líder: holder externo faz o ciclo pular (R2)', async () => {
 test('falha de re-publicação não derruba o ciclo nem perde a task', async () => {
   const clock = createFakeClock({ start: 1_700_070_000_000 });
   const prisma = createFakePrisma();
-  await prisma.enrichmentTask.create({ data: parkedFixture({ parkedAt: new Date(clock.start), nextAttemptAt: new Date(clock.start) }) });
+  await prisma.enrichmentTask.create({ data: parkedFixture({ parkedAt: new Date(clock.t), nextAttemptAt: new Date(clock.t) }) });
   let calls = 0;
   const sweeper = createEnrichmentSweeper({
     prisma,
