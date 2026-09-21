@@ -24,6 +24,13 @@ const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
 };
 
+const COMPOSITION_ORIGIN_LABEL: Record<string, string> = {
+  tenant_template: 'template do tenant',
+  ai: 'IA por lead',
+  ai_fallback_template: 'IA (fallback do tenant)',
+  profile_base: 'perfil comercial',
+};
+
 const ORIGIN_META: Record<string, { label: string; title: string }> = {
   auto: { label: 'Auto', title: 'Disparado automaticamente pós-enriquecimento' },
   manual: { label: 'Manual', title: 'Disparado manualmente em uma campanha' },
@@ -319,6 +326,11 @@ export const DispatchHistoryView: React.FC = () => {
                                 <Zap className="h-3 w-3 fill-emerald-400" /> auto
                               </span>
                             )}
+                            {d.compositionOrigin && (
+                              <span className="block text-[10px] text-muted-foreground" title="Como esta mensagem foi composta (auditoria — 007)">
+                                {COMPOSITION_ORIGIN_LABEL[d.compositionOrigin] || d.compositionOrigin}
+                              </span>
+                            )}
                           </td>
                           <td className="max-w-64 px-3 py-2.5">
                             <p className="truncate text-muted-foreground" title={d.error || d.preview || undefined}>
@@ -373,6 +385,11 @@ export const DispatchHistoryView: React.FC = () => {
                         <p className="text-muted-foreground">
                           {d.origin === 'auto' && <Zap className="mr-0.5 inline h-3 w-3 fill-emerald-400 text-emerald-500" />}
                           {d.campaignName}
+                          {d.compositionOrigin && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">
+                              · {COMPOSITION_ORIGIN_LABEL[d.compositionOrigin] || d.compositionOrigin}
+                            </span>
+                          )}
                         </p>
                       )}
                       <p className="line-clamp-2 text-muted-foreground">{d.preview || '—'}</p>

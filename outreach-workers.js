@@ -31,6 +31,14 @@ function getPrisma() {
   return _prisma;
 }
 
+// Injeção para testes (node --test sem Prisma/Redis real) — sufixo _ForTests.
+function _setPrismaForTests(client) { _prisma = client; }
+let _queueFactory = null;
+function _setQueueFactoryForTests(fn) { _queueFactory = fn; }
+function makeQueue(name, opts) {
+  return _queueFactory ? _queueFactory(name, opts) : require('./outreach-queues').createQueue(name, opts);
+}
+
 // ─── Lightweight AI message generator ────────────────────────────
 /**
  * Gera o email de outreach com os 3 pilares de contexto:
@@ -154,10 +162,11 @@ async function generateOutreachMessage(prisma, { lead, seq = 1, campaign = null,
       .replace(/\s*\[[^\]]{1,30}\]/g, '')
       .trim();
     // Corpo vazio (JSON parcial/estranho do modelo) → email em branco nunca
-    // pode ser agendado; cai no fallback de template.
+    // pode ser agendado; retorna null e o prepare decide (base por perfil ou
+    // skip — FR-005).
     if (!body) {
-      console.warn('[outreach] AI retornou body vazio, usando template fallback');
-      return _templateFallback(lead, ctx, seq, history);
+      console.warn('[outreach] AI retornou body vazio — sem geração de IA');
+      return null;
     }
     return {
       subject,
@@ -166,35 +175,11 @@ async function generateOutreachMessage(prisma, { lead, seq = 1, campaign = null,
       reasoningFacts: parsed.reasoning_facts || [],
     };
   } catch (err) {
-    console.error('[outreach] AI generation failed, using template fallback:', err.message);
-
-    return _templateFallback(lead, ctx, seq, history);
+    console.error('[outreach] AI generation failed:', err.message);
+    return null;
   }
 }
 
-/**
- * Template-based fallback when AI is unavailable — identidade e valor vêm do
- * CONTEXTO DA ORG (nunca "Equipe B2Base" para outra empresa).
- */
-function _templateFallback(lead, orgCtx, seq = 1, history = []) {
-  const nome = orgContext.sellerIdentity(orgCtx);
-  const assinatura = `Equipe ${nome}`;
-  const valor = (orgCtx && (orgCtx.propostaValor || orgCtx.oQueE)) || 'ajudar empresas a encontrar e converter mais oportunidades';
-  const followup = seq > 1;
-
-  const body = followup
-    ? `Olá,\n\nPassando para retomar minha mensagem anterior sobre ${lead.companyName}. Se fizer sentido, posso mostrar ${valor} na prática e responder suas dúvidas.\n\nSe agora não for o momento, sem problema — me avisa e não insisto mais.\n\nAbraços,\n${assinatura}`
-    : `Olá,\n\nEspero que esteja bem!\n\nConheço a ${lead.companyName} e sei que empresas do segmento ${lead.industry || 'de negócios'} costumam enfrentar desafios para crescer.\n\nTrabalho com ${valor}. Gostaria de agendar uma conversa rápida de 15 min para ver se faz sentido para vocês?\n\nAbraços,\n${assinatura}`;
-
-  const html = plainBodyToHtml(body);
-
-  return {
-    subject: followup ? `Retomando o contato: ${lead.companyName}` : `Uma oportunidade para ${lead.companyName}`,
-    body,
-    htmlBody: html,
-    reasoningFacts: [`Referência a ${lead.companyName}`, `Segmento: ${lead.industry || 'geral'}`, followup ? `followup_seq_${seq}` : 'first_touch'],
-  };
-}
 
 // ─── QUEUE: outreach:prepare ──────────────────────────────────────
 
@@ -284,7 +269,17 @@ async function processPrepare(job) {
     take: 3,
   });
   let generated;
-  if (campaign?.emailTemplateSubject && campaign?.emailTemplateBody) {
+  // Origem da composição (FR-010): auditoria por mensagem enviada.
+  let compositionOrigin;
+  // Follow-up de campanha IA: o template semeado é a BASE do 1º toque — o
+  // follow-up é gerado por IA sobre ela (T036), senão seria duplicado.
+  const isAiFollowup = Boolean(_isFollowup) && campaign?.source === 'ai';
+  const useTenantTemplate = campaign?.emailTemplateSubject
+    && campaign?.emailTemplateBody
+    && !isAiFollowup;
+  if (useTenantTemplate) {
+    // FR-001: template configurado pelo tenant (ou base aprovada no fluxo IA)
+    // é a base em qualquer fluxo.
     generated = {
       subject: renderTemplate(campaign.emailTemplateSubject, lead),
       body: renderTemplate(campaign.emailTemplateBody, lead),
@@ -294,14 +289,39 @@ async function processPrepare(job) {
         .replace(/\n/g, '<br/>')}</p>`,
       reasoningFacts: ['campaign_template'],
     };
+    compositionOrigin = campaign.source === 'ai' ? 'profile_base' : 'tenant_template';
   } else {
-    generated = await generateOutreachMessage(prisma, {
+    const ai = await generateOutreachMessage(prisma, {
       lead,
       seq: contact.outreachSequence,
       campaign,
       orgCtx,
       history,
     });
+    if (ai) {
+      generated = ai;
+      compositionOrigin = 'ai';
+    } else {
+      // FR-005/FR-006: sem IA e sem template do tenant, a base vem do perfil
+      // comercial da org; SEM perfil configurado NADA genérico é enviado.
+      const { composeEmailBaseFromProfile } = require('./ai-campaign');
+      const base = composeEmailBaseFromProfile(orgCtx, { requireConfigured: true });
+      if (!base) {
+        await prisma.outreachContact.update({
+          where: { id: contact.id },
+          data: { status: 'CANCELLED', cancelReason: 'no_base_message' },
+        });
+        console.warn(`[prepare] prospect ${prospectId}: sem base de mensagem (template ausente + perfil não configurado) — envio cancelado`);
+        return { skipped: true, reason: 'no_base_message' };
+      }
+      generated = {
+        subject: base.subject,
+        body: base.body,
+        htmlBody: plainBodyToHtml(base.body),
+        reasoningFacts: ['profile_base'],
+      };
+      compositionOrigin = 'profile_base';
+    }
   }
 
   // Add tracking pixel
@@ -323,15 +343,17 @@ async function processPrepare(job) {
       scheduledFor: new Date(Date.now() + delaySeconds * 1000),
       trackingToken,
       aiReasoningFacts: generated.reasoningFacts,
+      compositionOrigin,
     },
   });
 
   // Enfileira o envio respeitando o delay de rate-limit calculado
-  const { createQueue } = require('./outreach-queues');
-  const sendQueue = createQueue('outreach:message-send', {
+  const sendQueue = makeQueue('outreach:message-send', {
     redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
   });
   await _enqueueSend(sendQueue, message.id, delaySeconds * 1000);
+
+  metrics.incCompositionOrigin('email', compositionOrigin);
 
   // Create outreach_event
   await prisma.outreachEvent.create({
@@ -407,8 +429,7 @@ async function _enqueueSend(sendQueue, messageId, delayMs = 0, { dedupe = true }
 async function requeueStuckScheduledMessages() {
   try {
     const prisma = getPrisma();
-    const { createQueue } = require('./outreach-queues');
-    const sendQueue = createQueue('outreach:message-send', {
+    const sendQueue = makeQueue('outreach:message-send', {
       redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
     });
 
@@ -489,8 +510,7 @@ async function processSend(job) {
   if (!rateLimit.allowed) {
     console.log(`[send] ⊘ rate limited, retrying in ${rateLimit.retryIn}ms`);
     metrics.incEmailRateLimited();
-    const { createQueue } = require('./outreach-queues');
-    const sendQueue = createQueue('outreach:message-send', {
+    const sendQueue = makeQueue('outreach:message-send', {
       redis: process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379',
     });
     // dedupe OFF: o job "atual" é este que está rodando — o dedupe padrão o
@@ -802,7 +822,9 @@ async function _scheduleFollowup(prisma, contactId) {
 
   // Campanhas com template custom (suíte multicanal) são single-shot:
   // reenviar o mesmo template em follow-up seria duplicar a mensagem.
-  if (contact.campaign?.emailTemplateBody) {
+  // Exceção (007/T036): campanhas IA — o template semeado é a BASE aprovada e
+  // o follow-up é gerado por IA sobre ela (nunca reenvio do texto literal).
+  if (contact.campaign?.emailTemplateBody && contact.campaign?.source !== 'ai') {
     return;
   }
 
@@ -819,7 +841,7 @@ async function _scheduleFollowup(prisma, contactId) {
   // Re-use prepare worker for follow-up
   const { createQueue } = require('./outreach-queues');
   const redisUrl = process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379';
-  const queue = createQueue('outreach:prepare', { redis: redisUrl });
+  const queue = makeQueue('outreach:prepare', { redis: redisUrl });
 
   await queue.add(
     {
@@ -853,7 +875,7 @@ async function _scheduleFollowup(prisma, contactId) {
 async function _cancelFollowups(prisma, contactId) {
   const { createQueue } = require('./outreach-queues');
   const redisUrl = process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379';
-  const queue = createQueue('outreach:prepare', { redis: redisUrl });
+  const queue = makeQueue('outreach:prepare', { redis: redisUrl });
 
   const pending = await queue.getJobs(['delayed']);
   const toRemove = pending.filter((j) => j.data.contactId === contactId);
@@ -864,7 +886,7 @@ async function _cancelFollowups(prisma, contactId) {
   }
 
   // Also cancel in send queue
-  const sendQueue = createQueue('outreach:message-send', { redis: redisUrl });
+  const sendQueue = makeQueue('outreach:message-send', { redis: redisUrl });
   const sendPending = await sendQueue.getJobs(['delayed']);
   const sendToRemove = sendPending.filter((j) => j.data.messageId);
 
@@ -891,7 +913,7 @@ function registerAllWorkers() {
   // Job repetitivo com jobId fixo para não duplicar em restart.
   try {
     const redisUrl = process.env.REDIS_URL?.replace('redis://', '') || 'localhost:6379';
-    const syncQueue = createQueue('outreach:gmail-sync', { redis: redisUrl });
+    const syncQueue = makeQueue('outreach:gmail-sync', { redis: redisUrl });
     void syncQueue.add(
       { periodic: true },
       { repeat: { every: 5 * 60 * 1000 }, jobId: 'gmail-sync-periodic' }
@@ -926,7 +948,7 @@ async function startOutreachCampaign(prisma, campaignId, prospectIds, emailAccou
   const alreadyEnrolled = new Set(enrolled.map((c) => c.prospectId));
   const freshProspectIds = prospectIds.filter((id) => !alreadyEnrolled.has(id));
 
-  const queue = createQueue('outreach:prepare');
+  const queue = makeQueue('outreach:prepare');
   const jobIds = [];
 
   for (let i = 0; i < freshProspectIds.length; i++) {
@@ -964,7 +986,9 @@ module.exports = {
   startOutreachCampaign,
   generateOutreachMessage,
   buildOutreachPrompt,
-  _templateFallback,
+  _scheduleFollowup,
   _enqueueSend,
   getPrisma,
+  _setPrismaForTests,
+  _setQueueFactoryForTests,
 };

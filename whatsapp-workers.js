@@ -17,8 +17,11 @@ const { getWhatsAppQueues } = require('./whatsapp-queues');
 const { registerProcessor } = require('./outreach-queues');
 const { WAHAWhatsAppProvider } = require('./waha-provider');
 const { checkLimit, calculateDelay } = require('./whatsapp-rate-limiter');
-const { toChatId, normalizePhone, renderTemplate, BLOCKLIST } = require('./whatsapp-utils');
+const { toChatId, normalizePhone, renderTemplate, truncateForWhatsApp, BLOCKLIST } = require('./whatsapp-utils');
 const llm = require('./llm-client');
+// Stub injetável nos testes (gera JSON sem chamar o gateway real).
+let llmClient = llm;
+function _setLlmForTests(stub) { llmClient = stub; }
 const orgContext = require('./org-context');
 const {
   getOrCreateConversation,
@@ -36,6 +39,13 @@ function getPrisma() {
   if (!_prisma) _prisma = new PrismaClient();
   return _prisma;
 }
+
+// Injeção para testes (node --test sem Prisma/Redis real) — sufixo _ForTests.
+function _setPrismaForTests(client) { _prisma = client; }
+
+let _queuesOverride = null;
+function _setQueuesForTests(queues) { _queuesOverride = queues; }
+function queues() { return _queuesOverride || getWhatsAppQueues(); }
 
 const wahaProvider = WAHAWhatsAppProvider;
 
@@ -96,6 +106,7 @@ function buildStepMessagePrompt({ prospect, orgCtx, campaign }) {
     ...(campaignBlock ? [campaignBlock, ''] : []),
     '== PROSPECTO ==',
     `- Empresa: ${prospect.companyName}${prospect.tradeName ? ` (${prospect.tradeName})` : ''}`,
+    `- Pessoa de contato: ${prospect.contactName || 'não informada (NÃO invente um nome; saude sem nome)'}`,
     `- Segmento: ${prospect.industry || 'N/A'}`,
     `- Localização: ${prospect.city ? [prospect.city, prospect.state].filter(Boolean).join('/') : 'N/A'}`,
     '',
@@ -119,11 +130,19 @@ function stepMessageGuard(text) {
 
 /**
  * Mensagem única para (contato, step). NUNCA lança e NUNCA retorna vazio:
- * fallback = renderTemplate(step.messageTemplate). Uma resposta vazia/curta
- * demais do modelo (JSON parcial) tem direito a 1 retry antes do fallback.
+ * fallback = renderTemplate(step.messageTemplate) — o template/base aprovada
+ * do tenant (FR-005), nunca texto genérico da plataforma. Uma resposta
+ * vazia/curta demais do modelo (JSON parcial) tem direito a 1 retry antes do
+ * fallback.
+ *
+ * @returns {{ text: string, origin: 'ai'|'ai_fallback_template' }} origin
+ *   alimenta WhatsAppMessage.compositionOrigin (auditoria FR-010).
  */
 async function generateStepMessage(prisma, { prospect, campaign, step }) {
-  const fallback = () => renderTemplate(step.messageTemplate, prospect);
+  const fallback = () => ({
+    text: renderTemplate(step.messageTemplate, prospect),
+    origin: 'ai_fallback_template',
+  });
   try {
     const { isPremiumOrg } = require('./ai-campaign');
     if (!(await isPremiumOrg(prisma, campaign.orgId))) return fallback();
@@ -132,7 +151,7 @@ async function generateStepMessage(prisma, { prospect, campaign, step }) {
     const prompt = buildStepMessagePrompt({ prospect, orgCtx, campaign });
 
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const { content } = await llm.callLlm({
+      const { content } = await llmClient.callLlm({
         system: 'Você é um vendedor B2B brasileiro. Responda APENAS com JSON válido.',
         user: prompt,
         temperature: 0.7,
@@ -140,16 +159,19 @@ async function generateStepMessage(prisma, { prospect, campaign, step }) {
         model: llm.premiumModel(),
         tag: 'whatsapp:step-ai',
       });
-      const parsed = llm.parseJsonLoose(content);
-      const guard = stepMessageGuard(parsed && parsed.message);
-      if (guard.pass) return guard.content;
+      const parsed = llmClient.parseJsonLoose(content);
+      // FR-007: excesso de comprimento é truncado preservando frases ANTES do
+      // guard — a personalização não é descartada por ultrapassar o canal.
+      const candidate = truncateForWhatsApp(parsed && parsed.message);
+      const guard = stepMessageGuard(candidate);
+      if (guard.pass) return { text: guard.content, origin: 'ai' };
       if (guard.reason === 'empty' && attempt === 1) continue; // 1 retry p/ resposta vazia
-      console.warn(`[whatsapp] step AI bloqueado (${guard.reason}), usando template fallback`);
+      console.warn(`[whatsapp] step AI bloqueado (${guard.reason}), usando template do tenant como fallback`);
       return fallback();
     }
     return fallback();
   } catch (err) {
-    console.error('[whatsapp] geração AI do step falhou, usando template fallback:', err.message);
+    console.error('[whatsapp] geração AI do step falhou, usando template do tenant como fallback:', err.message);
     return fallback();
   }
 }
@@ -177,7 +199,7 @@ async function processSequence(job) {
   }
   if (campaign.status === CAMPAIGN_STATUS.PAUSED) {
     // Re-agenda e aguarda o resume.
-    await getWhatsAppQueues().sequence.add(
+    await queues().sequence.add(
       { contactId, stepIndex, prospectId, campaignId: campaign.id },
       { delay: 60 * 1000, attempts: 1000 }
     );
@@ -231,7 +253,7 @@ async function processSequence(job) {
   // Rate limiting (conta + recipiente).
   const limit = await checkLimit(prisma, { whatsappAccountId: account.id, phoneNumber });
   if (!limit.allowed) {
-    await getWhatsAppQueues().sequence.add(
+    await queues().sequence.add(
       { contactId, stepIndex, prospectId, campaignId: campaign.id },
       { delay: limit.retryIn || calculateDelay(), attempts: 1000 }
     );
@@ -239,11 +261,20 @@ async function processSequence(job) {
   }
 
   // Campanha IA (step.aiPersonalized): mensagem única por lead, com o
-  // renderTemplate do step como fallback garantido. generateStepMessage nunca
-  // retorna vazio.
-  const content = step.aiPersonalized
-    ? await generateStepMessage(prisma, { prospect, campaign, step })
-    : renderTemplate(step.messageTemplate, prospect);
+  // renderTemplate do step como fallback garantido (origem registrada p/
+  // auditoria — FR-010). Nenhum caminho introduz texto de plataforma.
+  let content;
+  let compositionOrigin;
+  if (step.aiPersonalized) {
+    const generated = await generateStepMessage(prisma, { prospect, campaign, step });
+    // FR-007: excesso de comprimento é truncado preservando frases — a base
+    // nunca é trocada por outro texto.
+    content = truncateForWhatsApp(generated.text);
+    compositionOrigin = generated.origin;
+  } else {
+    content = renderTemplate(step.messageTemplate, prospect);
+    compositionOrigin = 'tenant_template';
+  }
   if (!content) {
     await prisma.whatsAppCampaignContact.update({
       where: { id: contactId },
@@ -269,16 +300,19 @@ async function processSequence(job) {
       content,
       status: 'PENDING',
       source: 'CAMPAIGN',
+      compositionOrigin,
       stepIndex,
     },
   });
+
+  metrics.incCompositionOrigin('whatsapp', compositionOrigin);
 
   await prisma.whatsAppCampaignContact.update({
     where: { id: contactId },
     data: { status: CONTACT_STATUS.SENDING, currentStepIndex: stepIndex },
   });
 
-  await getWhatsAppQueues().send.add({ messageId: message.id }, { attempts: 5, backoff: { type: 'exponential', delay: 5000 } });
+  await queues().send.add({ messageId: message.id }, { attempts: 5, backoff: { type: 'exponential', delay: 5000 } });
 
   return { messageId: message.id, stepIndex };
 }
@@ -404,7 +438,7 @@ async function scheduleNextStep(prisma, message) {
   }
 
   const delayMinutes = steps[nextIndex].delayMinutes || 0;
-  await getWhatsAppQueues().sequence.add(
+  await queues().sequence.add(
     {
       contactId: contact.id,
       stepIndex: nextIndex,
@@ -437,7 +471,7 @@ async function startCampaign(prisma, { campaignId, prospectIds, orgId }) {
   });
   const ownedMap = new Map(owned.map((p) => [p.id, p]));
 
-  const queue = getWhatsAppQueues();
+  const queue = queues();
   let queued = 0;
   let skippedAlreadyEnrolled = 0;
 
@@ -583,4 +617,9 @@ module.exports = {
   cancelCampaign,
   registerAllWorkers,
   generateStepMessage,
+  buildStepMessagePrompt,
+  _setPrismaForTests,
+  _setQueuesForTests,
+  _setLlmForTests,
+  truncateForWhatsApp,
 };

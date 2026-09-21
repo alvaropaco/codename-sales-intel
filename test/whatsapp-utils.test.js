@@ -8,6 +8,7 @@ const {
   renderTemplate,
   isOptOutMessage,
   idempotencyKey,
+  validateTemplateMessage,
 } = require('../whatsapp-utils');
 
 test('normalizePhone: BR number gets 55 prefix', () => {
@@ -63,4 +64,80 @@ test('idempotencyKey: deterministic and stable', () => {
   const c = idempotencyKey('camp1', 'lead1', 3);
   assert.strictEqual(a, b);
   assert.notStrictEqual(a, c);
+});
+
+// ── Guard de ingestão de template (007 — T003) ──────────────────────────────
+test('validateTemplateMessage: template válido passa', () => {
+  const out = validateTemplateMessage('Olá {{firstName}}, tudo bem? A {{companyName}} atua em {{industry}}.');
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.reason, null);
+});
+
+test('validateTemplateMessage: vazio rejeita', () => {
+  assert.strictEqual(validateTemplateMessage('').ok, false);
+  assert.strictEqual(validateTemplateMessage('   ').reason, 'empty');
+  assert.strictEqual(validateTemplateMessage(null).reason, 'empty');
+});
+
+test('validateTemplateMessage: BLOCKLIST rejeita (blocked_claim)', () => {
+  const out = validateTemplateMessage('Olá {{firstName}}, temos desconto especial para a {{companyName}}!');
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'blocked_claim');
+});
+
+test('validateTemplateMessage: acima do limite rejeita (too_long)', () => {
+  const out = validateTemplateMessage('a'.repeat(601));
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'too_long');
+});
+
+test('validateTemplateMessage: placeholder desconhecido rejeita (unknown_placeholder)', () => {
+  const out = validateTemplateMessage('Olá {{firstName}}, o plano custa {{preco}}.');
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unknown_placeholder');
+});
+
+test('validateTemplateMessage: maxLength custom (email aceita texto longo)', () => {
+  const body = `Olá {{firstName}},\n\n${'Detalhe do contexto comercial. '.repeat(30)}`;
+  assert.ok(body.length > 600);
+  assert.strictEqual(validateTemplateMessage(body, { maxLength: 5000 }).ok, true);
+});
+
+// ── firstName pela pessoa de contato (007 — T013, US2) ──────────────────────
+test('US2 firstName: pessoa de contato tem precedência sobre sócio/empresa', () => {
+  const lead = {
+    contactName: 'Mariana Souza',
+    companyName: 'Acme Ltda', tradeName: 'Acme',
+    cnpjPartners: [{ name: 'João Silva', qual: 'Sócio' }],
+  };
+  const out = renderTemplate('Olá {{firstName}}!', lead);
+  assert.ok(out.includes('Mariana'), `esperava "Mariana" em "${out}"`);
+  assert.ok(!out.includes('João'), 'sócio só entra se não houver contato');
+  assert.ok(!out.includes('Acme'), 'empresa nunca é tratada como pessoa');
+});
+
+test('US2 firstName: sem contato, usa o sócio (pessoa real)', () => {
+  const lead = {
+    companyName: 'Acme Ltda', tradeName: 'Acme',
+    cnpjPartners: [{ name: 'João Silva', qual: 'Sócio' }],
+  };
+  const out = renderTemplate('Olá {{firstName}}!', lead);
+  assert.ok(out.includes('João'), `esperava o sócio em "${out}"`);
+});
+
+test('US2 firstName: sem contato nem sócio → saudação sem nome, nunca nome de empresa', () => {
+  const lead = { companyName: 'NOVAURORA Comércio', tradeName: 'NOVAURORA', cnpjPartners: null };
+  const out = renderTemplate('Olá {{firstName}}, tudo bem?', lead);
+  assert.strictEqual(out, 'Olá, tudo bem?');
+  assert.ok(!out.includes('NOVAURORA'), 'empresa nunca vira "pessoa" na saudação');
+  assert.ok(!out.includes('{{'), 'placeholder não vaza');
+});
+
+test('US2 firstName: placeholder vazio em outros formatos não quebra a frase', () => {
+  const lead = { companyName: 'X', tradeName: null, cnpjPartners: null };
+  assert.strictEqual(renderTemplate('Olá {{firstName}}!', lead), 'Olá!');
+  assert.strictEqual(renderTemplate('Bom dia {{firstName}}. Tudo bem?', lead), 'Bom dia. Tudo bem?');
+  // com nome, o comportamento normal é preservado
+  const comNome = renderTemplate('Bom dia {{firstName}}. Tudo bem?', { ...lead, contactName: 'Ana' });
+  assert.strictEqual(comNome, 'Bom dia Ana. Tudo bem?');
 });

@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Prospect, EmailAccount, WhatsAppAccount, OutreachCampaign, SuppressionEntry, AiCampaignResult } from '@/types';
+import { Prospect, EmailAccount, WhatsAppAccount, OutreachCampaign, SuppressionEntry, AiCampaignResult, AiCampaignApproval } from '@/types';
 import { usePlan } from '@/hooks/usePlan';
 import {
   fetchGmailAuthUrl,
@@ -36,6 +36,8 @@ import {
   addToSuppressionList,
   removeFromSuppressionList,
   createAiCampaign,
+  approveAiCampaign,
+  rederiveOutreachCampaign,
 } from '@/services/api';
 
 interface OutreachViewProps {
@@ -87,6 +89,9 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
   const isPremium = plan?.plan === 'premium';
   const [aiCreating, setAiCreating] = useState(false);
   const [aiResult, setAiResult] = useState<AiCampaignResult | null>(null);
+  // 007 (FR-009): edições opcionais da mensagem base antes de aprovar o disparo.
+  const [aiEdits, setAiEdits] = useState({ whatsappMessageTemplate: '', emailTemplateSubject: '', emailTemplateBody: '' });
+  const [aiApproving, setAiApproving] = useState(false);
 
   // O alerta renderiza no topo da página; sem este scroll o usuário que
   // acabou de clicar num botão do fim do formulário não vê o feedback.
@@ -265,10 +270,14 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
     try {
       const result = await createAiCampaign();
       setAiResult(result);
-      const total = result.enrolled.email + result.enrolled.whatsapp;
+      setAiEdits({
+        whatsappMessageTemplate: result.preview.whatsapp?.message ?? '',
+        emailTemplateSubject: result.preview.email?.subject ?? '',
+        emailTemplateBody: result.preview.email?.body ?? '',
+      });
       setNotice(
-        `Campanha "${result.strategy.name}" criada e lançada: ${total} envio(s) na fila ` +
-          `(${result.channels.join(' + ')}) para ${result.leadCount} lead(s) pronto(s).`
+        `Campanha "${result.strategy.name}" criada — revise a mensagem base abaixo ` +
+          `e aprove para disparar (${result.channels.join(' + ')}, ${result.leadCount} lead(s) pronto(s)).`
       );
       await loadAll();
     } catch (err) {
@@ -280,6 +289,41 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
       setError(err instanceof Error ? err.message : 'Erro ao gerar campanha com IA');
     } finally {
       setAiCreating(false);
+    }
+  };
+
+  // 007 (FR-009): aprovação obrigatória da mensagem base antes de qualquer disparo.
+  const handleApproveAiCampaign = async () => {
+    if (!aiResult) return;
+    setAiApproving(true);
+    setError(null);
+    try {
+      const edits: { whatsappMessageTemplate?: string; emailTemplateSubject?: string; emailTemplateBody?: string } = {};
+      if (aiEdits.whatsappMessageTemplate.trim()) edits.whatsappMessageTemplate = aiEdits.whatsappMessageTemplate;
+      if (aiEdits.emailTemplateSubject.trim()) edits.emailTemplateSubject = aiEdits.emailTemplateSubject;
+      if (aiEdits.emailTemplateBody.trim()) edits.emailTemplateBody = aiEdits.emailTemplateBody;
+      const approval: AiCampaignApproval = await approveAiCampaign({
+        outreachCampaignId: aiResult.emailCampaignId,
+        whatsappCampaignId: aiResult.whatsappCampaignId,
+        edits,
+      });
+      const total = approval.enrolled.email + approval.enrolled.whatsapp;
+      setNotice(
+        `Campanha aprovada e lançada: ${total} envio(s) na fila.` +
+          (approval.launchErrors.length ? ` Falhas: ${approval.launchErrors.join(' · ')}` : '')
+      );
+      setAiResult(null);
+      setAiEdits({ whatsappMessageTemplate: '', emailTemplateSubject: '', emailTemplateBody: '' });
+      await loadAll();
+    } catch (err) {
+      const code = (err as Error & { code?: string }).code;
+      if (code === 'PREMIUM_REQUIRED') {
+        window.location.href = '/settings?plan=upgrade';
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Erro ao aprovar campanha');
+    } finally {
+      setAiApproving(false);
     }
   };
 
@@ -437,7 +481,7 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
             {aiCreating && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Lendo seu perfil comercial, escrevendo a estratégia e enfileirando os disparos…
+                Lendo seu perfil comercial e compondo a mensagem base para sua revisão…
               </div>
             )}
             {aiResult && (
@@ -453,32 +497,54 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                     <p className="text-foreground/80">Oferta: {aiResult.strategy.offer}</p>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {aiResult.emailCampaignId && (
-                    <Badge variant="qualified" className="gap-1">
-                      <Mail className="h-3 w-3" /> Email: {aiResult.enrolled.email} na fila
-                    </Badge>
+                <div className="space-y-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                    Mensagem base — revise antes de disparar (para {aiResult.preview.sampleProspect.companyName})
+                  </p>
+                  {aiResult.preview.whatsapp && (
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">WhatsApp</label>
+                      <textarea
+                        value={aiEdits.whatsappMessageTemplate}
+                        onChange={(e) => setAiEdits((prev) => ({ ...prev, whatsappMessageTemplate: e.target.value }))}
+                        rows={3}
+                        className="w-full rounded-lg border border-border/80 bg-background/50 p-2 text-sm backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary/60"
+                      />
+                    </div>
                   )}
-                  {aiResult.whatsappCampaignId && (
-                    <Badge variant="qualified" className="gap-1">
-                      <MessageCircle className="h-3 w-3" /> WhatsApp: {aiResult.enrolled.whatsapp} na fila
-                    </Badge>
+                  {aiResult.preview.email && (
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Email — assunto</label>
+                      <input
+                        value={aiEdits.emailTemplateSubject}
+                        onChange={(e) => setAiEdits((prev) => ({ ...prev, emailTemplateSubject: e.target.value }))}
+                        className="h-9 w-full rounded-lg border border-border/80 bg-background/50 px-3 text-sm backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary/60"
+                      />
+                      <label className="text-xs text-muted-foreground">Email — corpo</label>
+                      <textarea
+                        value={aiEdits.emailTemplateBody}
+                        onChange={(e) => setAiEdits((prev) => ({ ...prev, emailTemplateBody: e.target.value }))}
+                        rows={4}
+                        className="w-full rounded-lg border border-border/80 bg-background/50 p-2 text-sm backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary/60"
+                      />
+                    </div>
                   )}
-                  <span className="text-muted-foreground">
-                    Mensagem única por lead. Os envios respeitam os limites diários por conta — listas
-                    grandes são distribuídas automaticamente pelos próximos dias.
-                  </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      Personalização por lead é feita pela IA a partir desta base. Os envios respeitam os
+                      limites diários por conta.
+                    </span>
+                    <Button variant="gradient" size="sm" onClick={handleApproveAiCampaign} disabled={aiApproving} className="gap-2">
+                      {aiApproving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      Aprovar e disparar
+                    </Button>
+                  </div>
                 </div>
                 {!aiResult.contextConfigured && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
                     Seu Perfil Comercial está incompleto: a IA foi genérica para não inventar dados.
                     Preencha em <a className="font-bold underline" href="/settings">Configurações → Perfil Comercial</a> para
                     campanhas muito mais assertivas.
-                  </div>
-                )}
-                {aiResult.launchErrors.length > 0 && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
-                    Alguns canais falharam ao lançar: {aiResult.launchErrors.join(' · ')}
                   </div>
                 )}
               </div>
@@ -841,6 +907,11 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                       <Send className="h-4 w-4 text-indigo-400" />
                       <h4 className="text-sm font-bold text-foreground">{campaign.name}</h4>
                       <Badge variant={meta.variant}>{meta.label}</Badge>
+                      {campaign.needsReview && (
+                        <Badge variant="destructive" title={campaign.reviewReason || undefined}>
+                          Revisão necessária
+                        </Badge>
+                      )}
                       {channels.includes('email') && (
                         <Badge variant="outline" className="gap-1">
                           <Mail className="h-3 w-3" /> Email
@@ -877,17 +948,41 @@ export const OutreachView: React.FC<OutreachViewProps> = ({ prospects }) => {
                       {isAuto && ' · Dispara quando o enriquecimento do lead termina'}
                     </p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setStartCampaignId(campaign.id);
-                      setStartAccountId(campaign.emailAccountId || (connectedAccounts.length === 1 ? connectedAccounts[0].id : ''));
-                    }}
-                    className="gap-2 self-start md:self-auto"
-                  >
-                    <PlayCircleIcon /> Iniciar em leads
-                  </Button>
+                  {campaign.needsReview ? (
+                    <div className="flex flex-col items-start gap-2 md:items-end">
+                      <p className="max-w-xs rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                        Retida: o template continha texto interno da plataforma.
+                        Regerar usa o perfil comercial da sua organização.
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            await rederiveOutreachCampaign(campaign.id);
+                            await loadAll();
+                          } catch (err) {
+                            console.error('Falha ao regerar template:', err);
+                          }
+                        }}
+                        className="gap-2 self-start md:self-auto"
+                      >
+                        <RefreshCw className="h-4 w-4" /> Regerar template
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setStartCampaignId(campaign.id);
+                        setStartAccountId(campaign.emailAccountId || (connectedAccounts.length === 1 ? connectedAccounts[0].id : ''));
+                      }}
+                      className="gap-2 self-start md:self-auto"
+                    >
+                      <PlayCircleIcon /> Iniciar em leads
+                    </Button>
+                  )}
                 </div>
               );
             })

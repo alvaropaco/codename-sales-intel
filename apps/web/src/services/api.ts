@@ -31,6 +31,7 @@ import {
   WhatsAppConnectResult,
   WhatsAppReengagementSuggestion,
   WhatsAppAutomationConfig,
+  AiCampaignApproval,
   AiCampaignResult,
   DiscoveryJobStatusPayload,
   DiscoveryCandidatesPayload,
@@ -878,10 +879,10 @@ export async function startOutreachCampaign(
 }
 
 /**
- * Campanha com IA (feature Premium): a IA gera a estratégia, salva as campanhas
- * e inicia os disparos para todos os leads "Prontos para contato".
+ * Campanha com IA (feature Premium, 007): a IA compõe a mensagem base a partir
+ * do perfil comercial, salva as campanhas e devolve a PRÉVIA — nada dispara.
  * Erros de domínio chegam com `code` (PREMIUM_REQUIRED, NO_READY_LEADS,
- * NO_CHANNEL_AVAILABLE, AI_CAMPAIGN_LIMIT).
+ * NO_CHANNEL_AVAILABLE, AI_CAMPAIGN_LIMIT, NO_PROFILE_CONTEXT).
  */
 export async function createAiCampaign(): Promise<AiCampaignResult> {
   const res = await fetch(`${API_BASE}/ai/campaigns`, {
@@ -892,6 +893,33 @@ export async function createAiCampaign(): Promise<AiCampaignResult> {
   const json = await res.json();
   if (!res.ok || !json.success) {
     const err = new Error(json.error || 'Erro ao gerar campanha com IA') as Error & { code?: string };
+    err.code = json.code;
+    throw err;
+  }
+  return json.data;
+}
+
+/**
+ * 007 (FR-009): aprova a mensagem base (opcionalmente editada pelo tenant) e
+ * lança os disparos — único caminho de lançamento do fluxo IA.
+ */
+export async function approveAiCampaign(body: {
+  outreachCampaignId?: string | null;
+  whatsappCampaignId?: string | null;
+  edits?: {
+    whatsappMessageTemplate?: string;
+    emailTemplateSubject?: string;
+    emailTemplateBody?: string;
+  };
+}): Promise<AiCampaignApproval> {
+  const res = await fetch(`${API_BASE}/ai/campaigns/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    const err = new Error(json.error || 'Erro ao aprovar campanha') as Error & { code?: string };
     err.code = json.code;
     throw err;
   }
@@ -1199,6 +1227,37 @@ export async function resumeWhatsAppCampaign(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/whatsapp/campaigns/${id}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao retomar campanha');
+}
+
+/** 007: edita as etapas da sequência (revalidação de template retido). */
+export async function updateWhatsAppCampaignSteps(
+  campaignId: string,
+  steps: Array<{ id?: string; orderIndex?: number; messageTemplate?: string; delayMinutes?: number }>
+): Promise<WhatsAppCampaign> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ steps }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao atualizar campanha');
+  return json.data;
+}
+
+/** 007: regera a mensagem base do WhatsApp a partir do perfil comercial. */
+export async function rederiveWhatsAppCampaign(campaignId: string): Promise<{ id: string; messageTemplate: string }> {
+  const res = await fetch(`${API_BASE}/whatsapp/campaigns/${campaignId}/rederive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao regerar mensagem');
+  return json.data;
+}
+
+/** 007: regera o template de email a partir do perfil comercial. */
+export async function rederiveOutreachCampaign(campaignId: string): Promise<{ id: string; subject: string; body: string }> {
+  const res = await fetch(`${API_BASE}/outreach/campaigns/${campaignId}/rederive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao regerar template');
+  return json.data;
 }
 
 export async function cancelWhatsAppCampaign(id: string): Promise<void> {

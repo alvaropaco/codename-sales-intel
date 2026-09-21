@@ -64,14 +64,29 @@ export interface PlanInfo {
 }
 
 /** Resultado do gerador de campanha com IA (feature Premium). */
+// 007: a criação NÃO dispara — responde pending_approval com a prévia da
+// mensagem base para aprovação explícita do tenant (FR-009).
+export interface AiCampaignPreview {
+  sampleProspect: { id: string; companyName: string; contactName: string | null };
+  whatsapp: { message: string; aiPersonalized: boolean } | null;
+  email: { subject: string; body: string } | null;
+}
+
 export interface AiCampaignResult {
+  status: 'pending_approval';
   emailCampaignId: string | null;
   whatsappCampaignId: string | null;
   channels: Array<'email' | 'whatsapp'>;
   leadCount: number;
-  enrolled: { email: number; whatsapp: number };
   contextConfigured: boolean;
   strategy: { name: string; objective: string | null; offer: string | null; fallbackUsed?: boolean };
+  preview: AiCampaignPreview;
+}
+
+export interface AiCampaignApproval {
+  status: 'launched' | 'launched_with_errors';
+  approvedAt: string;
+  enrolled: { email: number; whatsapp: number };
   launchErrors: string[];
 }
 
@@ -389,6 +404,7 @@ export interface DispatchHistoryItem {
   campaignId: string | null;
   campaignName: string | null;
   origin: 'auto' | 'manual' | 'conversation'; // suíte automática, campanha manual, conversa 1:1
+  compositionOrigin?: 'tenant_template' | 'ai' | 'ai_fallback_template' | 'profile_base' | null; // auditoria da composição (007)
   preview: string | null; // assunto (email) ou início da mensagem (WhatsApp)
   status: string; // status bruto do canal
   bucket: 'sent' | 'pending' | 'failed';
@@ -444,6 +460,10 @@ export interface OutreachCampaign {
   emailTemplateBody?: string | null;
   whatsappAccountId?: string | null;
   whatsappTemplate?: string | null;
+  // Governança de template (007): retenção do saneamento + aprovação do fluxo IA
+  needsReview?: boolean;
+  reviewReason?: string | null;
+  approvedAt?: string | null;
   // Leads já inscritos nesta campanha (OutreachContact) — a lista de
   // lançamento os exclui: nunca reenviar o primeiro toque na mesma campanha.
   contactedProspectIds?: string[];
@@ -557,6 +577,10 @@ export interface WhatsAppCampaign {
   startedAt?: string | null;
   pausedAt?: string | null;
   completedAt?: string | null;
+  // Governança de template (007): retenção do saneamento + aprovação do fluxo IA
+  needsReview?: boolean;
+  reviewReason?: string | null;
+  approvedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   steps?: WhatsAppSequenceStep[];
@@ -573,6 +597,7 @@ export interface WhatsAppMessage {
   mediaUrl?: string | null;
   providerMessageId?: string | null;
   status: string;
+  compositionOrigin?: string | null; // auditoria da composição (007)
   sentAt?: string | null;
   deliveredAt?: string | null;
   readAt?: string | null;
