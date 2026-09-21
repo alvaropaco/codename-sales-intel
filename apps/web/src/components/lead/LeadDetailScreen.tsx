@@ -27,6 +27,7 @@ import { LeadFinancials } from './LeadFinancials';
 import { LeadRelationshipGraph } from './LeadRelationshipGraph';
 import { LeadLocationMap } from './LeadLocationMap';
 import { LeadEvidence } from './LeadEvidence';
+import { LeadDiscoveryPanel } from '../discovery/LeadDiscoveryPanel';
 
 /**
  * LeadDetailScreen — tela dedicada de detalhes completos do lead (FR-001),
@@ -260,6 +261,7 @@ export function LeadDetailScreen({
       {/* Grid de seções — cada uma com estado independente (FR-015) */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <LeadOverview prospect={prospect} decision={decision} />
+        <LeadDiscoveryPanel prospectId={prospect.id} />
         <LeadIntelligence
           prospect={prospect}
           decision={decision}
