@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { WhatsAppRiskModal } from '@/components/modals/WhatsAppRiskModal';
 import {
   Prospect,
   WhatsAppAccount,
@@ -58,6 +59,7 @@ import {
   discardWhatsAppSuggestion,
   pauseWhatsAppAutomation,
   resumeWhatsAppAutomation,
+  rederiveWhatsAppCampaign,
 } from '@/services/api';
 
 interface WhatsAppViewProps {
@@ -154,7 +156,14 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qrAccountId]);
 
-  const handleConnect = async () => {
+  // ── Aviso de risco (007 — US6): toda conexão/reconexão passa pelo modal.
+  // Cancelar não gera nenhuma chamada de rede e não altera estado.
+  const [riskAction, setRiskAction] = useState<(() => void) | null>(null);
+  const handleConnect = () => setRiskAction(() => runConnect);
+  const handleRefreshQr = (accountId: string) => setRiskAction(() => () => runRefreshQr(accountId));
+  const handleReconnect = (id: string) => setRiskAction(() => () => runReconnect(id));
+
+  const runConnect = async () => {
     setError(null);
     setNotice(null);
     try {
@@ -181,7 +190,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
     }
   };
 
-  const handleRefreshQr = async (accountId: string) => {
+  const runRefreshQr = async (accountId: string) => {
     setError(null);
     setQrAccountId(accountId);
     setQr(null);
@@ -209,7 +218,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
     await loadAccounts();
   };
 
-  const handleReconnect = async (id: string) => {
+  const runReconnect = async (id: string) => {
     setError(null);
     setNotice('Reconectando… pode levar até um minuto.');
     try {
@@ -239,6 +248,15 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({ prospects }) => {
 
   return (
     <div className="space-y-6 animate-fadeIn">
+      <WhatsAppRiskModal
+        open={riskAction !== null}
+        onConfirm={() => {
+          const action = riskAction;
+          setRiskAction(null);
+          action?.();
+        }}
+        onCancel={() => setRiskAction(null)}
+      />
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">WhatsApp</h1>
@@ -651,13 +669,34 @@ function CampaignsTab(props: {
                       <Send className="h-4 w-4 text-indigo-400" />
                       <h4 className="text-sm font-bold text-foreground">{c.name}</h4>
                       <Badge variant={meta.variant}>{meta.label}</Badge>
+                      {c.needsReview && (
+                        <Badge variant="destructive" title={c.reviewReason || undefined}>
+                          Revisão necessária
+                        </Badge>
+                      )}
                     </div>
                     <span className="text-xs text-muted-foreground">{c._count?.contacts ?? 0} lead(s)</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {c.steps?.length ?? 0} etapa(s) · Criada em {new Date(c.createdAt).toLocaleDateString('pt-BR')}
                   </p>
+                  {c.needsReview && (
+                    <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                      Esta campanha foi retida: o template continha texto interno da plataforma.
+                      Regerar a mensagem usa o perfil comercial da sua organização; depois, retome manualmente.
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-center gap-2">
+                    {c.needsReview && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => { await rederiveWhatsAppCampaign(c.id); await onReload(); }}
+                        className="gap-2"
+                      >
+                        <RefreshCw className="h-4 w-4" /> Regerar mensagem
+                      </Button>
+                    )}
                     {c.status === 'DRAFT' || c.status === 'SCHEDULED' ? (
                       <Button variant="outline" size="sm" onClick={() => setStartId(c.id)} className="gap-2">
                         <PlayCircle className="h-4 w-4" /> Iniciar

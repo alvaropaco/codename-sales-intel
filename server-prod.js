@@ -147,6 +147,7 @@ function getSweeper() {
 }
 const outreachWorkers = require('./outreach-workers');
 const aiCampaign = require('./ai-campaign');
+const dispatchUtils = require('./dispatch-utils');
 const { closeAllQueues, closeAllWorkers, getQueues } = require('./outreach-queues');
 
 // ─── WhatsApp modules (WAHA) ───────────────────────────────────────
@@ -3639,6 +3640,51 @@ app.get('/api/email/providers', async (req, res) => {
 
 // ─── Campaigns ─────────────────────────────────────────────────────
 
+// Governança de lançamento de campanha WhatsApp (007 — FR-008/FR-012):
+// campanha retida pelo saneamento (needsReview) ou sem etapas não dispara.
+async function assertWhatsAppCampaignLaunchable(orgId, campaignId) {
+  const campaign = await prisma.whatsAppCampaign.findFirst({ where: { id: campaignId, orgId } });
+  if (!campaign) {
+    return { ok: false, code: 'CAMPAIGN_NOT_FOUND', message: 'Campanha não encontrada' };
+  }
+  if (campaign.needsReview) {
+    return {
+      ok: false,
+      code: 'CAMPAIGN_REVIEW_REQUIRED',
+      message: 'Esta campanha foi retida para revisão do template (rederive ou edite a mensagem antes de lançar).',
+    };
+  }
+  const stepCount = await prisma.whatsAppSequenceStep.count({ where: { campaignId } });
+  if (stepCount === 0) {
+    return {
+      ok: false,
+      code: 'TEMPLATE_REQUIRED',
+      message: 'Configure ao menos uma mensagem na sequência antes de lançar.',
+    };
+  }
+  return { ok: true };
+}
+
+// Guard de ingestão de templates de mensagem (007 — FR-004/FR-005): rejeita
+// BLOCKLIST, limite do canal e placeholders desconhecidos ANTES de persistir.
+// Retorna true se tudo válido; já respondeu 400 caso contrário.
+function validateOutreachTemplatesOr400(res, templates) {
+  const { validateTemplateMessage } = require('./whatsapp-utils');
+  for (const [field, value, maxLength] of templates) {
+    if (value === undefined || value === null || value === '') continue;
+    const guard = validateTemplateMessage(value, { maxLength });
+    if (!guard.ok) {
+      res.status(400).json({
+        success: false,
+        code: 'TEMPLATE_REJECTED',
+        error: `Template rejeitado (${field}: ${guard.reason}).`,
+      });
+      return false;
+    }
+  }
+  return true;
+}
+
 // GET /api/outreach/campaigns — list campaigns
 app.get('/api/outreach/campaigns', async (req, res) => {
   try {
@@ -3698,6 +3744,14 @@ app.post('/api/outreach/campaigns', async (req, res) => {
       whatsappAccountId, whatsappTemplate,
     } = req.body || {};
     if (!name) return res.status(400).json({ success: false, error: 'Campaign name required' });
+
+    // Guard de ingestão (007): BLOCKLIST/limite/placeholder desconhecido é
+    // rejeitado na entrada, nunca persistido.
+    if (!validateOutreachTemplatesOr400(res, [
+      ['emailTemplateSubject', emailTemplateSubject, 5000],
+      ['emailTemplateBody', emailTemplateBody, 5000],
+      ['whatsappTemplate', whatsappTemplate, 600],
+    ])) return;
 
     // Validação da suíte multicanal
     const validChannels = Array.isArray(channels)
@@ -3763,6 +3817,16 @@ app.patch('/api/outreach/campaigns/:id', async (req, res) => {
       ? channels.filter((c) => ['email', 'whatsapp'].includes(c))
       : undefined;
 
+    // Guard de ingestão (007) nos templates alterados; editar template
+    // revalida a campanha retida pelo saneamento (FR-008).
+    if (!validateOutreachTemplatesOr400(res, [
+      ['emailTemplateSubject', emailTemplateSubject, 5000],
+      ['emailTemplateBody', emailTemplateBody, 5000],
+      ['whatsappTemplate', whatsappTemplate, 600],
+    ])) return;
+    const templateTouched = [emailTemplateSubject, emailTemplateBody, whatsappTemplate]
+      .some((v) => v !== undefined);
+
     if (autoActive === true) {
       const ch = validChannels ?? existing.channels ?? [];
       if (!Array.isArray(ch) || ch.length === 0) {
@@ -3792,6 +3856,7 @@ app.patch('/api/outreach/campaigns/:id', async (req, res) => {
         ...(emailTemplateBody !== undefined ? { emailTemplateBody: emailTemplateBody || null } : {}),
         ...(whatsappAccountId !== undefined ? { whatsappAccountId: whatsappAccountId || null } : {}),
         ...(whatsappTemplate !== undefined ? { whatsappTemplate: whatsappTemplate || null } : {}),
+        ...(templateTouched ? { needsReview: false, reviewReason: null } : {}),
       },
     });
 
@@ -3924,6 +3989,15 @@ app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
     });
     if (!campaign) return res.status(404).json({ success: false, error: 'Campaign not found' });
 
+    // Retenção do saneamento (007 — FR-008): campanha retida não dispara.
+    if (campaign.needsReview) {
+      return res.status(409).json({
+        success: false,
+        code: 'CAMPAIGN_REVIEW_REQUIRED',
+        error: 'Esta campanha foi retida para revisão do template (rederive ou edite o template antes de lançar).',
+      });
+    }
+
     // Isolamento: cada prospect deve pertencer ao org do usuário (evita
     // disparar outreach contra leads de outro tenant).
     const ownedProspects = await prisma.prospect.findMany({
@@ -3958,13 +4032,15 @@ app.post('/api/outreach/campaigns/:id/start', async (req, res) => {
 // CAMPANHA COM IA (feature PREMIUM)
 // ============================================================================
 // POST /api/ai/campaigns — a IA gera a estratégia (nome/objetivo/oferta) a
-// partir do contexto comercial da org, SALVA as campanhas (email e/ou WhatsApp
-// conforme contas conectadas) e INICIA os disparos para todos os leads em
-// "Prontos para contato" (status='qualified'). Mensagem única por lead:
-//   - email: campanha sem template → processPrepare gera via IA por lead;
-//   - whatsapp: step aiPersonalized → worker gera por lead (template = fallback).
-// Resposta: { success, data: { emailCampaignId, whatsappCampaignId, channels,
-//   leadCount, enrolled, contextConfigured, strategy, launchErrors } }
+// partir do contexto comercial da org e SALVA as campanhas (email e/ou
+// WhatsApp conforme contas conectadas) com a MENSAGEM BASE composta do perfil
+// comercial — NÃO dispara nada. O tenant visualiza a prévia e aprova via
+// POST /api/ai/campaigns/approve, que lança os disparos para os leads em
+// "Prontos para contato" (status='qualified').
+//   - email: template composto (base por perfil); IA gera por lead no prepare;
+//   - whatsapp: step aiPersonalized (base composta = fallback garantido).
+// Resposta: { success, data: { status: 'pending_approval', emailCampaignId,
+//   whatsappCampaignId, channels, leadCount, strategy, preview } }
 app.post('/api/ai/campaigns', async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -3987,6 +4063,40 @@ app.post('/api/ai/campaigns', async (req, res) => {
       return res.status(err.status).json({ success: false, code: err.code, error: err.message });
     }
     console.error('[ai-campaign] erro inesperado:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/ai/campaigns/approve — aprova a mensagem base da campanha IA e
+// LANÇA os disparos (único caminho de lançamento do fluxo IA — FR-009).
+// body: { outreachCampaignId?, whatsappCampaignId?,
+//         edits?: { whatsappMessageTemplate?, emailTemplateSubject?, emailTemplateBody? } }
+app.post('/api/ai/campaigns/approve', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    // Gate do plano (o orquestrador revalida — defesa em profundidade).
+    await assertPremiumOrg(user.orgId);
+
+    const { outreachCampaignId, whatsappCampaignId, edits } = req.body || {};
+    const result = await aiCampaign.approveAiCampaign(prisma, {
+      orgId: user.orgId,
+      userId,
+      outreachCampaignId: outreachCampaignId || null,
+      whatsappCampaignId: whatsappCampaignId || null,
+      edits: edits || {},
+    });
+
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    if (err.code && err.status) {
+      return res.status(err.status).json({ success: false, code: err.code, error: err.message });
+    }
+    console.error('[ai-campaign] erro inesperado no approve:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -4088,48 +4198,9 @@ app.get('/api/outreach/dispatches', async (req, res) => {
     const prospectById = new Map(prospects.map((p) => [p.id, p]));
 
     const dispatches = [
-      ...emailMessages.map((m) => {
-        const prospect = prospectById.get(m.contact?.prospectId);
-        return {
-          id: `email:${m.id}`,
-          channel: 'email',
-          prospectId: m.contact?.prospectId || null,
-          companyName: prospect?.companyName || null,
-          cnpj: prospect?.cnpj || null,
-          destination: prospect?.cnpjEmail || null,
-          campaignId: m.contact?.campaignId || null,
-          campaignName: m.contact?.campaign?.name || null,
-          origin: m.contact?.campaign?.trigger === 'on_enrichment' ? 'auto' : 'manual',
-          preview: m.subject,
-          status: m.status,
-          bucket: bucketForEmail(m),
-          error: m.error || null,
-          sentAt: m.sentAt?.toISOString() || null,
-          createdAt: m.createdAt.toISOString(),
-        };
-      }),
+      ...emailMessages.map((m) => dispatchUtils.toEmailDispatchItem(m, { prospectById })),
       ...waMessages
-        .map((m) => {
-          const prospect = prospectById.get(m.conversation?.prospectId);
-          const contact = m.campaignContactId ? waContactById.get(m.campaignContactId) : null;
-          return {
-            id: `wa:${m.id}`,
-            channel: 'whatsapp',
-            prospectId: m.conversation?.prospectId || null,
-            companyName: prospect?.companyName || null,
-            cnpj: prospect?.cnpj || null,
-            destination: m.conversation?.phoneNumber || null,
-            campaignId: contact?.campaignId || null,
-            campaignName: contact?.campaign?.name || null,
-            origin: contact ? 'manual' : 'conversation',
-            preview: (m.content || '').replace(/\s+/g, ' ').slice(0, 120) || null,
-            status: m.status,
-            bucket: bucketForWhatsApp(m),
-            error: m.error || null,
-            sentAt: m.sentAt?.toISOString() || null,
-            createdAt: m.createdAt.toISOString(),
-          };
-        })
+        .map((m) => dispatchUtils.toWhatsAppDispatchItem(m, { prospectById, waContactById }))
         .filter((d) => !campaignId || d.campaignId === campaignId),
     ];
 
@@ -5127,6 +5198,13 @@ app.post('/api/whatsapp/campaigns', async (req, res) => {
         })).filter((s) => s.messageTemplate.trim())
       : null;
 
+    // Guard de ingestão (007): cada step passa pela validação de conteúdo.
+    if (normalizedSteps) {
+      for (const [i, step] of normalizedSteps.entries()) {
+        if (!validateOutreachTemplatesOr400(res, [[`steps[${i}].messageTemplate`, step.messageTemplate, 600]])) return;
+      }
+    }
+
     const campaign = await prisma.whatsAppCampaign.create({
       data: {
         orgId,
@@ -5156,6 +5234,13 @@ app.post('/api/whatsapp/campaigns/:id/start', async (req, res) => {
     const { prospectIds } = req.body || {};
     if (!prospectIds || !Array.isArray(prospectIds) || prospectIds.length === 0) {
       return res.status(400).json({ success: false, error: 'prospectIds é obrigatório (array)' });
+    }
+
+    // Governança de template (007 — FR-008/FR-012): campanha retida pelo
+    // saneamento ou sem etapas de sequência não pode disparar.
+    const startGuard = await assertWhatsAppCampaignLaunchable(orgId, req.params.id);
+    if (!startGuard.ok) {
+      return res.status(409).json({ success: false, code: startGuard.code, error: startGuard.message });
     }
 
     // Isolamento: os leads devem pertencer ao org do usuário.
@@ -5189,10 +5274,113 @@ app.post('/api/whatsapp/campaigns/:id/pause', async (req, res) => {
 app.post('/api/whatsapp/campaigns/:id/resume', async (req, res) => {
   try {
     const orgId = await requireRequestOrgId(req);
+    // Retenção do saneamento (FR-008): revalidar antes de retomar.
+    const campaign = await prisma.whatsAppCampaign.findFirst({ where: { id: req.params.id, orgId } });
+    if (!campaign) return res.status(404).json({ success: false, error: 'Campanha não encontrada' });
+    if (campaign.needsReview) {
+      return res.status(409).json({
+        success: false,
+        code: 'CAMPAIGN_REVIEW_REQUIRED',
+        error: 'Esta campanha foi retida para revisão do template (rederive ou edite a mensagem antes de retomar).',
+      });
+    }
     const result = await whatsappWorkers.resumeCampaign(prisma, { campaignId: req.params.id, orgId });
     res.json({ success: true, data: result, timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/whatsapp/campaigns/:id — edita as etapas da sequência (contrato
+// 007 §3). Sucesso limpa a retenção do saneamento, mas NÃO reativa a campanha:
+// reativação é sempre ação explícita (resume/start).
+app.patch('/api/whatsapp/campaigns/:id', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const campaign = await prisma.whatsAppCampaign.findFirst({
+      where: { id: req.params.id, orgId },
+      include: { steps: { orderBy: { orderIndex: 'asc' } } },
+    });
+    if (!campaign) return res.status(404).json({ success: false, error: 'Campanha não encontrada' });
+
+    const { steps } = req.body || {};
+    if (!Array.isArray(steps) || steps.length === 0) {
+      return res.status(400).json({ success: false, error: 'steps é obrigatório (array)' });
+    }
+
+    const { validateTemplateMessage } = require('./whatsapp-utils');
+    const updates = [];
+    for (const [i, incoming] of steps.entries()) {
+      const target = campaign.steps.find((st) => st.id === incoming.id || st.orderIndex === incoming.orderIndex);
+      if (!target) {
+        return res.status(400).json({ success: false, error: `steps[${i}]: etapa não encontrada nesta campanha` });
+      }
+      if (incoming.messageTemplate !== undefined) {
+        const guard = validateTemplateMessage(incoming.messageTemplate);
+        if (!guard.ok) {
+          return res.status(400).json({
+            success: false,
+            code: 'TEMPLATE_REJECTED',
+            error: `Mensagem rejeitada (${guard.reason}).`,
+          });
+        }
+        updates.push({ id: target.id, data: { messageTemplate: incoming.messageTemplate } });
+      }
+      if (incoming.delayMinutes !== undefined) {
+        updates.push({ id: target.id, data: { delayMinutes: Number(incoming.delayMinutes) || 0 } });
+      }
+    }
+    for (const u of updates) {
+      await prisma.whatsAppSequenceStep.update({ where: { id: u.id }, data: u.data });
+    }
+    if (campaign.needsReview) {
+      await prisma.whatsAppCampaign.update({
+        where: { id: campaign.id },
+        data: { needsReview: false, reviewReason: null },
+      });
+    }
+
+    const updated = await prisma.whatsAppCampaign.findFirst({
+      where: { id: campaign.id, orgId },
+      include: { steps: { orderBy: { orderIndex: 'asc' } } },
+    });
+    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/whatsapp/campaigns/:id/rederive — regera a mensagem base a partir
+// do perfil comercial da org (atalho de revalidação do saneamento — 007 §4).
+// Mantém a campanha pausada: reativação é ação explícita do tenant.
+app.post('/api/whatsapp/campaigns/:id/rederive', async (req, res) => {
+  try {
+    const orgId = await requireRequestOrgId(req);
+    const result = await aiCampaign.rederiveWhatsAppBase(prisma, { orgId, campaignId: req.params.id });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    if (err.code && err.status) {
+      return res.status(err.status).json({ success: false, code: err.code, error: err.message });
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/outreach/campaigns/:id/rederive — regera o template de email
+// (assunto + corpo) a partir do perfil comercial (007 §4).
+app.post('/api/outreach/campaigns/:id/rederive', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { orgId: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    const result = await aiCampaign.rederiveEmailBase(prisma, { orgId: user.orgId, campaignId: req.params.id });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    if (err.code && err.status) {
+      return res.status(err.status).json({ success: false, code: err.code, error: err.message });
+    }
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -5455,6 +5643,19 @@ async function start() {
     console.error('Server startup error:', error);
     process.exit(1);
   }
+}
+
+// Saneamento idempotente de campanhas IA legadas (007 — FR-008): roda em
+// background no boot; falha não derruba o servidor. Desativar com
+// SANITIZE_LEGACY_CAMPAIGNS=off.
+if (process.env.SANITIZE_LEGACY_CAMPAIGNS !== 'off') {
+  setImmediate(() => {
+    aiCampaign.sanitizeLegacyCampaigns(prisma)
+      .then((stats) => console.log(
+        '[sanitize-legacy] concluído:', JSON.stringify(stats)
+      ))
+      .catch((err) => console.error('[sanitize-legacy] falhou (não fatal):', err.message));
+  });
 }
 
 process.on('SIGINT', async () => {

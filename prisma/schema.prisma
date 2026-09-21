@@ -353,6 +353,10 @@ model OutreachCampaign {
   whatsappAccountId      String?                      // conta WAHA do disparo automático
   whatsappTemplate       String?                      // mensagem WhatsApp (mesmos placeholders)
   autoWhatsAppCampaignId String?                      // WhatsAppCampaign criada p/ automação (reusada)
+  // ── Governança de template (007) ─────────────────────────────────────────
+  needsReview  Boolean  @default(false) // retida pelo saneamento (template com texto interno)
+  reviewReason String?                  // motivo da retenção (ex.: synthetic_template_leak)
+  approvedAt   DateTime?                // aprovação da mensagem base pelo tenant (fluxo IA)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -429,6 +433,7 @@ model OutreachMessage {
   sentAt            DateTime?
   trackingToken     String?   // uuid para pixel
   aiReasoningFacts  Json?    // fatos usados pela IA
+  compositionOrigin String?  // tenant_template | ai | profile_base — auditoria da composição (007)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -512,6 +517,10 @@ model WhatsAppCampaign {
   startedAt         DateTime?
   pausedAt          DateTime?
   completedAt       DateTime?
+  // ── Governança de template (007) ─────────────────────────────────────────
+  needsReview  Boolean  @default(false) // retida pelo saneamento (template com texto interno)
+  reviewReason String?                  // motivo da retenção (ex.: synthetic_template_leak)
+  approvedAt   DateTime?                // aprovação da mensagem base pelo tenant (fluxo IA)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -607,6 +616,7 @@ model WhatsAppMessage {
   providerMessageId String?
   status            String   @default("PENDING")     // PENDING, SENT, DELIVERED, READ, FAILED
   source            String   @default("MANUAL")      // MANUAL, CAMPAIGN, REENGAGEMENT
+  compositionOrigin String?                          // tenant_template | ai | ai_fallback_template | profile_base (007)
   stepIndex         Int?
   sentAt            DateTime?
   deliveredAt       DateTime?

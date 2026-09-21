@@ -85,6 +85,32 @@ const whatsappFailedTotal = enabled
     })
   : null;
 
+// ── Governança de template / composição (007) ───────────────────────────────
+const compositionOriginTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_outreach_composition_origin_total',
+      help: 'Mensagens de campanha por origem de composição (template do tenant, IA, fallback)',
+      labelNames: ['channel', 'origin'],
+      registers: [registry],
+    })
+  : null;
+const campaignReviewTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_whatsapp_campaign_review_total',
+      help: 'Ações de saneamento/revalidação de campanhas retidas',
+      labelNames: ['action'],
+      registers: [registry],
+    })
+  : null;
+const aiCampaignApprovalsTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_ai_campaign_approvals_total',
+      help: 'Aprovações da mensagem base de campanhas IA',
+      labelNames: ['result'],
+      registers: [registry],
+    })
+  : null;
+
 const outreachMessagesGauge = enabled
   ? new client.Gauge({
       name: 'b2base_outreach_messages',
@@ -108,6 +134,21 @@ if (enabled) {
 
 function inc(counter) {
   if (counter) counter.inc();
+}
+
+/** 007: origem de composição de mensagem de campanha (canal + origem). */
+function incCompositionOrigin(channel, origin) {
+  if (compositionOriginTotal) compositionOriginTotal.inc({ channel, origin });
+}
+
+/** 007: ação de saneamento/revalidação (detected | rederived | edited). */
+function incCampaignReview(action) {
+  if (campaignReviewTotal) campaignReviewTotal.inc({ action });
+}
+
+/** 007: resultado da aprovação de campanha IA (launched | launched_with_errors). */
+function incAiCampaignApproval(result) {
+  if (aiCampaignApprovalsTotal) aiCampaignApprovalsTotal.inc({ result });
 }
 
 function withTimeout(promise, ms) {
@@ -573,6 +614,9 @@ module.exports = {
   incQualificationTotal,
   incQualificationFailure,
   isEnabled: () => enabled,
+  incCompositionOrigin,
+  incCampaignReview,
+  incAiCampaignApproval,
   incEmailSent: () => inc(emailsSentTotal),
   incEmailFailed: () => inc(emailsFailedTotal),
   incEmailRateLimited: () => inc(emailsRateLimitedTotal),

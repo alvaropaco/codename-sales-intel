@@ -68,7 +68,10 @@ function _partnerName(lead) {
 function buildTemplateVars(lead) {
   const partner = _partnerName(lead);
   return {
-    firstName: _safe(_firstWord(partner || lead.tradeName || lead.companyName || '')),
+    // Pessoa de contato é a fonte primária do primeiro nome (007/US2): lead
+    // B2B sem contato identificado degrada para saudação SEM nome — o nome
+    // da empresa (tradeName/companyName) nunca é tratado como pessoa.
+    firstName: _safe(_firstWord(lead.contactName || partner || '')),
     companyName: _safe(lead.companyName || ''),
     jobTitle: _safe((lead.cnpjPartners && lead.cnpjPartners[0] && lead.cnpjPartners[0].qual) || ''),
     city: _safe(lead.city || ''),
@@ -84,6 +87,9 @@ function renderTemplate(template, lead) {
   }
   // Remove placeholders não resolvidos (evita enviar `{{...}}` cru ao lead).
   out = out.replace(/\{\{\s*[\w.]+\s*\}\}/g, '');
+  // Placeholder vazio (lead sem pessoa de contato): a frase não pode ficar
+  // com pontuação/espaço pendurados — "Olá , tudo bem?" → "Olá, tudo bem?".
+  out = out.replace(/[ \t]+([,;.!?])/g, '$1').replace(/[ \t]{2,}/g, ' ');
   return out.trim();
 }
 
@@ -136,6 +142,45 @@ function isOptOutMessage(text) {
 // garantia (não temos esses dados — ver b2base-context.naoAFirmar).
 const BLOCKLIST = /(r\$\s?\d|desconto|grátis|gratis|garantid|promoç|promocao|promoção|hoje apenas|últimas vagas|ultimas vagas)/i;
 
+// ─── Guard de INGESTÃO de template (007) ────────────────────────────────────
+// Templates de mensagem (WhatsApp/email) são validados na ENTRADA — não só na
+// saída da IA — para que nenhum template com afirmação proibida, comprimento
+// acima do canal ou placeholder desconhecido seja persistido e depois enviado.
+const TEMPLATE_VARS = ['firstName', 'companyName', 'jobTitle', 'city', 'industry'];
+const TEMPLATE_MAX_LEN = 600; // limite de comprimento do canal WhatsApp
+
+function validateTemplateMessage(template, { maxLength = TEMPLATE_MAX_LEN } = {}) {
+  const content = String(template || '').trim();
+  if (!content) return { ok: false, reason: 'empty' };
+  if (content.length > maxLength) return { ok: false, reason: 'too_long' };
+  const placeholders = content.match(/\{\{\s*[\w.]+\s*\}\}/g) || [];
+  const unknown = placeholders
+    .map((p) => p.replace(/[{}\s]/g, ''))
+    .find((key) => !TEMPLATE_VARS.includes(key));
+  if (unknown) return { ok: false, reason: 'unknown_placeholder', detail: unknown };
+  if (BLOCKLIST.test(content)) return { ok: false, reason: 'blocked_claim' };
+  return { ok: true, reason: null };
+}
+
+/**
+ * Ajusta uma mensagem ao limite do canal preservando frases inteiras
+ * (FR-007): o corte é em fim de frase, depois em espaço — a BASE do texto
+ * nunca é trocada por outro conteúdo.
+ */
+function truncateForWhatsApp(text, maxLength = TEMPLATE_MAX_LEN) {
+  const content = String(text || '').trim();
+  if (content.length <= maxLength) return content;
+  const cut = content.slice(0, maxLength);
+  const sentenceEnd = Math.max(
+    cut.lastIndexOf('. '),
+    cut.lastIndexOf('! '),
+    cut.lastIndexOf('? ')
+  );
+  if (sentenceEnd > Math.floor(maxLength / 2)) return cut.slice(0, sentenceEnd + 1).trim();
+  const space = cut.lastIndexOf(' ');
+  return space > 0 ? cut.slice(0, space).trim() : cut.trim();
+}
+
 function normalizeForCompare(text) {
   return String(text || '')
     .toLowerCase()
@@ -180,6 +225,10 @@ module.exports = {
   isOptOutMessage,
   OPT_OUT_KEYWORDS,
   BLOCKLIST,
+  validateTemplateMessage,
+  truncateForWhatsApp,
+  TEMPLATE_VARS,
+  TEMPLATE_MAX_LEN,
   normalizeForCompare,
   asStringList,
   idempotencyKey,
