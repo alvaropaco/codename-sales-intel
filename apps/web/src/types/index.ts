@@ -766,3 +766,100 @@ export interface CnaeRamo {
   oficial: string;
   categorias: CnaeCategoria[];
 }
+
+// --- Discovery Engine (specs/006-discovery-engine) ---------------------------
+
+export type DiscoveryJobStatus = 'queued' | 'running' | 'partial' | 'completed' | 'failed' | 'cancelled';
+
+export interface DiscoveryProviderRunState {
+  provider: string;
+  capability: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  attempt: number;
+  items: number;
+  requests: number;
+  estimatedCost: number;
+  errorCode: string | null;
+}
+
+export interface DiscoveryJobPayload {
+  id: string;
+  orgId: string;
+  status: DiscoveryJobStatus;
+  trigger: string;
+  providersTotal: number;
+  providersDone: number;
+  providersFailed: number;
+  itemsFound: number;
+  estimatedCost: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface DiscoveryJobStatusPayload {
+  job: DiscoveryJobPayload;
+  providers: DiscoveryProviderRunState[];
+  progress: { total: number; done: number; failed: number };
+}
+
+export interface DiscoveryCandidate {
+  id: string;
+  jobId: string;
+  companyEntityId: string | null;
+  cnpj: string | null;
+  name: string | null;
+  domain: string | null;
+  confidence: number;
+  status: 'discovered' | 'imported' | 'dismissed';
+  evidenceCount: number;
+  importedProspectId: string | null;
+}
+
+export interface DiscoveryCandidatesPayload {
+  total: number;
+  page: number;
+  candidates: DiscoveryCandidate[];
+}
+
+export interface CompanyIntelligenceProfile {
+  company: {
+    id: string;
+    type: string;
+    displayName: string | null;
+    confidence: number;
+    attributes: Record<string, unknown>;
+    identifiers: Record<string, unknown>;
+  };
+  corporate: {
+    identity: { cnpj: string | null; legalName: string | null; tradeName: string | null; status: string | null; isActive: boolean; openingDate: string | null };
+    classification: { legalNature: string | null; companySize: string | null; industry: string | null; cnaes: string[] };
+    address: { city: string | null; state: string | null } | null;
+    shareCapital: number | null;
+    confidence: number;
+    evidenceCount: number;
+  };
+  financial: {
+    capitalSocial: { value: number; formatted: string | null; evidenceType: string } | null;
+    funding: Array<{ name: string | null; stage: string | null; amount: number | null; currency: string; announcedAt: string | null; investors: Array<{ name: string }>; evidenceType: string }>;
+    hasEstimatedData: boolean;
+    confidence: number;
+  };
+  legal: {
+    cases: Array<{ caseNumber: string; displayName: string | null; court: string | null; status: string | null; sources: string[]; confidence: number }>;
+    courts: string[];
+    totalCases: number;
+    riskScore: number;
+  };
+  ownership: {
+    partners: Array<{ name: string | null; ownershipPct: number | null; confidence: number }>;
+    directors: Array<{ name: string | null; role: string | null; confidence: number }>;
+    representatives: Array<{ name: string | null; confidence: number }>;
+    confidence: number;
+  };
+  digital: {
+    technologies: unknown[];
+    evidenceCount: number;
+  };
+  signals: Array<{ id: string; type: string; value: Record<string, unknown>; confidence: number; observedAt: string | null }>;
+  evidenceSummary: { total: number; byType: Record<string, number> };
+}

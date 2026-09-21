@@ -17,6 +17,7 @@
     "worker:identity": "node workers/identity.js",
     "worker:search": "node workers/search.js",
     "worker:company-deep": "node workers/company-deep.js",
+    "worker:discovery": "node workers/discovery.js",
     "test": "node --test test/*.test.js",
     "test:integration": "node --test test/integration/*.int.test.js",
     "docker:build": "docker build -t b2base ."

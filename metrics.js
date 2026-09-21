@@ -315,6 +315,80 @@ async function renderEnrichmentMetrics() {
 }
 
 // ============================================================================
+// DISCOVERY ENGINE (specs/006-discovery-engine) — T003
+// ============================================================================
+const discoveryJobsTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_discovery_jobs_total',
+      help: 'Jobs de discovery finalizados por status (completed/partial/failed/cancelled)',
+      labelNames: ['status'],
+      registers: [registry],
+    })
+  : null;
+const discoveryProviderRunsTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_discovery_provider_runs_total',
+      help: 'Runs de provider de discovery por resultado (completed/failed/skipped)',
+      labelNames: ['provider', 'outcome'],
+      registers: [registry],
+    })
+  : null;
+const discoveryProviderDuration = enabled
+  ? new client.Histogram({
+      name: 'b2base_discovery_provider_duration_seconds',
+      help: 'Latência de execução de provider de discovery',
+      labelNames: ['provider'],
+      registers: [registry],
+    })
+  : null;
+const discoveryCandidatesTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_discovery_candidates_total',
+      help: 'Candidatos de discovery upsertados (dedup por dedupeKey)',
+      registers: [registry],
+    })
+  : null;
+const discoveryEvidenceTotal = enabled
+  ? new client.Counter({
+      name: 'b2base_discovery_evidence_total',
+      help: 'Evidências de discovery gravadas (dedup por rawHash)',
+      registers: [registry],
+    })
+  : null;
+const discoveryEstimatedCost = enabled
+  ? new client.Counter({
+      name: 'b2base_discovery_estimated_cost_total',
+      help: 'Custo estimado acumulado de providers pagos (centavos)',
+      registers: [registry],
+    })
+  : null;
+
+function incDiscoveryJobFinished(status) {
+  if (discoveryJobsTotal) discoveryJobsTotal.inc({ status });
+}
+
+function incDiscoveryProviderRun(provider, outcome) {
+  if (discoveryProviderRunsTotal) discoveryProviderRunsTotal.inc({ provider, outcome });
+}
+
+function observeDiscoveryProviderDuration(provider, ms) {
+  if (discoveryProviderDuration) discoveryProviderDuration.observe((Number(ms) || 0) / 1000);
+}
+
+function incDiscoveryCandidates(n = 1) {
+  if (discoveryCandidatesTotal) discoveryCandidatesTotal.inc(Number(n) || 1);
+}
+
+function incDiscoveryEvidence(n = 1) {
+  if (discoveryEvidenceTotal) discoveryEvidenceTotal.inc(Number(n) || 1);
+}
+
+function incDiscoveryEstimatedCost(centavos = 0) {
+  const v = Number(centavos);
+  if (discoveryEstimatedCost && v > 0) discoveryEstimatedCost.inc(v);
+}
+
+// ============================================================================
 // ONBOARDING CONVERSACIONAL (Ava) — feature 004
 // ============================================================================
 const avaExtractDurationHist = enabled
@@ -521,4 +595,10 @@ module.exports = {
   incEnrichmentFailuresReal,
   setEnrichmentJobsDegraded,
   setEnrichmentProviderCircuit,
+  incDiscoveryJobFinished,
+  incDiscoveryProviderRun,
+  observeDiscoveryProviderDuration,
+  incDiscoveryCandidates,
+  incDiscoveryEvidence,
+  incDiscoveryEstimatedCost,
 };

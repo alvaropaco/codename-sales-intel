@@ -31,7 +31,10 @@ import {
   WhatsAppConnectResult,
   WhatsAppReengagementSuggestion,
   WhatsAppAutomationConfig,
-  AiCampaignResult
+  AiCampaignResult,
+  DiscoveryJobStatusPayload,
+  DiscoveryCandidatesPayload,
+  CompanyIntelligenceProfile
 } from '../types';
 
 const API_BASE = '/api';
@@ -1202,4 +1205,78 @@ export async function cancelWhatsAppCampaign(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/whatsapp/campaigns/${id}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(json.error || 'Erro ao cancelar campanha');
+}
+
+// ── Discovery Engine (specs/006-discovery-engine) ───────────────────────────
+
+/** Dispara um job de discovery (202 — execução assíncrona no backend). */
+export async function startDiscoveryJob(body: {
+  criteria?: Record<string, unknown> | null;
+  seed?: Record<string, unknown> | null;
+  providers?: string[] | null;
+}): Promise<{ jobId: string; status: string; providersTotal: number } | null> {
+  const res = await fetch(`${API_BASE}/discovery/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error(json.error?.message || 'Falha ao criar job de discovery');
+  return json.data;
+}
+
+/** Estado do job + runs por provider (progresso, custo e erros). */
+export async function fetchDiscoveryJob(jobId: string): Promise<DiscoveryJobStatusPayload | null> {
+  const res = await fetch(`${API_BASE}/discovery/jobs/${encodeURIComponent(jobId)}`);
+  if (res.status === 404) return null;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error('Falha ao carregar status do discovery');
+  return json.data;
+}
+
+/** Candidatos paginados do job (filtros page/pageSize/minConfidence/status). */
+export async function fetchDiscoveryJobCandidates(
+  jobId: string,
+  params: { page?: number; pageSize?: number; minConfidence?: number; status?: string } = {},
+): Promise<DiscoveryCandidatesPayload> {
+  const query = new URLSearchParams();
+  if (params.page) query.set('page', String(params.page));
+  if (params.pageSize) query.set('pageSize', String(params.pageSize));
+  if (params.minConfidence != null) query.set('minConfidence', String(params.minConfidence));
+  if (params.status) query.set('status', params.status);
+  const res = await fetch(`${API_BASE}/discovery/jobs/${encodeURIComponent(jobId)}/candidates?${query.toString()}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error('Falha ao carregar candidatos');
+  return json.data;
+}
+
+/** Importa candidato como Prospect (idempotente no backend). */
+export async function importDiscoveryCandidate(
+  jobId: string,
+  candidateId: string,
+): Promise<{ candidateId: string; prospectId: string; status: string }> {
+  const res = await fetch(
+    `${API_BASE}/discovery/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/import`,
+    { method: 'POST' },
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error(json.error?.message || 'Falha ao importar candidato');
+  return json.data;
+}
+
+/** Inicia discovery a partir de um lead (seed cnpj/domain do Prospect). */
+export async function startProspectDiscovery(prospectId: string): Promise<{ jobId: string } | null> {
+  const res = await fetch(`${API_BASE}/prospects/${encodeURIComponent(prospectId)}/discovery`, { method: 'POST' });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error(json.error?.message || 'Falha ao iniciar discovery do lead');
+  return json.data;
+}
+
+/** Perfil completo de inteligência da empresa (corporate/financial/legal/ownership/digital). */
+export async function fetchCompanyIntelligence(entityId: string): Promise<CompanyIntelligenceProfile | null> {
+  const res = await fetch(`${API_BASE}/companies/${encodeURIComponent(entityId)}/intelligence`);
+  if (res.status === 404) return null;
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error('Falha ao carregar inteligência da empresa');
+  return json.data;
 }
