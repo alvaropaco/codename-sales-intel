@@ -10,14 +10,43 @@
 const mcpCnpj = require('../../mcp-cnpj');
 const normalizer = require('../normalizer');
 const { confidenceFor } = require('../confidence');
+const { ownershipObservations } = require('../enrichers/ownership');
+const { httpJson } = require('../http');
 const { isMcpConfigured } = mcpCnpj;
+
+// QSA (quadro societário): o MCP não expõe sócios; a fonte oficial usada pelo
+// enriquecimento legado é a BrasilAPI (cnpj-enrichment.js). Reaproveitada aqui
+// para ingerir ownership no motor (T058, FR-024).
+const BRASIL_API_BASE_URL = 'https://brasilapi.com.br/api/cnpj/v1';
+
+/** QSA cru → persons no formato de ownershipObservations. */
+function mapQsa(data) {
+  const qsa = Array.isArray(data && data.qsa) ? data.qsa : [];
+  return qsa
+    .map((partner) => ({
+      name: partner.nome_socio || partner.nome || partner.nome_representante_legal,
+      role: partner.qualificacao_socio || partner.qualificacao || partner.qualificacao_representante_legal,
+      effectiveDate: partner.data_entrada_sociedade || null,
+    }))
+    .filter((p) => p.name)
+    .slice(0, 50);
+}
+
+async function fetchQsa(cnpj, { fetchImpl = fetch, timeoutMs = 20000, baseUrl = BRASIL_API_BASE_URL } = {}) {
+  try {
+    const data = await httpJson(`${String(baseUrl).replace(/\/+$/, '')}/${cnpj}`, { timeoutMs, fetchImpl });
+    return mapQsa(data);
+  } catch (_err) {
+    return []; // QSA indisponível não derruba o provider (SC-001 interno)
+  }
+}
 
 /**
  * Executa o provider.
  * input: { cnpj } → lookup exato | { criteria: { state, city, cnae, status, legalNameContains }, query, limit }
  * Retorna: { items, requests, estimatedCost } — items são observações de company.
  */
-async function execute(input = {}, { client = mcpCnpj } = {}) {
+async function execute(input = {}, { client = mcpCnpj, fetchImpl = fetch, qsaBaseUrl = undefined, timeoutMs = 20000 } = {}) {
   const items = [];
   let requests = 0;
 
@@ -25,6 +54,14 @@ async function execute(input = {}, { client = mcpCnpj } = {}) {
     requests += 1;
     const company = await client.getCompanyByCnpj(input.cnpj);
     if (company) items.push(companyObservation(company, { official: true }));
+    // Ownership (T058): sócios/diretores da seed exata via QSA oficial.
+    const cnpj = normalizer.normalizeCnpj(input.cnpj);
+    if (cnpj) {
+      const persons = await fetchQsa(cnpj, { fetchImpl, timeoutMs, baseUrl: qsaBaseUrl });
+      if (persons.length) {
+        items.push(...ownershipObservations(persons, { confidence: 0.9, sourceProvider: 'cnpj-mcp' }));
+      }
+    }
     return { items, requests, estimatedCost: 0 };
   }
 

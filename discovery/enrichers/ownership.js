@@ -10,7 +10,7 @@ const normalizer = require('../normalizer');
 const { relationshipConfidence } = require('../confidence');
 
 const RELATION_BY_ROLE = {
-  sócio: 'HAS_PARTNER',
+  'sócio': 'HAS_PARTNER',
   socio: 'HAS_PARTNER',
   partner: 'HAS_PARTNER',
   administrador: 'HAS_DIRECTOR',
@@ -20,8 +20,17 @@ const RELATION_BY_ROLE = {
   representative: 'HAS_REPRESENTATIVE',
 };
 
+/**
+ * Mapeia qualificação (ex.: "Sócio-Administrador", "Representante Legal") para
+ * o tipo de relação. Por substring: qualificações compostas do QSA caem no
+ * papel mais forte presente (diretor > representante > sócio).
+ */
 function relationTypeForRole(role) {
-  return RELATION_BY_ROLE[String(role || '').toLowerCase()] || 'RELATED_TO';
+  const r = String(role || '').toLowerCase();
+  if (/administrador|diretor|director/.test(r)) return 'HAS_DIRECTOR';
+  if (/representante/.test(r)) return 'HAS_REPRESENTATIVE';
+  if (/s[oó]cio|partner|propriet[aá]rio|titular/.test(r)) return 'HAS_PARTNER';
+  return RELATION_BY_ROLE[r] || 'RELATED_TO';
 }
 
 /**

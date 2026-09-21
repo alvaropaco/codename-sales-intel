@@ -271,24 +271,25 @@ function createDiscoveryPersistence({ prisma, now = () => new Date() }) {
     }
   }
 
-  async function listCandidates({ orgId, jobId = null, page = 1, pageSize = 25, minConfidence = 0, status = null }) {
+  async function listCandidates({ orgId, jobId = null, page = 1, pageSize = 25, minConfidence = 0, status = null, minIcp = null }) {
     const where = {
       orgId,
       confidence: { gte: Number(minConfidence) || 0 },
       ...(jobId ? { jobId } : {}),
       ...(status ? { status } : {}),
     };
-    const [total, rows] = await Promise.all([
-      prisma.discoveryCandidate.count({ where }),
-      prisma.discoveryCandidate.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: Math.min(Number(pageSize) || 25, 100),
-      }),
-    ]);
-    // Fake não suporta skip; paginação em memória preserva comportamento.
-    const skip = (Math.max(1, Number(page) || 1) - 1) * Math.min(Number(pageSize) || 25, 100);
-    return { total, items: rows.slice(skip, skip + Math.min(Number(pageSize) || 25, 100)) };
+    const size = Math.min(Number(pageSize) || 25, 100);
+    // Filtro ICP (T060) é sobre JSON aninhado — aplicado em memória após a
+    // leitura; volume por org é limitado pela projeção de candidatos (v1).
+    let rows = await prisma.discoveryCandidate.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+    if (minIcp != null && Number.isFinite(Number(minIcp))) {
+      rows = rows.filter((r) => r.location && r.location.icpScore != null && r.location.icpScore >= Number(minIcp));
+    }
+    const skip = (Math.max(1, Number(page) || 1) - 1) * size;
+    return { total: rows.length, items: rows.slice(skip, skip + size) };
   }
 
   async function importCandidate({ orgId, candidateId, prospectId }) {

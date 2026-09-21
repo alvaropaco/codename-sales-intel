@@ -108,7 +108,7 @@ function createDiscoveryApi({ app, prisma, engine, requireRequestOrgId, now = ()
       const orgId = await requireRequestOrgId(req);
       const job = await persistence.getJob(req.params.id, orgId);
       if (!job) return res.status(404).json({ success: false, error: { code: 'DISCOVERY_NOT_FOUND' } });
-      const { page, pageSize, minConfidence, status } = req.query;
+      const { page, pageSize, minConfidence, status, minIcp } = req.query;
       const result = await persistence.listCandidates({
         orgId,
         jobId: req.params.id,
@@ -116,6 +116,7 @@ function createDiscoveryApi({ app, prisma, engine, requireRequestOrgId, now = ()
         pageSize: Number(pageSize) || 25,
         minConfidence: Number(minConfidence) || 0,
         status: status || null,
+        minIcp: minIcp != null && minIcp !== '' ? Number(minIcp) : null,
       });
       res.json({ success: true, data: { total: result.total, page: Number(page) || 1, candidates: result.items }, timestamp: now().toISOString() });
     } catch (error) {

@@ -70,6 +70,6 @@
 - [x] T056 Compare native provider coverage/cost vs SpiderFoot on fixed fixtures.
 ## Phase 13: Convergence
 - [x] T057 Aplicar gating por plano nos endpoints de discovery: trial = apenas providers self-hosted/free (searxng, crtsh, dns-rdap, http-metadata); premium = catálogo completo — validar contra plan.js/getOrgPlan em discovery/api.js e filtrar providerConfig do job (Constitution IV) (contradicts)
-- [ ] T058 Ingerir ownership no motor: extrair sócios/diretores/representantes do CNPJ MCP (ou enrichment legado) e emitir observações via enrichers/ownership.js — hoje ownershipObservations não tem chamador em produção per FR-024 / US4 (partial)
-- [ ] T059 Capturar legal documents/events nos adapters jusbrasil/escavador: mapear movimentações e documentos do processo como evidências/entidades legais dedicadas per FR-023 / US4 (partial)
-- [ ] T060 Adicionar filtro/pontuação de candidatos pelo ICP da org (criteria do onboarding: CNAE/segmento/localização) em listCandidates e na projeção de candidatos per US1 / Edge Cases "resultados fora do ICP" (partial)
+- [x] T058 Ingerir ownership no motor: extrair sócios/diretores/representantes do CNPJ MCP (ou enrichment legado) e emitir observações via enrichers/ownership.js — hoje ownershipObservations não tem chamador em produção per FR-024 / US4 (partial)
+- [x] T059 Capturar legal documents/events nos adapters jusbrasil/escavador: mapear movimentações e documentos do processo como evidências/entidades legais dedicadas per FR-023 / US4 (partial)
+- [x] T060 Adicionar filtro/pontuação de candidatos pelo ICP da org (criteria do onboarding: CNAE/segmento/localização) em listCandidates e na projeção de candidatos per US1 / Edge Cases "resultados fora do ICP" (partial)
