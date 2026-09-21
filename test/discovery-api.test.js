@@ -148,3 +148,52 @@ test('org isolada não vê job de outra org (404)', async (t) => {
   const body = await res.json();
   assert.strictEqual(body.error.code, 'DISCOVERY_NOT_FOUND');
 });
+
+// ── Gating por plano (Constituição IV / T057) ───────────────────────────────
+
+test('gating: trial NÃO acessa providers pagos nem via providerOverrides', async (t) => {
+  const { server, base, prisma } = await startServer();
+  t.after(() => server.close());
+  // Org inexistente → getOrgPlan retorna 'trial' (default).
+
+  const res = await fetch(`${base}/api/discovery/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-test-org': 'org-trial' },
+    body: JSON.stringify({ criteria: { legalNameContains: 'X', state: 'SP' }, providers: ['serper', 'searxng'] }),
+  });
+  const { data } = await res.json();
+  assert.strictEqual(data.providersTotal, 1); // serper filtrado; resta searxng
+
+  const status = await (await fetch(`${base}/api/discovery/jobs/${data.jobId}`, { headers: { 'x-test-org': 'org-trial' } })).json();
+  assert.ok(!status.data.providers.some((p) => p.provider === 'serper'));
+
+  // providerOverrides NÃO re-habilita pago em trial.
+  const res2 = await fetch(`${base}/api/discovery/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-test-org': 'org-trial' },
+    body: JSON.stringify({
+      criteria: { legalNameContains: 'X', state: 'SP' },
+      providers: ['searxng'],
+      providerConfig: { serper: { enabled: true, maxRequests: 999 } },
+    }),
+  });
+  const body2 = await res2.json();
+  const job = await prisma.discoveryJob.findFirst({ where: { id: body2.data.jobId } });
+  assert.strictEqual(job.providerConfig.serper.enabled, false);
+});
+
+test('gating: premium acessa catálogo completo', async (t) => {
+  const { server, base, prisma } = await startServer();
+  t.after(() => server.close());
+  await prisma.organization.create({ data: { id: 'org-premium', name: 'Premium', plan: 'premium' } });
+
+  const res = await fetch(`${base}/api/discovery/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-test-org': 'org-premium' },
+    body: JSON.stringify({ criteria: { legalNameContains: 'X', state: 'SP' }, providers: ['serper', 'searxng'] }),
+  });
+  const { data } = await res.json();
+  assert.strictEqual(data.providersTotal, 2);
+  const status = await (await fetch(`${base}/api/discovery/jobs/${data.jobId}`, { headers: { 'x-test-org': 'org-premium' } })).json();
+  assert.ok(status.data.providers.some((p) => p.provider === 'serper'));
+});

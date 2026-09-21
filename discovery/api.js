@@ -8,6 +8,7 @@
 
 const contracts = require('./contracts');
 const normalizer = require('./normalizer');
+const { getOrgPlan } = require('../plan');
 const { buildCorporateProfile } = require('./enrichers/corporate');
 const { buildFinancialProfile } = require('./enrichers/financial');
 const { buildLegalProfile } = require('./enrichers/legal');
@@ -21,6 +22,17 @@ const HTTP_CODE_BY_ERROR = {
   PROVIDER_BUDGET_EXHAUSTED: 402,
 };
 
+// Gating por plano (Constituição IV): trial = enriquecimento básico — apenas
+// providers self-hosted/free; premium = catálogo completo.
+function allowedProvidersForPlan(plan, requested = null) {
+  if (plan === 'premium') return requested;
+  const free = Object.entries(contracts.PROVIDER_CATALOG)
+    .filter(([, entry]) => !entry.paid)
+    .map(([name]) => name);
+  if (!requested) return free;
+  return requested.filter((name) => free.includes(name));
+}
+
 function createDiscoveryApi({ app, prisma, engine, requireRequestOrgId, now = () => new Date() }) {
   const persistence = engine.persistence;
 
@@ -29,13 +41,20 @@ function createDiscoveryApi({ app, prisma, engine, requireRequestOrgId, now = ()
     try {
       const orgId = await requireRequestOrgId(req);
       const body = req.body || {};
+      const plan = await getOrgPlan(prisma, orgId);
+      const requested = body.providers || null;
+      const overrides = body.providerConfig || null;
+      // Overrides não podem re-habilitar provider fora do plano do cliente.
+      const safeOverrides = overrides
+        ? Object.fromEntries(Object.entries(overrides).filter(([name]) => allowedProvidersForPlan(plan, [name]).length > 0))
+        : null;
       const job = await engine.createJob({
         orgId,
         trigger: body.trigger || 'api',
         criteria: body.criteria || null,
         seed: body.seed || null,
-        providers: body.providers || null,
-        providerOverrides: body.providerConfig || null,
+        providers: allowedProvidersForPlan(plan, requested),
+        providerOverrides: safeOverrides,
       });
       // Execução in-process no v1 (disparo pós-resposta); o contrato NATS
       // discovery.job.requested.v1 permite mover para worker sem quebrar API.
@@ -173,7 +192,8 @@ function createDiscoveryApi({ app, prisma, engine, requireRequestOrgId, now = ()
       if (Object.keys(seed).length === 0) {
         return res.status(400).json({ success: false, error: { code: 'DISCOVERY_INVALID_INPUT', message: 'prospect sem cnpj/domain' } });
       }
-      const job = await engine.createJob({ orgId, trigger: 'prospect', seed, providers: null });
+      const plan = await getOrgPlan(prisma, orgId);
+      const job = await engine.createJob({ orgId, trigger: 'prospect', seed, providers: allowedProvidersForPlan(plan, null) });
       setImmediate(() => { engine.runJob(job.id, orgId).catch(() => {}); });
       res.status(202).json({ success: true, data: { jobId: job.id, prospectId: prospect.id, status: job.status }, timestamp: now().toISOString() });
     } catch (error) {
