@@ -183,6 +183,13 @@ function canonicalKey(type, value) {
       const id = String(value || '').trim();
       return id ? `case:${id.replace(/\W+/g, '').toLowerCase()}` : null;
     }
+    case 'legal_event':
+    case 'legal_document': {
+      const raw = String(value || '').trim();
+      if (!raw) return null;
+      const prefix = type === 'legal_event' ? 'event' : 'doc';
+      return `${prefix}:${createHash('sha256').update(raw.toLowerCase()).digest('hex').slice(0, 24)}`;
+    }
     case 'funding_round': {
       const v = String(value || '').trim();
       return v ? `funding:${nameKey(v) || v.toLowerCase()}` : null;

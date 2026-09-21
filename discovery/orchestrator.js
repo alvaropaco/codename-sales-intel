@@ -13,6 +13,7 @@ const contracts = require('./contracts');
 const { createDiscoveryPersistence } = require('./persistence');
 const normalizer = require('./normalizer');
 const { candidateConfidence } = require('./confidence');
+const { scoreIcp } = require('./icp');
 const { deriveSignals } = require('./enrichers/signals');
 const metrics = require('../metrics');
 
@@ -185,7 +186,7 @@ function createDiscoveryOrchestrator({
         const result = await withTimeout(Promise.resolve(module.execute(input, { timeoutMs: config.timeoutMs })), config.timeoutMs);
         requests += result.requests || 1;
         estimatedCost += result.estimatedCost || 0;
-        const counts = await persistObservations({ orgId, jobId, runId: run.id, provider: providerName, items: result.items || [] });
+        const counts = await persistObservations({ orgId, jobId, runId: run.id, provider: providerName, items: result.items || [], criteria: (job.query && job.query.criteria) || null });
         await finishAndEmit({
           job, providerName, orgId, jobId, runId: run.id, attempt,
           status: 'completed', items: counts.items, entities: counts.entities,
@@ -245,7 +246,7 @@ function createDiscoveryOrchestrator({
   }
 
   // ── Persistência das observações → entidades/evidências/candidatos (T044) ─
-  async function persistObservations({ orgId, jobId, runId, provider, items }) {
+  async function persistObservations({ orgId, jobId, runId, provider, items, criteria = null }) {
     let entities = 0;
     const evidenceConfidences = [];
     const companyEntities = [];
@@ -273,12 +274,13 @@ function createDiscoveryOrchestrator({
       for (const rel of (obs.related || [])) {
         const relKey = normalizer.canonicalKey(rel.entityType, rel.value);
         if (!relKey || !entity) continue;
+        const metadata = rel.rel && typeof rel.rel === 'object' && !Array.isArray(rel.rel) ? rel.rel : {};
         const target = await persistence.upsertEntity({
           orgId,
           type: rel.entityType,
           canonicalKey: relKey,
           displayName: rel.displayName || null,
-          attributes: (rel.rel && Object.keys(rel.rel).length ? { role: rel.rel.role } : rel.attributes) || {},
+          attributes: { ...metadata, ...(rel.attributes || {}) },
           confidence: rel.confidence != null ? rel.confidence : obs.confidence,
         });
         if (target) {
@@ -288,7 +290,7 @@ function createDiscoveryOrchestrator({
             toEntityId: target.id,
             type: rel.type,
             confidence: rel.confidence != null ? rel.confidence : obs.confidence,
-            metadata: rel.rel || {},
+            metadata,
             observedAt: obs.observedAt || null,
           });
         }
@@ -301,15 +303,23 @@ function createDiscoveryOrchestrator({
     }
 
     // ── Candidatos: toda empresa descoberta vira projeção de venda (T044) ──
+    // Com pontuação ICP (T060): match contra criteria do onboarding.
     let candidates = 0;
     for (const { entity, obs } of companyEntities) {
       const key = companyDedupeKey(entity);
       if (!key) continue;
+      const icpScore = scoreIcp(obs.attributes || {}, criteria);
       const candidate = await persistence.upsertCandidate({
         orgId, jobId,
         companyEntityId: entity.id,
         cnpj: (entity.attributes && entity.attributes.cnpjDigits) || null,
         name: entity.displayName,
+        location: {
+          city: (obs.attributes && obs.attributes.city) || null,
+          state: (obs.attributes && obs.attributes.state) || null,
+          industry: (obs.attributes && obs.attributes.industry) || null,
+          icpScore,
+        },
         confidence: candidateConfidence([obs.confidence], { sources: 1, hasOfficialCnpj: obs.sourceProvider === 'cnpj-mcp' }),
         dedupeKey: key,
         evidenceCount: 1,

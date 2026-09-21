@@ -51,7 +51,7 @@ const DEFAULTS = {
 // `paid` → requer budget/quota; self-hosted/free têm precedência no fallback
 // (T040). `secrets` são REFERÊNCIAS (nomes de env) — nunca valores.
 const PROVIDER_CATALOG = {
-  'cnpj-mcp': { capabilities: ['corporate.identity'], paid: false, kind: 'api', secrets: ['CNPJ_MCP_TOKEN'] },
+  'cnpj-mcp': { capabilities: ['corporate.identity', 'corporate.ownership'], paid: false, kind: 'api', secrets: ['CNPJ_MCP_TOKEN'] },
   searxng: { capabilities: ['web.search'], paid: false, kind: 'api', secrets: [] },
   serper: { capabilities: ['web.search'], paid: true, kind: 'api', secrets: ['SERPER_API_KEY'] },
   brave: { capabilities: ['web.search'], paid: true, kind: 'api', secrets: ['BRAVE_API_KEY'] },

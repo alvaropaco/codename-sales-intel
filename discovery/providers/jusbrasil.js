@@ -40,15 +40,48 @@ async function execute(input = {}, { fetchImpl = fetch, apiKey = process.env.JUS
 /** Processo vendor → observação legal_case vendor-neutral (data-model.md). */
 function caseObservation(lawsuit, providerName) {
   const caseNumber = String(lawsuit.number || lawsuit.lawsuitNumber || '').trim();
-  const related = [];
+  // Partes viram o formato canônico de `related`; eventos/documentos já saem
+  // nele (type + metadata em `rel`).
+  const partyRelated = [];
   for (const party of lawsuit.parties || []) {
     const isPerson = !normalizer.isValidCnpj(party.document || '');
-    related.push({
+    partyRelated.push({
       entityType: isPerson ? 'person' : 'company',
       value: party.document || party.name,
       displayName: party.name,
+      type: 'INVOLVES',
       attributes: { role: party.role || null },
-      rel: 'INVOLVES',
+    });
+  }
+  // Movimentações → legal_event (T059, FR-023): cada evento é evidência
+  // própria, deduplicável por (caso, data, descrição).
+  const movements = lawsuit.movements || lawsuit.movimentacoes || [];
+  const eventRelated = [];
+  for (const movement of movements.slice(0, 20)) {
+    const description = movement.description || movement.descricao || movement.text || null;
+    const date = movement.date || movement.data || null;
+    if (!description) continue;
+    eventRelated.push({
+      entityType: 'legal_event',
+      value: `${caseNumber}|${date || ''}|${description}`,
+      displayName: description,
+      type: 'HAS_EVENT',
+      rel: { date: date || null },
+    });
+  }
+  // Documentos públicos do processo → legal_document (T059, FR-023).
+  const documents = lawsuit.documents || lawsuit.documentos || [];
+  const documentRelated = [];
+  for (const document of documents.slice(0, 10)) {
+    const name = document.name || document.nome || null;
+    const url = document.url || null;
+    if (!name && !url) continue;
+    documentRelated.push({
+      entityType: 'legal_document',
+      value: `${name || ''}|${url || ''}`,
+      displayName: name,
+      type: 'HAS_DOCUMENT',
+      rel: { url: url || null, date: document.date || document.data || null },
     });
   }
   return {
@@ -71,10 +104,7 @@ function caseObservation(lawsuit, providerName) {
     sourceUrl: lawsuit.url || null,
     sourceRef: caseNumber ? `case:${caseNumber}` : null,
     observedAt: lawsuit.lastMovementAt ? new Date(lawsuit.lastMovementAt) : null,
-    related: related.map((r) => ({
-      entityType: r.entityType, value: r.value, type: r.rel,
-      displayName: r.displayName, attributes: r.attributes,
-    })),
+    related: [...partyRelated, ...eventRelated, ...documentRelated],
   };
 }
 
