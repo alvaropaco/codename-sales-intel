@@ -21,7 +21,8 @@ function untilSummary(storage = makeStorage()) {
   service.skip('tamanhoTime');
   service.answer('objetivo', 'Gerar mais leads', 'chip');
   service.answer('crm', '__none__', 'chip');
-  service.answer('mercadoAlvo', ['Pequenas empresas', 'Médias empresas'], 'chip');
+service.answer('mercadoAlvo', ['Pequenas empresas', 'Médias empresas'], 'chip');
+  service.skip('regioesInteresse');
   service.answer('email', 'ana@acme.com', 'prefilled');
   service.skip('siteInstitucional');
   service.skip('materiais');
@@ -76,6 +77,7 @@ describe('complete() — conclusão do onboarding (FR-015/FR-019)', () => {
     s2.skip('objetivo');
     s2.answer('crm', 'Pipedrive', 'chip');
     s2.skip('mercadoAlvo');
+    s2.skip('regioesInteresse');
     s2.answer('email', 'ana@acme.com', 'text');
     s2.skip('siteInstitucional');
     s2.skip('materiais');

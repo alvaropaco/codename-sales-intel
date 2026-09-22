@@ -103,6 +103,7 @@ describe('validação conversacional (FR-010)', () => {
     service.skip('objetivo');
     service.skip('crm');
     service.skip('mercadoAlvo');
+    service.skip('regioesInteresse');
     const before = service.getState();
     const r = service.answer('email', 'sem-arroba', 'text');
     expect(r).toEqual({ ok: false, reason: 'INVALID_EMAIL' });
@@ -175,5 +176,58 @@ describe('ausência de I/O (contrato — invariante 1)', () => {
     service.skip('cargo');
     service.skip('setor');
     expect(storage.calls.filter((c) => c.startsWith('set:'))).toHaveLength(0);
+  });
+});
+
+describe('região de interesse no fluxo (009 — FR-006/007/008)', () => {
+  it('mercadoAlvo → regioesInteresse (9ª): chips multi com exclusiva, responde avança para email', () => {
+    const { service } = makeService();
+    service.answer('nome', 'Ana', 'text');
+    service.answer('empresa', 'Acme', 'text');
+    service.skip('cargo');
+    service.skip('setor');
+    service.skip('tamanhoTime');
+    service.skip('objetivo');
+    service.skip('crm');
+    service.answer('mercadoAlvo', ['Pequenas empresas'], 'chip');
+
+    const state = service.getState();
+    expect(state.stepIndex).toBe(8);
+    const prompt = [...state.messages].reverse().find((m) => m.questionId === 'regioesInteresse');
+    expect(prompt?.kind).toBe('chips');
+    expect(prompt?.multi).toBe(true);
+    expect(prompt?.exclusiveValue).toBe('todo-brasil');
+    expect(prompt?.options?.map((o) => o.value)).toEqual([
+      'todo-brasil',
+      'Norte',
+      'Nordeste',
+      'Centro-Oeste',
+      'Sudeste',
+      'Sul',
+    ]);
+
+    expect(service.answer('regioesInteresse', ['todo-brasil'], 'chip').ok).toBe(true);
+    expect(service.getState().stepIndex).toBe(9);
+    expect(service.getState().answers.regioesInteresse).toMatchObject({ value: ['todo-brasil'] });
+  });
+
+  it('região é pulável e entra no resumo como skipped (13 perguntas até complete)', () => {
+    const { service, storage } = makeService();
+    service.answer('nome', 'Ana', 'text');
+    service.answer('empresa', 'Acme', 'text');
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo', 'regioesInteresse'] as const) {
+      service.skip(q);
+    }
+    service.answer('email', 'ana@acme.com', 'text');
+    service.skip('siteInstitucional');
+    service.skip('materiais');
+    service.answer('catalogo', 'nao', 'chip');
+
+    const state = service.getState();
+    expect(state.stepIndex).toBe(13);
+    expect(state.answers.regioesInteresse).toMatchObject({ value: null, via: 'skipped' });
+    const result = service.complete();
+    expect(result).not.toBeNull();
+    expect(storage.map.get('b2base.avaOnboardingDone')).toBe('1');
   });
 });

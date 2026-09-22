@@ -6,8 +6,10 @@ import type { ChipOption } from '@/types/onboarding';
 
 interface ChipsRowProps {
   options: ChipOption[];
-  /** Seleção múltipla com confirmação (só mercado-alvo — FR-005). */
+  /** Seleção múltipla com confirmação (mercado-alvo — FR-005; regiões — 009). */
   multi?: boolean;
+  /** 009: opção exclusiva — selecioná-la limpa as demais (ex.: "Todo o Brasil"). */
+  exclusiveValue?: string;
   /** Mostra o chip "Outro" (texto livre — FR-006). */
   allowOther?: boolean;
   skippable?: boolean;
@@ -22,6 +24,7 @@ interface ChipsRowProps {
 export function ChipsRow({
   options,
   multi,
+  exclusiveValue,
   allowOther,
   skippable,
   disabled,
@@ -37,7 +40,14 @@ export function ChipsRow({
       onAnswer(value);
       return;
     }
-    setSelected((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
+    setSelected((prev) => {
+      // Opção exclusiva (009 — FR-008): "Todo o Brasil" ⊃ regiões específicas.
+      if (exclusiveValue && value === exclusiveValue) {
+        return prev.includes(value) ? [] : [value];
+      }
+      const next = prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value];
+      return next.includes(exclusiveValue ?? '') ? next.filter((v) => v !== exclusiveValue) : next;
+    });
   };
 
   return (

@@ -22,7 +22,7 @@ describe('pré-preenchimento da conta (FR-008)', () => {
     // avança até email com prefill
     service.answer('nome', 'Ana', 'text');
     service.answer('empresa', 'Acme', 'text');
-    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo', 'regioesInteresse'] as const) {
       service.skip(q);
     }
     const r = service.answer('email', 'ana@acme.com', 'prefilled');
@@ -34,7 +34,7 @@ describe('pré-preenchimento da conta (FR-008)', () => {
     const { service } = createWithPrefill({ companyName: 'Acme', email: 'ana@acme.com' });
     service.answer('nome', 'Ana', 'text');
     service.answer('empresa', 'Acme', 'text');
-    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo', 'regioesInteresse'] as const) {
       service.skip(q);
     }
     const messages = service.getState().messages;
@@ -100,7 +100,7 @@ describe('008 — revise a partir do fim: fluxo sempre concluível (FR-007)', ()
     const { service, storage } = makeService();
     service.answer('nome', 'Ana', 'text');
     service.answer('empresa', 'Acme', 'text');
-    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo', 'regioesInteresse'] as const) {
       service.skip(q);
     }
     service.answer('email', 'ana@acme.com', 'text');
@@ -112,7 +112,7 @@ describe('008 — revise a partir do fim: fluxo sempre concluível (FR-007)', ()
 
   it('revise no estado de resumo reabre a pergunta e o fluxo reconclui até complete()', () => {
     const { service, storage } = serviceAtEnd();
-    expect(service.getState().stepIndex).toBe(12);
+    expect(service.getState().stepIndex).toBe(13);
 
     // "Corrigir resposta anterior" a partir do fim: reabre a empresa.
     expect(service.revise('empresa').ok).toBe(true);
@@ -120,7 +120,7 @@ describe('008 — revise a partir do fim: fluxo sempre concluível (FR-007)', ()
 
     // Refaz empresa e as perguntas seguintes até o resumo.
     service.answer('empresa', 'Nova Acme', 'text');
-    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+    for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo', 'regioesInteresse'] as const) {
       service.skip(q);
     }
     service.answer('email', 'ana@acme.com', 'text');
@@ -129,7 +129,7 @@ describe('008 — revise a partir do fim: fluxo sempre concluível (FR-007)', ()
     service.answer('catalogo', 'nao', 'chip');
 
     const state = service.getState();
-    expect(state.stepIndex).toBe(12);
+    expect(state.stepIndex).toBe(13);
     const result = service.complete();
     expect(result).not.toBeNull();
     expect(result?.companyName).toBe('Nova Acme');
@@ -143,14 +143,14 @@ describe('008 — revise a partir do fim: fluxo sempre concluível (FR-007)', ()
       expect(service.getState().stepIndex).toBe(0);
       service.answer('nome', `Ana ${round}`, 'text');
       service.answer('empresa', 'Acme', 'text');
-      for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo'] as const) {
+      for (const q of ['cargo', 'setor', 'tamanhoTime', 'objetivo', 'crm', 'mercadoAlvo', 'regioesInteresse'] as const) {
         service.skip(q);
       }
       service.answer('email', 'ana@acme.com', 'text');
       service.skip('siteInstitucional');
       service.skip('materiais');
       service.answer('catalogo', 'nao', 'chip');
-      expect(service.getState().stepIndex).toBe(12);
+      expect(service.getState().stepIndex).toBe(13);
     }
     expect(service.complete()?.userName).toBe('Ana 2');
   });

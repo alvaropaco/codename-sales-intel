@@ -31,6 +31,8 @@ export interface AvaQuestion {
   noOption?: ChipOption;
   /** Mensagem pedindo a URL depois do "sim" (catálogo). */
   urlFollowUpPrompt?: (ctx: PromptContext) => string;
+  /** 009: em multi-chips, selecionar esta opção limpa as demais (exclusiva). */
+  exclusiveValue?: string;
   placeholder?: string;
 }
 
@@ -306,8 +308,26 @@ export const AVA_QUESTIONS: AvaQuestion[] = [
     ],
   },
   {
-    id: 'email',
+    id: 'regioesInteresse',
     order: 9,
+    prompt: (ctx) =>
+      `E onde a ${ctx.companyName || 'empresa'} quer prospectar? O Brasil todo ou regiões específicas? Pode escolher mais de uma.`,
+    kind: 'multi-chips',
+    required: false,
+    allowOther: true,
+    exclusiveValue: 'todo-brasil',
+    options: [
+      { value: 'todo-brasil', label: 'Todo o Brasil' },
+      { value: 'Norte', label: 'Norte' },
+      { value: 'Nordeste', label: 'Nordeste' },
+      { value: 'Centro-Oeste', label: 'Centro-Oeste' },
+      { value: 'Sudeste', label: 'Sudeste' },
+      { value: 'Sul', label: 'Sul' },
+    ],
+  },
+  {
+    id: 'email',
+    order: 10,
     prompt: (ctx) =>
       `Qual e-mail você usa no dia a dia${ctx.email ? ` (confirmando: ${ctx.email}?)` : '?'} É por ele que a gente conecta tudo por aqui.`,
     kind: 'email',
@@ -316,7 +336,7 @@ export const AVA_QUESTIONS: AvaQuestion[] = [
   },
   {
     id: 'siteInstitucional',
-    order: 10,
+    order: 11,
     prompt: (ctx) =>
       `Agora sobre a ${ctx.companyName || 'empresa'}: qual é o site institucional de vocês? Eu dou uma lida e aprendo sobre o negócio. (se não tiver, pode pular)`,
     kind: 'url',
@@ -325,7 +345,7 @@ export const AVA_QUESTIONS: AvaQuestion[] = [
   },
   {
     id: 'materiais',
-    order: 11,
+    order: 12,
     prompt: () =>
       'Se você tiver materiais de apresentação — pitch deck, apresentação, PDFs, documentos — anexa aqui. Eu leio tudo e aprendo o que vocês vendem. 📎',
     kind: 'attachments',
@@ -333,7 +353,7 @@ export const AVA_QUESTIONS: AvaQuestion[] = [
   },
   {
     id: 'catalogo',
-    order: 12,
+    order: 13,
     prompt: () => 'E por último: vocês têm um catálogo de produtos online?',
     kind: 'yesno',
     required: false,
@@ -353,6 +373,7 @@ export const SUMMARY_LABELS: Record<QuestionId, string> = {
   objetivo: 'Objetivo principal',
   crm: 'CRM em uso',
   mercadoAlvo: 'Mercado-alvo',
+  regioesInteresse: 'Regiões de interesse',
   email: 'E-mail',
   siteInstitucional: 'Site institucional',
   materiais: 'Materiais enviados',

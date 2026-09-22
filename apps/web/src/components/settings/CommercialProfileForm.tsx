@@ -29,6 +29,8 @@ const EMPTY_PROFILE: CommercialProfile = {
   websiteUrl: '',
   ctaGoal: '',
   toneNotes: '',
+  crmName: null,
+  onboardingAnswers: null,
 };
 
 const statusOptions = [

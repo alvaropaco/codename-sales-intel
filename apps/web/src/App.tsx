@@ -20,7 +20,7 @@ const LeadDetailScreen = lazy(() =>
 import { ActiveTab, Prospect, PipelineAnalytics, OperationalAnalytics, CommercialProfile } from '@/types';
 import type { OnboardingResult } from '@/types/onboarding';
 import { fetchProspects, fetchPipelineAnalytics, fetchOperationalAnalytics, deleteProspect, fetchCommercialProfile, saveCommercialProfile } from '@/services/api';
-import { DONE_STORAGE_KEY } from '@/services/onboarding';
+import { buildCommercialProfilePayload, DONE_STORAGE_KEY } from '@/services/onboarding';
 import { createSession, getSession, logoutSession, type SessionUser } from '@/services/auth';
 import { getFirebaseRedirectResult, signOutFirebase } from '@/services/firebase';
 import { getAuthErrorMessage } from '@/services/authErrors';
@@ -28,6 +28,32 @@ import { LoginView } from '@/components/auth/LoginView';
 import { LandingView } from '@/components/auth/LandingView';
 import { crmBadgeState } from '@/lib/crmBadge';
 import { useSeo } from '@/hooks/useSeo';
+
+// 009: fallback do sync de perfil quando o fetch inicial falhou — o payload do
+// onboarding é autocontido e o merge simplesmente não tem campos a preservar.
+const EMPTY_COMMERCIAL_PROFILE: CommercialProfile = {
+  onboardingCompleted: false,
+  onboardingStep: 0,
+  companyName: '',
+  salesTeamSize: '',
+  targetSegments: [],
+  targetCnaes: [],
+  targetLocations: [],
+  companyStatuses: ['active'],
+  targetSizes: [],
+  ageRanges: [],
+  averageTicket: null,
+  salesCycle: '',
+  valueProposition: '',
+  productDescription: '',
+  businessModel: '',
+  differentiators: [],
+  websiteUrl: '',
+  ctaGoal: '',
+  toneNotes: '',
+  crmName: null,
+  onboardingAnswers: null,
+};
 
 // Map a URL path to a tab id so direct navigation (e.g. the Gmail OAuth
 // redirect back to /settings?gmail_connected=...) lands on the right view
@@ -345,6 +371,14 @@ export function App() {
           companyName: commercialProfile?.companyName || undefined,
           email: session.email?.includes('@b2base.local') ? undefined : session.email,
         }}
+        // 009 (FR-001/FR-002): a conta nasce configurada — as respostas são
+        // salvas no perfil comercial ANTES da despedida; falha → retry (FR-005).
+        onPersist={async (result) => {
+          const saved = await saveCommercialProfile(
+            buildCommercialProfilePayload(result, commercialProfile ?? EMPTY_COMMERCIAL_PROFILE)
+          );
+          setCommercialProfile(saved);
+        }}
         onComplete={setOnboardingResult}
       />
     );
@@ -364,11 +398,16 @@ export function App() {
       userName={session.name || session.phone || session.email}
       userEmail={session.phone || session.email}
       onLogout={handleLogout}
-      // Pós-onboarding (feature 004): workspace e CRM refletem a conversa com a
-      // Ava imediatamente, sem recarregar (FR-016/FR-017/SC-006).
+      // Pós-onboarding (feature 004 + 009): workspace e CRM refletem a conta —
+      // resultado efêmero imediato com fallback no perfil SALVO (FR-010 009),
+      // para que recarregar não desligue o badge nem o workspace.
       companyName={onboardingResult?.companyName || commercialProfile?.companyName || undefined}
       workspaceEmail={onboardingResult?.userEmail || (session.email.includes('@b2base.local') ? undefined : session.email)}
-      crmBadge={crmBadgeState(onboardingResult?.crm)}
+      crmBadge={crmBadgeState(
+        commercialProfile?.crmName
+          ? { name: commercialProfile.crmName, connected: true }
+          : onboardingResult?.crm
+      )}
     >
       {/* As views PERMANECEM MONTADAS (ocultas via CSS) enquanto a tela de
           detalhe está ativa — voltar preserva filtros e scroll das listas

@@ -92,7 +92,8 @@ describe('extração durante a conversa (FR-024)', () => {
     service.skip('tamanhoTime');
     service.skip('objetivo');
     service.skip('crm');
-    service.skip('mercadoAlvo');
+service.skip('mercadoAlvo');
+service.skip('regioesInteresse');
     service.answer('email', 'ana@acme.com', 'text');
     service.addUrlAsset('site', 'https://acme.com');
     service.addFiles([makeFile('pitch.pdf', 1000, PDF_MIME)]);

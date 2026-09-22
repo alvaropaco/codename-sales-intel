@@ -323,6 +323,9 @@ export interface CommercialProfile {
   websiteUrl: string;
   ctaGoal: string;
   toneNotes: string;
+  // Onboarding conversacional (009)
+  crmName: string | null;
+  onboardingAnswers: unknown | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }

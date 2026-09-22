@@ -39,7 +39,8 @@ function serviceThroughEmail(extract: () => Promise<ExtractionResponse>) {
   service.skip('tamanhoTime');
   service.skip('objetivo');
   service.skip('crm');
-  service.skip('mercadoAlvo');
+service.skip('mercadoAlvo');
+service.skip('regioesInteresse');
   service.answer('email', 'ana@lawyeragent.com', 'text');
   return service;
 }
@@ -61,7 +62,7 @@ describe('US1 — chegada tardia da extração não esconde a interação penden
 
     // A conversa segue (perguntas 11 e 12) enquanto a extração está em voo.
     expect(service.skip('materiais').ok).toBe(true);
-    expect(service.getState().stepIndex).toBe(11); // catálogo pendente
+    expect(service.getState().stepIndex).toBe(12); // catálogo pendente
 
     // A extração resolve TARDE — depois da pergunta 12 já ter sido feita.
     resolveExtract({ businessContext: CONTEXT, warnings: [] });
@@ -78,7 +79,7 @@ describe('US1 — chegada tardia da extração não esconde a interação penden
     // A conversa termina: catálogo respondido → resumo → complete().
     expect(service.answer('catalogo', 'nao', 'chip').ok).toBe(true);
     const state = service.getState();
-    expect(state.stepIndex).toBe(12);
+    expect(state.stepIndex).toBe(13);
     const result = service.complete();
     expect(result).not.toBeNull();
     expect(result?.companyName).toBe('LawyerAgent');
@@ -112,7 +113,7 @@ describe('US1 — chegada tardia da extração não esconde a interação penden
 
     // O caminho "Pronto, seguir 📎" continua disponível e a conversa avança.
     expect(service.finishAttachments().ok).toBe(true);
-    expect(service.getState().stepIndex).toBe(11);
+    expect(service.getState().stepIndex).toBe(12);
   });
 });
 
@@ -135,7 +136,8 @@ describe('US2 — teto de espera, descarte por época e settle (FR-004/FR-005)',
     service.skip('tamanhoTime');
     service.skip('objetivo');
     service.skip('crm');
-    service.skip('mercadoAlvo');
+service.skip('mercadoAlvo');
+service.skip('regioesInteresse');
     service.answer('email', 'ana@acme.com', 'text');
     service.answer('siteInstitucional', 'https://acme.com', 'text');
     service.addUrlAsset('site', 'https://acme.com');
@@ -156,7 +158,7 @@ describe('US2 — teto de espera, descarte por época e settle (FR-004/FR-005)',
     // A conversa segue normalmente até o resumo e conclui sem contexto.
     expect(service.skip('materiais').ok).toBe(true);
     expect(service.answer('catalogo', 'nao', 'chip').ok).toBe(true);
-    expect(service.getState().stepIndex).toBe(12);
+    expect(service.getState().stepIndex).toBe(13);
     const result = service.complete();
     expect(result).not.toBeNull();
     expect(result?.businessContext).toBeNull();

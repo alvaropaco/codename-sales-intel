@@ -61,6 +61,9 @@ model CommercialSettings {
   websiteUrl          String?  // site público (CTA default dos agentes)
   ctaGoal             String?  // o que a IA deve conduzir o lead a fazer
   toneNotes           String?  // tom de voz desejado (opcional)
+  // ── Onboarding conversacional (009): conta nasce configurada ───────────
+  crmName             String?  // CRM declarado na conversa (null = não usa/não informado)
+  onboardingAnswers   Json?    // registro completo das respostas da conversa
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

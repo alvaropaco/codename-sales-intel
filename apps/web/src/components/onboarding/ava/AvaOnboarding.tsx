@@ -20,11 +20,13 @@ import type { PromptContext } from '@/lib/avaScript';
 interface AvaOnboardingProps {
   /** Dados já conhecidos da conta (empresa, e-mail) para o pre-fill (FR-008). */
   prefill?: PromptContext;
+  /** 009: salva as respostas na conta (perfil comercial). Erro → retry (FR-005). */
+  onPersist?: (result: OnboardingResult) => Promise<void> | void;
   /** Confirmação do resumo (US3): App troca para o dashboard automaticamente. */
   onComplete?: (result: OnboardingResult) => void;
 }
 
-export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
+export function AvaOnboarding({ prefill, onPersist, onComplete }: AvaOnboardingProps) {
   const ctrl = useAvaOnboarding({ prefill, onComplete });
   const endRef = useRef<HTMLDivElement>(null);
   // Modo "Outro": o usuário trocou os chips pelo texto livre (FR-006).
@@ -32,15 +34,30 @@ export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
   // Despedida pós-confirmação: a Ava se despede e o app leva ao dashboard
   // automaticamente, sem clique (FR-015/SC-004 — teto de 5 s).
   const [farewell, setFarewell] = useState(false);
+  // 009 (FR-005): salvamento na conta — "Salvando…" e retry conversacional.
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
 
   // Acompanha o fim da conversa a cada mensagem revelada / "···".
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [ctrl.visibleMessages.length, ctrl.typing, farewell, ctrl.isSummaryPhase]);
+  }, [ctrl.visibleMessages.length, ctrl.typing, farewell, ctrl.isSummaryPhase, saving, saveError]);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
+    if (saving) return;
     const result = ctrl.confirmSummary();
     if (!result) return;
+    setSaveError(false);
+    setSaving(true);
+    try {
+      // Salva na conta ANTES da despedida — nada é perdido em silêncio (FR-005).
+      await onPersist?.(result);
+    } catch {
+      setSaving(false);
+      setSaveError(true);
+      return;
+    }
+    setSaving(false);
     setFarewell(true);
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
     setTimeout(() => onComplete?.(result), 1800);
@@ -116,13 +133,35 @@ export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
             answers={ctrl.state.answers}
             assets={ctrl.state.assets}
             businessContext={ctrl.state.businessContext}
-            confirmDisabled={ctrl.extracting}
+            confirmDisabled={ctrl.extracting || saving}
+            confirmLabel={
+              saving
+                ? 'Salvando…'
+                : ctrl.extracting
+                  ? 'Ava terminando de ler seus materiais…'
+                  : saveError
+                    ? 'Tentar de novo ✨'
+                    : undefined
+            }
             onRevise={(questionId) => ctrl.revise(questionId)}
             onConfirm={handleConfirm}
           />
         )}
 
         {farewell && <ChatBubble message={{ id: 'farewell', from: 'ava', kind: 'text', text: FAREWELL_MESSAGE }} />}
+
+        {saveError && (
+          <ChatBubble
+            message={{
+              id: 'save-error',
+              from: 'ava',
+              kind: 'text',
+              text:
+                'Não consegui salvar suas respostas agora — sua conexão parece instável. ' +
+                'Elas estão aqui guardadas comigo; tenta de novo? 🙂',
+            }}
+          />
+        )}
 
         <div ref={endRef} />
       </div>
@@ -140,6 +179,7 @@ export function AvaOnboarding({ prefill, onComplete }: AvaOnboardingProps) {
             <ChipsRow
               options={pending!.options ?? []}
               multi={pending!.multi}
+              exclusiveValue={pending!.exclusiveValue}
               allowOther={currentQuestion?.allowOther}
               skippable={skippable}
               onAnswer={(value) => ctrl.submitAnswer(value, 'chip')}

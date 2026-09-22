@@ -9,6 +9,7 @@ import {
   isSkippable,
   getQuestion,
   previousAnsweredQuestion,
+  SUMMARY_LABELS,
   insertBeforePendingInteraction,
   pendingInteractionMessage,
   type PromptContext,
@@ -24,6 +25,7 @@ const EXPECTED_ORDER: QuestionId[] = [
   'objetivo',
   'crm',
   'mercadoAlvo',
+  'regioesInteresse',
   'email',
   'siteInstitucional',
   'materiais',
@@ -33,15 +35,17 @@ const EXPECTED_ORDER: QuestionId[] = [
 const CTX: PromptContext = { firstName: 'Ana', companyName: 'Acme', email: 'ana@acme.com' };
 
 describe('roteiro da Ava (FR-003)', () => {
-  it('tem exatamente 12 perguntas na ordem definida', () => {
-    expect(AVA_QUESTIONS).toHaveLength(12);
+  it('tem exatamente 13 perguntas na ordem definida (009: + região)', () => {
+    expect(AVA_QUESTIONS).toHaveLength(13);
     expect(AVA_QUESTIONS.map((q) => q.id)).toEqual(EXPECTED_ORDER);
   });
 
-  it('as 3 últimas perguntas são os ativos de negócio (10–12)', () => {
-    expect(AVA_QUESTIONS[9].id).toBe('siteInstitucional');
-    expect(AVA_QUESTIONS[10].id).toBe('materiais');
-    expect(AVA_QUESTIONS[11].id).toBe('catalogo');
+  it('as 3 últimas perguntas são os ativos de negócio (11–13) e email é a 10ª', () => {
+    expect(AVA_QUESTIONS[8].id).toBe('regioesInteresse');
+    expect(AVA_QUESTIONS[9].id).toBe('email');
+    expect(AVA_QUESTIONS[10].id).toBe('siteInstitucional');
+    expect(AVA_QUESTIONS[11].id).toBe('materiais');
+    expect(AVA_QUESTIONS[12].id).toBe('catalogo');
   });
 
   it('todas as perguntas têm prompt em texto', () => {
@@ -57,9 +61,9 @@ describe('roteiro da Ava (FR-003)', () => {
 });
 
 describe('tipos de pergunta e chips (FR-004/FR-005)', () => {
-  it('apenas mercadoAlvo é multi-select', () => {
+  it('mercadoAlvo e regioesInteresse são multi-select (009)', () => {
     const multi = AVA_QUESTIONS.filter((q) => q.kind === 'multi-chips');
-    expect(multi.map((q) => q.id)).toEqual(['mercadoAlvo']);
+    expect(multi.map((q) => q.id)).toEqual(['mercadoAlvo', 'regioesInteresse']);
   });
 
   it('perguntas de escolha têm chips e opção "Outro" (FR-004/FR-006)', () => {
@@ -106,9 +110,9 @@ describe('correção retroativa durante a conversa (FR-012)', () => {
     expect(previousAnsweredQuestion(1, {})).toBeNull();
   });
 
-  it('na fase de resumo (stepIndex 12) aponta para a última respondida', () => {
+  it('na fase de resumo (stepIndex 13) aponta para a última respondida', () => {
     const answers = { nome: answer('nome'), empresa: answer('empresa'), catalogo: answer('catalogo') };
-    expect(previousAnsweredQuestion(12, answers)).toBe('catalogo');
+    expect(previousAnsweredQuestion(13, answers)).toBe('catalogo');
   });
 
   it('ignora respostas de perguntas à frente do passo corrente', () => {
@@ -224,5 +228,30 @@ describe('pendingInteractionMessage (008 — gate da UI)', () => {
   it('retorna null quando a pergunta não está no transcript', () => {
     expect(pendingInteractionMessage([question('nome')], 'catalogo')).toBeNull();
     expect(pendingInteractionMessage([], 'nome')).toBeNull();
+  });
+});
+
+describe('pergunta de região de interesse (009 — FR-006/007/008)', () => {
+  it('é a 9ª pergunta: multi-chips, pulável, com Outro e exclusiva todo-brasil', () => {
+    const q = getQuestion('regioesInteresse');
+    expect(q.order).toBe(9);
+    expect(q.kind).toBe('multi-chips');
+    expect(q.required).toBe(false);
+    expect(q.allowOther).toBe(true);
+    expect(q.exclusiveValue).toBe('todo-brasil');
+    const values = (q.options ?? []).map((o) => o.value);
+    expect(values).toEqual(['todo-brasil', 'Norte', 'Nordeste', 'Centro-Oeste', 'Sudeste', 'Sul']);
+  });
+
+  it('summary labels incluem a região e cobrem as 13 perguntas', () => {
+    expect(SUMMARY_LABELS.regioesInteresse).toBe('Regiões de interesse');
+    expect(Object.keys(SUMMARY_LABELS)).toHaveLength(13);
+  });
+
+  it('valida seleção múltipla de regiões (não vazia)', () => {
+    const q = getQuestion('regioesInteresse');
+    expect(validateAnswer(q, [])).toEqual({ ok: false, reason: 'EMPTY_SELECTION' });
+    expect(validateAnswer(q, ['Sudeste', 'Sul'])).toEqual({ ok: true });
+    expect(validateAnswer(q, ['todo-brasil'])).toEqual({ ok: true });
   });
 });

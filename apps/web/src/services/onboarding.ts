@@ -21,6 +21,7 @@ import {
   type AvaQuestion,
   type PromptContext,
 } from '@/lib/avaScript';
+import type { CommercialProfile } from '@/types';
 import type {
   AddFilesResult,
   Answer,
@@ -140,7 +141,13 @@ function questionMessage(question: AvaQuestion, ctx: PromptContext): ChatMessage
   switch (question.kind) {
     case 'chips':
     case 'multi-chips':
-      return { ...base, kind: 'chips', options: question.options, multi: question.kind === 'multi-chips' };
+      return {
+        ...base,
+        kind: 'chips',
+        options: question.options,
+        multi: question.kind === 'multi-chips',
+        exclusiveValue: question.exclusiveValue,
+      };
     case 'yesno':
       return { ...base, kind: 'chips', options: [question.yesOption!, question.noOption!] };
     case 'attachments':
@@ -605,3 +612,80 @@ export function createOnboardingService(deps: OnboardingServiceDeps) {
 }
 
 export type OnboardingService = ReturnType<typeof createOnboardingService>;
+
+// ============================================================================
+// Sync de perfil (009): respostas da conversa → perfil comercial da conta.
+// Puro e determinístico (invariante I3); o merge preserva os campos que a
+// conversa não cobre (invariante I2 — FR-011 da spec 009).
+// ============================================================================
+
+const SIZE_BY_MERCADO: Record<string, string> = {
+  'Pequenas empresas': 'small',
+  'Médias empresas': 'medium',
+  'Grandes empresas': 'large',
+};
+
+function strAnswer(value: string | string[] | null | undefined): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function strArrayAnswer(value: string | string[] | null | undefined): string[] | null {
+  return Array.isArray(value) ? [...value] : null;
+}
+
+export function buildCommercialProfilePayload(
+  result: OnboardingResult,
+  current: CommercialProfile
+): CommercialProfile {
+  const answers = result.answers;
+
+  // Regiões: "todo-brasil" é exclusiva (FR-008); sem resposta, herda o perfil.
+  const regions = strArrayAnswer(answers.regioesInteresse?.value) ?? [];
+  const targetLocations =
+    regions.length === 0
+      ? current.targetLocations
+      : regions.includes('todo-brasil')
+        ? ['Todo o Brasil']
+        : regions;
+
+  // Portes: só empresas viram porte (B2C/órgãos ficam no registro de respostas).
+  const mercado = Array.isArray(result.mercadoAlvo) ? result.mercadoAlvo : [];
+  const sizes = mercado
+    .map((m) => SIZE_BY_MERCADO[m])
+    .filter((v): v is string => Boolean(v));
+  const targetSizes = sizes.length > 0 ? sizes : current.targetSizes;
+
+  // Contexto de negócio extraído — se não houve extração, herda o perfil.
+  const context = result.businessContext;
+  const productDescription =
+    context && context.products.length > 0
+      ? context.products
+          .map((p) => `${p.name}${p.description ? ` — ${p.description}` : ''}`)
+          .join('; ')
+      : current.productDescription;
+
+  return {
+    ...current,
+    companyName: result.companyName || current.companyName,
+    salesTeamSize: strAnswer(answers.tamanhoTime?.value) ?? current.salesTeamSize,
+    targetSegments: strArrayAnswer(answers.setor?.value) ?? (strAnswer(answers.setor?.value) ? [strAnswer(answers.setor?.value)!] : current.targetSegments),
+    targetSizes,
+    targetLocations,
+    websiteUrl: strAnswer(answers.siteInstitucional?.value) ?? current.websiteUrl,
+    valueProposition: context?.valueProposition || current.valueProposition,
+    businessModel: context?.businessModel || current.businessModel,
+    differentiators: context ? [...context.differentiators] : current.differentiators,
+    productDescription,
+    crmName: result.crm?.name ?? null,
+    onboardingCompleted: true,
+    onboardingAnswers: {
+      completedAt: new Date().toISOString(),
+      answers: Object.fromEntries(
+        Object.entries(answers).map(([id, a]) => [
+          id,
+          { value: a.value, via: a.via, answeredAt: a.answeredAt },
+        ])
+      ),
+    },
+  };
+}

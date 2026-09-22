@@ -17,8 +17,10 @@ interface AvaSummaryProps {
   answers: Partial<Record<QuestionId, Answer>>;
   assets: BusinessAsset[];
   businessContext: BusinessContext | null;
-  /** 008 (FR-005): desabilita a confirmação enquanto a extração está em voo. */
+  /** 009 (FR-005): desabilita a confirmação enquanto a extração está em voo. */
   confirmDisabled?: boolean;
+  /** 009 (FR-005): rótulo do botão de confirmação ("Salvando…"/"Tentar de novo"). */
+  confirmLabel?: string;
   onRevise: (questionId: QuestionId) => void;
   onConfirm: () => void;
 }
@@ -51,6 +53,7 @@ export function AvaSummary({
   assets,
   businessContext,
   confirmDisabled = false,
+  confirmLabel,
   onRevise,
   onConfirm,
 }: AvaSummaryProps) {
@@ -123,7 +126,7 @@ export function AvaSummary({
             : 'bg-indigo-500 shadow-indigo-500/25 hover:bg-indigo-400'
         )}
       >
-        {confirmDisabled ? 'Ava terminando de ler seus materiais…' : 'Tudo certo — concluir ✨'}
+        {confirmLabel ?? 'Tudo certo — concluir ✨'}
       </button>
     </div>
   );

@@ -877,6 +877,8 @@ function emptyCommercialProfile() {
     websiteUrl: '',
     ctaGoal: '',
     toneNotes: '',
+    crmName: null,
+    onboardingAnswers: null,
     createdAt: null,
     updatedAt: null,
   };
@@ -907,6 +909,8 @@ function formatCommercialProfile(settings, organization) {
     websiteUrl: settings.websiteUrl || '',
     ctaGoal: settings.ctaGoal || '',
     toneNotes: settings.toneNotes || '',
+    crmName: settings.crmName || null,
+    onboardingAnswers: settings.onboardingAnswers || null,
     createdAt: settings.createdAt,
     updatedAt: settings.updatedAt,
   };
@@ -935,6 +939,9 @@ function normalizeCommercialProfilePayload(body = {}) {
     websiteUrl: String(body.websiteUrl || '').trim() || null,
     ctaGoal: String(body.ctaGoal || '').trim() || null,
     toneNotes: String(body.toneNotes || '').trim() || null,
+    // Onboarding conversacional (009)
+    crmName: String(body.crmName || '').trim() || null,
+    onboardingAnswers: body.onboardingAnswers && typeof body.onboardingAnswers === 'object' ? body.onboardingAnswers : null,
   };
 }
 

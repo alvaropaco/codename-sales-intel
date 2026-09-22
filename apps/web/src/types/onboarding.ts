@@ -3,7 +3,7 @@
  * Fonte da verdade: specs/004-ai-onboarding/data-model.md.
  */
 
-/** Os 12 passos da conversa, na ordem do FR-003. */
+/** Os 13 passos da conversa, na ordem do FR-003 (009: + região de interesse). */
 export type QuestionId =
   | 'nome'
   | 'empresa'
@@ -13,6 +13,7 @@ export type QuestionId =
   | 'objetivo'
   | 'crm'
   | 'mercadoAlvo'
+  | 'regioesInteresse'
   | 'email'
   | 'siteInstitucional'
   | 'materiais'
@@ -56,6 +57,8 @@ export interface ChatMessage {
   multi?: boolean;
   /** Aceita anexos (pergunta de materiais). */
   allowAttachments?: boolean;
+  /** 009: opção exclusiva de multi seleção (espelha AvaQuestion.exclusiveValue). */
+  exclusiveValue?: string;
   /** Duração do "···" antes de revelar a mensagem (ms) — D8. */
   typingForMs?: number | null;
 }
