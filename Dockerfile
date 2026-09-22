@@ -101,6 +101,10 @@ COPY package.json ./
 #   node workers/identity.js | node workers/search.js | node workers/company-deep.js
 COPY workers ./workers
 COPY scripts ./scripts
+# Motor Discovery (specs/006) — módulo em DIRETÓRIO: `COPY *.js ./` não copia
+# pastas. Sem isto o boot crasha com MODULE_NOT_FOUND ('./discovery') e o pod
+# entra em CrashLoopBackOff, travando o rollout no pod antigo (deploy congelado).
+COPY discovery ./discovery
 
 # Copy built SPA + fallback dashboard
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
