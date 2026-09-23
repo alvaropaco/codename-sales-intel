@@ -105,6 +105,9 @@ COPY scripts ./scripts
 # pastas. Sem isto o boot crasha com MODULE_NOT_FOUND ('./discovery') e o pod
 # entra em CrashLoopBackOff, travando o rollout no pod antigo (deploy congelado).
 COPY discovery ./discovery
+# Campaign Studio (specs/010) — módulo em DIRETÓRIO: mesmo motivo do discovery,
+# `COPY *.js ./` não copia pastas (MODULE_NOT_FOUND → CrashLoopBackOff).
+COPY studio ./studio
 
 # Copy built SPA + fallback dashboard
 COPY --from=builder /app/apps/web/dist ./apps/web/dist

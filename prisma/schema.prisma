@@ -356,6 +356,15 @@ model OutreachCampaign {
   whatsappAccountId      String?                      // conta WAHA do disparo automático
   whatsappTemplate       String?                      // mensagem WhatsApp (mesmos placeholders)
   autoWhatsAppCampaignId String?                      // WhatsAppCampaign criada p/ automação (reusada)
+  // ── Campaign Studio (specs/010) — colunas aditivas ──────────────────────
+  // Link reverso da execução de e-mail → campanha Studio (studio/campaign-routes).
+  studioCampaignId String? @unique
+  // Guard-rails da automação opt-in (clarify 010): aprovação do 1º lote,
+  // pausa por anomalia — preenchido quando a suíte é gerida pelo Studio.
+  guardrails Json @default("{}")
+  // Follow-ups simples configuráveis (FR-079 010): [{stepIndex, delayDays,
+  // condition, maxTouch}]. Vazio = sequência legada [3,5,7].
+  sequence Json @default("[]")
   // ── Governança de template (007) ─────────────────────────────────────────
   needsReview  Boolean  @default(false) // retida pelo saneamento (template com texto interno)
   reviewReason String?                  // motivo da retenção (ex.: synthetic_template_leak)
@@ -524,6 +533,9 @@ model WhatsAppCampaign {
   needsReview  Boolean  @default(false) // retida pelo saneamento (template com texto interno)
   reviewReason String?                  // motivo da retenção (ex.: synthetic_template_leak)
   approvedAt   DateTime?                // aprovação da mensagem base pelo tenant (fluxo IA)
+  // ── Campaign Studio (specs/010) — colunas aditivas ──────────────────────
+  studioCampaignId String? @unique // link reverso da execução WhatsApp → campanha Studio
+  guardrails Json @default("{}")   // guard-rails da automação opt-in (clarify 010)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -1043,4 +1055,346 @@ model DiscoverySignal {
 
   @@unique([orgId, companyEntityId, type])
   @@index([orgId, type, observedAt])
+}
+
+// ============================================================================
+// CAMPAIGN STUDIO (specs/010) — camada de produto sobre os motores de canal.
+// `StudioCampaign` orquestra; envio/tracking/reply permanecem nos motores
+// Outreach*/WhatsApp* via studio/channel-bridge.js (research D1).
+// ============================================================================
+
+// A unidade central do Studio: conteúdo + audiência congelada + agenda +
+// journey + experimentos. Estados e transições em studio/campaign-service.js.
+model StudioCampaign {
+  id          String   @id @default(cuid())
+  orgId       String                            // organization.id
+  name        String
+  description String?
+  // Proposta comercial da campanha (pilar 2 dos prompts de IA).
+  objective   String?
+  offer       String?
+  funnelStage String   @default("middle")       // top | middle | bottom
+  status      String   @default("draft")        // draft, in_review, approved, scheduled, running, paused, completed, cancelled, retained
+  statusReason String?                          // motivo de retained/paused (sanimento 007, anomalia)
+  origin      String   @default("manual")       // manual, ai_prompt, material, url, company_data, duplicate, template, agent
+  sourceCampaignId String?                       // quando duplicate/variação: campanha original (nunca alterada)
+  channels    Json     @default("[]")           // ["email","whatsapp","linkedin_text"]
+  schedule    Json     @default("{}")           // {mode,startAt,windows,hourlyLimit,dailyLimit,timezone,useLeadTimezone}
+  goalMetric  String?                           // métrica-objetivo do funil (analytics/ROI)
+  convertedValue Int?                            // receita declarada por conversão (centavos)
+  utmTemplate Json     @default("{}")           // {utmSource,utmMedium,utmCampaign}
+  fallbackPolicy Json @default("{}")            // fallbacks por variável, política de fadiga/conflito
+  approval    Json     @default("{}")           // {complianceLevel?, reviewNotes?} — parecer vigente
+  approvedById String?                           // user.id — aprovação humana (FR-003 010)
+  approvedAt  DateTime?
+  emailExecutionId    String?                    // → OutreachCampaign (channel-bridge)
+  whatsappExecutionId String?                    // → WhatsAppCampaign
+  journeyEnabled Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  audienceSnapshots   StudioAudienceSnapshot[]
+  contents            StudioContent[]
+
+  @@index([orgId])
+  @@index([status])
+}
+
+// Segmento salvo e reutilizável: critérios estruturados sobre catálogo
+// fechado de campos do lead, resolvidos por studio/segment-service.js.
+model StudioSegment {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  description String?
+  criteria    Json                              // {version, groups:[{op:"AND"|"OR", conditions:[{field,op,value}]}]}
+  naturalLanguageInput String?                  // pedido original quando criado por NL (FR-014 010)
+  lastCount   Int?
+  lastCountAt DateTime?
+  createdBy   String                            // user.id
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orgId, name])
+  @@index([orgId])
+}
+
+// Audiência congelada no momento da aprovação (FR-013 010).
+model StudioAudienceSnapshot {
+  id             String   @id @default(cuid())
+  orgId          String
+  campaignId     String
+  campaign       StudioCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  segmentId      String?                    // → StudioSegment quando derivada de segmento salvo
+  criteriaVersion Json                     // critérios efetivos no congelamento (auditoria)
+  totalCount     Int      @default(0)
+  includedCount  Int      @default(0)
+  excludedCount  Int      @default(0)
+  status         String   @default("active") // active | superseded (sync-delta cria novo)
+  createdAt      DateTime @default(now())
+
+  members StudioAudienceMember[]
+
+  @@index([campaignId])
+}
+
+// Linha por lead do snapshot: incluído/excluído + motivo + variante A/B.
+model StudioAudienceMember {
+  id                   String  @id @default(cuid())
+  snapshotId           String
+  snapshot             StudioAudienceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  prospectId           String
+  included             Boolean @default(true)
+  excludeReason        String?  // opt_out, suppressed, recent_contact, manual, fatigue, no_consent
+  variantLabel         String?  // atribuição A/B determinística (experiment-service)
+  excludedManuallyById String?  // user.id quando excludeReason = manual
+  createdAt            DateTime @default(now())
+
+  @@unique([snapshotId, prospectId])
+  @@index([snapshotId])
+  @@index([prospectId])
+}
+
+// Conteúdo versionado por canal/variante/toque. E-mail = documento de blocos
+// (emailDoc → MJML); WhatsApp/LinkedIn = texto + metadados.
+model StudioContent {
+  id           String   @id @default(cuid())
+  orgId        String
+  campaignId   String
+  campaign     StudioCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  channel      String   // email, whatsapp, linkedin_text
+  variantLabel String   @default("A")   // variante de experimento/tonalidade
+  kind         String   @default("base") // base | followup
+  stepIndex    Int      @default(1)      // 1 = toque principal; 2..n = follow-ups
+  title        String?
+  emailDoc     Json?                     // documento de blocos do editor → MJML
+  subject      String?
+  preheader    String?
+  whatsappText String?
+  whatsappMeta Json?                     // botões/CTA, mídia, template Meta compatível
+  linkedinText String?
+  ctaUrl       String?
+  tone         String?                   // formal, comercial, tecnico, urgente, custom
+  origin       String   @default("manual") // ai, manual, template, ai_from_material
+  editHistory  Json     @default("[]")   // [{by,at,summary}]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  personalizations StudioPersonalization[]
+
+  @@index([campaignId, channel, variantLabel, kind, stepIndex])
+}
+
+// ── Campaign Studio — modelos das ondas US4/US5/US7 ────────────────────────
+
+// Material de origem da criação (FR-023/024 010): upload, URL, prompt ou
+// company_data; extração apresentada para confirmação humana.
+model StudioMaterial {
+  id               String   @id @default(cuid())
+  orgId            String
+  kind             String   // pdf, docx, pptx, image, video, url, prompt, company_data
+  sourceRef        String?  // URL ou arquivo relativo em STUDIO_STORAGE_DIR
+  mimeType         String?
+  sizeBytes        Int?
+  extraction       Json?    // {product, offer, benefits, audience, cta, confidence, sourceText}
+  extractionStatus String   @default("pending") // pending, extracted, failed, needs_manual
+  extractionError  String?
+  confirmedAt      DateTime?
+  uploadedById     String
+  createdAt        DateTime @default(now())
+
+  @@index([orgId])
+}
+
+// Personalização por lead (FR-047–051 010): variação sobre o conteúdo base.
+model StudioPersonalization {
+  id              String   @id @default(cuid())
+  orgId           String
+  contentId       String
+  content         StudioContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  prospectId      String
+  overrides       Json     @default("{}") // {intro?, valueProp?, cta?, full?}
+  dataBasis       Json     @default("[]") // fatos usados (explicável)
+  status          String   @default("pending") // pending, generated, edited, base_fallback
+  editedById      String?
+  propagatedRule  Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([contentId, prospectId])
+  @@index([contentId])
+}
+
+// Biblioteca de templates por objetivo/estágio (FR-038 010; US13).
+model StudioTemplate {
+  id           String   @id @default(cuid())
+  orgId        String   @default("system") // "system" = semente da plataforma
+  name         String
+  channel      String   // email, whatsapp, linkedin_text
+  objective    String   // prospection, launch, promotion, newsletter, event, reactivation, nurturing
+  funnelStage  String   @default("middle")
+  subject      String?
+  content      Json     @default("{}")
+  variables    Json     @default("[]")
+  isSystem     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([orgId, objective])
+}
+
+// Classificação de respostas por IA (specs/010 FR-045) — e-mail e WhatsApp.
+model StudioReplyClassification {
+  id               String   @id @default(cuid())
+  orgId            String
+  prospectId       String
+  channel          String   // email | whatsapp
+  sourceMessageId  String   // OutreachMessage/WhatsAppMessage de origem
+  label            String   // interested, not_interested, doubt, meeting_request, opt_out, out_of_scope, unclassified
+  confidence       Float    @default(0)
+  needsHumanReview Boolean  @default(false)
+  confirmedById    String?
+  createdAt        DateTime @default(now())
+
+  @@index([orgId, prospectId])
+  @@index([label])
+}
+
+// Journey visual do Studio (specs/010 US8, FR-052–056).
+model StudioJourney {
+  id           String   @id @default(cuid())
+  orgId        String
+  campaignId   String
+  definition   Json     @default("{}")  // {blocks:[{id,type,config}], edges:[{from,to,branch?}]}
+  triggers     Json     @default("[]")  // segment_enter | behavior | score_threshold | webhook
+  stopConditions Json   @default("[]")  // reply | converted | opt_out
+  status       String   @default("draft") // draft | active | paused
+  webhookToken String?  // SHA-256 do token opaco (research D15)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  leads StudioJourneyLead[]
+
+  @@index([orgId])
+  @@index([campaignId])
+}
+
+// Estado por lead no journey (idempotência: @@unique journey+prospect).
+model StudioJourneyLead {
+  id             String    @id @default(cuid())
+  orgId          String
+  journeyId      String
+  journey        StudioJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  prospectId     String
+  currentBlockId String?
+  waitingUntil   DateTime?
+  status         String    @default("active") // active | waiting | waiting_human | done | stopped
+  stopReason     String?
+  blockHistory   Json      @default("[]") // [{blockId, enteredAt}]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([journeyId, prospectId])
+  @@index([journeyId])
+}
+
+// Plano do AI Campaign Agent (specs/010 US9, FR-057/058).
+model StudioAgentProposal {
+  id            String   @id @default(cuid())
+  orgId         String
+  campaignId    String?
+  requestPrompt String
+  plan          Json     @default("{}")  // {audience, strategy, contents, tracking}
+  items         Json     @default("[]")  // [{key, decision, editedValue?}]
+  status        String   @default("proposed") // proposed | decided | converted
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([orgId])
+}
+
+// Recomendações do agente/otimização, sempre explicáveis (FR-059/FR-075).
+model StudioRecommendation {
+  id                    String   @id @default(cuid())
+  orgId                 String
+  campaignId            String?
+  targetProspectId      String?
+  kind                  String   // pace_change, subject_swap, pause_segment, next_best_action, fatigue, handoff
+  rationale             String
+  evidence              Json     @default("[]")
+  status                String   @default("proposed") // proposed | applied | rejected
+  appliedAt             DateTime?
+  requiresConfirmation  Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([orgId, campaignId])
+}
+
+// Experimento A/B (specs/010 US10, FR-060–063).
+model StudioExperiment {
+  id                      String   @id @default(cuid())
+  orgId                   String
+  campaignId              String
+  dimension               String   // subject, copy, cta, send_time, channel
+  split                   Json     @default("{}") // {A: 20, B: 80}
+  winnerCriterion         Json     @default("{}") // {metric, minPerVariant, confidence}
+  status                  String   @default("running") // running | winner_declared | closed
+  winnerVariant           String?
+  declaredAt              DateTime?
+  declaredBasis           Json?
+  continuousOptimization  Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([campaignId])
+}
+
+// Rollup diário de métricas do Studio (US11, FR-064–069).
+model StudioMetricDaily {
+  id                 String   @id @default(cuid())
+  orgId              String
+  campaignId         String
+  day                DateTime
+  channel            String   @default("email")
+  variantLabel       String   @default("A")
+  stepIndex          Int      @default(1)
+  sent               Int      @default(0)
+  delivered          Int      @default(0)
+  deliveredEstimated Int      @default(0)
+  opens              Int      @default(0)
+  opensEstimated     Int      @default(0)
+  clicks             Int      @default(0)
+  replies            Int      @default(0)
+  conversions        Int      @default(0)
+  bounces            Int      @default(0)
+  unsubs             Int      @default(0)
+  whatsappReads      Int      @default(0)
+
+  @@unique([campaignId, day, channel, variantLabel, stepIndex])
+  @@index([campaignId])
+}
+
+// Perfil de marca (specs/010 US12, FR-070/071) — Brand Voice + Brand Kit.
+model StudioBrandProfile {
+  id                 String   @id @default(cuid())
+  orgId              String   @unique
+  voice              Json     @default("{}") // {toneNotes, doExamples[], dontExamples[], learnedFrom[]}
+  kit                Json     @default("{}") // {logoUrl, colors, fonts, assets[]}
+  consistencyChecks  Json     @default("[]")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// Parecer de conformidade pré-aprovação (US12, FR-073).
+model StudioComplianceReview {
+  id         String   @id @default(cuid())
+  orgId      String
+  campaignId String
+  level      String   // ok | attention | block
+  items      Json     @default("[]") // [{check, level, detail, affectedLeads?}]
+  checkedById String?
+  createdAt  DateTime @default(now())
+
+  @@index([campaignId])
 }

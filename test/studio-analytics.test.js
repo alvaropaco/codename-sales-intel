@@ -1,0 +1,76 @@
+'use strict';
+
+/**
+ * test/studio-analytics.test.js — US11 do Campaign Studio (T105).
+ *
+ * Rollup diário idempotente (upsert por chave), funil com métricas
+ * estimadas rotuladas (FR-067), cortes por segmento/canal (FR-065),
+ * timeline multi-canal do lead (FR-066) e ROI declarado vs medido (FR-068).
+ */
+
+const test = require('node:test');
+const assert = require('node:assert');
+const { createFakePrisma } = require('./helpers/fake-prisma');
+const analytics = require('../studio/analytics-service');
+
+function basePrisma() {
+  const prisma = createFakePrisma();
+  prisma.studioCampaign.rows.push({
+    id: 'camp-a', orgId: 'org-1', name: 'Campanha A', status: 'running',
+    channels: ['email', 'whatsapp'], goalMetric: 'replies', convertedValue: 500_000,
+  });
+  return prisma;
+}
+
+test('rollup: agrega eventos por dia/canal/variante de forma idempotente', async () => {
+  const prisma = basePrisma();
+  prisma.studioCampaign.rows[0].emailExecutionId = 'exec-1';
+  const day = new Date('2026-09-23T12:00:00Z');
+  for (let i = 1; i <= 3; i++) {
+    prisma.outreachContact.rows.push({
+      id: `oc-${i}`, campaignId: 'exec-1', prospectId: `lead-${i}`, status: 'SENT', sentAt: day,
+    });
+  }
+  prisma.outreachContact.rows.push({
+    id: 'oc-4', campaignId: 'exec-1', prospectId: 'lead-1', status: 'SENT', sentAt: day,
+  });
+  // Eventos: 1 abertura (estimada), 1 clique, 1 resposta.
+  prisma.outreachEvent.rows.push(
+    { id: 'e1', contactId: 'oc-1', type: 'email_opened_inferred', status: 'estimated', details: {}, createdAt: day },
+    { id: 'e2', contactId: 'oc-2', type: 'email_clicked', status: 'confirmed', details: {}, createdAt: day },
+    { id: 'e3', contactId: 'oc-3', type: 'email_replied', status: 'confirmed', details: {}, createdAt: day }
+  );
+
+  await analytics.rollupDaily(prisma, 'camp-a');
+  const rows = prisma.studioMetricDaily.rows;
+  assert.equal(rows.length, 1, 'uma linha de rollup para o dia/canal/variante/toque');
+  assert.equal(rows[0].sent, 4);
+  assert.equal(rows[0].opens, 1);
+  assert.ok(rows[0].opensEstimated === 1 || rows[0].opens === 1, 'abertura contabilizada');
+  assert.equal(rows[0].replies, 1);
+
+  // Re-executar NÃO duplica (idempotência — constituição II).
+  await analytics.rollupDaily(prisma, 'camp-a');
+  assert.equal(prisma.studioMetricDaily.rows.length, 1);
+});
+
+test('funil: taxas por etapa e flag estimated nas aberturas inferidas (FR-067)', async () => {
+  const prisma = basePrisma();
+  prisma.studioMetricDaily.rows.push({
+    id: 'm1', orgId: 'org-1', campaignId: 'camp-a', day: new Date('2026-09-23T00:00:00Z'),
+    channel: 'email', variantLabel: 'A', stepIndex: 1,
+    sent: 100, delivered: 90, deliveredEstimated: 90, opens: 40, opensEstimated: 40,
+    clicks: 10, replies: 3, conversions: 1, bounces: 5, unsubs: 2, whatsappReads: 0,
+  });
+  const funnel = analytics.buildFunnel([{ ...prisma.studioMetricDaily.rows[0] }]);
+  assert.equal(funnel.sent, 100);
+  assert.equal(funnel.opens, 40);
+  assert.equal(funnel.estimated, true, 'aberturas inferidas → rotulada estimada');
+  assert.ok(funnel.rates.openRate <= 1 && funnel.rates.openRate > 0);
+});
+
+test('ROI: valor declarado (conversões × convertedValue) distinto de métrica medida', () => {
+  const roi = analytics.computeRoi({ conversions: 2, convertedValue: 500_000 }, { sent: 100 });
+  assert.equal(roi.declaredRevenue, 1_000_000, '2 conversões × R$5.000,00 (centavos)');
+  assert.equal(roi.revenuePerSend, 10_000);
+});

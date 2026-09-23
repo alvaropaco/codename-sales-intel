@@ -1,0 +1,146 @@
+'use strict';
+
+/**
+ * test/studio-email-renderer.test.js — US5 do Campaign Studio (T052).
+ *
+ * Documento de blocos → MJML → HTML responsivo (T053): preview usa a MESMA
+ * função do envio (SC-006), variável sem dado vira fallback — nunca literal
+ * (FR-033/SC-011), blocos condicionais resolvidos POR LEAD no render
+ * (FR-034) e UTM anexada aos links (FR-037).
+ */
+
+const test = require('node:test');
+const assert = require('node:assert');
+const { renderEmail, resolveConditions } = require('../studio/email-renderer');
+
+const LEAD = {
+  id: 'lead-1',
+  companyName: 'MB Máquinas',
+  contactName: 'Ana Silva',
+  city: 'São Paulo',
+  state: 'SP',
+  industry: 'indústria metalúrgica',
+  employees: 120,
+};
+
+const DOC = {
+  blocks: [
+    { type: 'text', text: 'Olá {{firstName}}, tudo bem? Sobre a {{companyName}}:' },
+    {
+      type: 'text',
+      text: 'Vimos que a {{companyName}} é do setor de tecnologia.',
+      condition: { field: 'industry', op: 'contains', value: 'tecnologia' },
+    },
+    {
+      type: 'text',
+      text: 'Para indústrias como a sua, temos algo especial.',
+      condition: { field: 'industry', op: 'contains', value: 'indústria' },
+    },
+    { type: 'button', label: 'Agendar conversa', url: 'https://exemplo.com/cta?foo=1' },
+    { type: 'text', text: 'Não quer mais receber? Faça o descadastro.' },
+  ],
+};
+
+test('renderEmail: blocos → HTML responsivo com texto interpolado', () => {
+  const result = renderEmail(DOC, LEAD);
+  assert.ok(result.html.includes('<html'), 'HTML completo (MJML compilado)');
+  assert.ok(result.html.includes('Olá Ana'), 'variável firstName resolvida');
+  assert.ok(result.html.toUpperCase().includes('MB MÁQUINAS'.toUpperCase()) || result.html.includes('MB Máquinas'));
+  assert.ok(result.text.includes('descadastro'), 'texto plano acompanha o render');
+});
+
+test('blocos condicionais resolvidos POR LEAD no render (FR-034)', () => {
+  // LEAD é metalúrgica: bloco "tecnologia" some, bloco "indústrias" fica.
+  const result = renderEmail(DOC, LEAD);
+  assert.ok(!result.html.includes('setor de tecnologia'), 'condição falsa é removida');
+  assert.ok(result.html.includes('indústrias como a sua'), 'condição verdadeira permanece');
+  // Lead de tecnologia: o inverso.
+  const techLead = { ...LEAD, industry: 'tecnologia' };
+  const techResult = renderEmail(DOC, techLead);
+  assert.ok(techResult.html.includes('setor de tecnologia'));
+  assert.ok(!techResult.html.includes('indústrias como a sua'));
+});
+
+test('preview === envio: mesma função, mesmo resultado (SC-006)', () => {
+  const a = renderEmail(DOC, LEAD);
+  const b = renderEmail(DOC, LEAD);
+  assert.equal(a.html, b.html);
+  assert.deepEqual(resolveConditions(DOC.blocks, LEAD).map((b) => b.type), resolveConditions(DOC.blocks, LEAD).map((b) => b.type));
+});
+
+test('variável sem dado → fallback configurável, nunca literal (FR-033/SC-011)', () => {
+  const doc = { blocks: [{ type: 'text', text: 'Bem-vindo, {{firstName}} da {{city}}!' }] };
+  const noName = renderEmail(doc, { ...LEAD, contactName: null }, { fallbacks: { firstName: 'pessoal' } });
+  assert.ok(noName.text.includes('Bem-vindo, pessoal'), 'fallback aplicado');
+  assert.ok(!noName.text.includes('{{'), 'nenhuma variável literal vai ao lead');
+  // Sem fallback configurado → string vazia no lugar.
+  const silent = renderEmail(doc, { ...LEAD, contactName: null });
+  assert.ok(silent.text.includes('Bem-vindo,  da'), 'fallback default = vazio');
+});
+
+test('UTM automática anexada aos links da campanha (FR-037)', () => {
+  const result = renderEmail(DOC, LEAD, {
+    utmTemplate: { utmSource: 'studio', utmMedium: 'email', utmCampaign: 'lancamento-erp' },
+  });
+  assert.ok(
+    result.html.includes('utm_source=studio') &&
+      result.html.includes('utm_medium=email') &&
+      result.html.includes('utm_campaign=lancamento-erp'),
+    'UTM aplicada ao CTA'
+  );
+  // Sem UTM configurada → link intacto.
+  const plain = renderEmail(DOC, LEAD);
+  assert.ok(plain.html.includes('https://exemplo.com/cta?foo=1'), 'URL original preservada sem UTM');
+});
+
+// ── Checks de qualidade (T058: spam, links, a11y — FR-036) ─────────────────
+
+const { createFakePrisma } = require('./helpers/fake-prisma');
+const compliance = require('../studio/compliance-service');
+
+test('checks: spam heurístico, link quebrado (block) e imagem sem alt', async () => {
+  const prisma = createFakePrisma();
+  prisma.studioCampaign.rows.push({ id: 'camp-q', orgId: 'org-1', channels: ['email'], status: 'in_review' });
+  prisma.studioContent.rows.push({
+    id: 'content-q', orgId: 'org-1', campaignId: 'camp-q', channel: 'email',
+    subject: 'GRÁTIS GRÁTIS GRÁTIS!!!', preheader: null,
+    whatsappText: null, linkedinText: null,
+    emailDoc: { blocks: [
+      { type: 'text', text: 'Oferta imperdível, oferta garantida!!! Clique aqui!!!' },
+      { type: 'image', src: 'https://img/exemplo.png' },
+      { type: 'button', label: 'Ver', url: 'https://quebrado.exemplo.com' },
+      { type: 'text', text: 'descadastro disponível' },
+    ] },
+    origin: 'manual', variantLabel: 'A', kind: 'base', stepIndex: 1,
+    editHistory: [], ctaUrl: null, tone: null,
+  });
+  const campaign = prisma.studioCampaign.rows[0];
+  const result = await compliance.runQualityChecks(prisma, campaign, {
+    fetchImpl: async () => { throw new Error('ENOTFOUND'); },
+  });
+  assert.ok(result.spamScore > 0, 'score de spam > 0');
+  assert.ok(result.items.some((i) => i.detail.includes('Link inacessível')), 'link quebrado → block');
+  assert.ok(result.items.some((i) => i.detail.includes('alt')), 'imagem sem alt apontada');
+  assert.equal(result.level, 'block', 'link quebrado bloqueia');
+});
+
+test('checks: conteúdo limpo → ok, sem itens', async () => {
+  const prisma = createFakePrisma();
+  prisma.studioCampaign.rows.push({ id: 'camp-clean', orgId: 'org-1', channels: ['email'], status: 'in_review' });
+  prisma.studioContent.rows.push({
+    id: 'content-clean', orgId: 'org-1', campaignId: 'camp-clean', channel: 'email',
+    subject: 'Proposta de parceria', preheader: null, whatsappText: null, linkedinText: null,
+    emailDoc: { blocks: [
+      { type: 'text', text: 'Olá! Gostaria de apresentar nossa solução.' },
+      { type: 'image', src: 'https://img/exemplo.png', alt: 'Diagrama da solução' },
+      { type: 'button', label: 'Agendar', url: 'https://ok.exemplo.com' },
+    ] },
+    origin: 'manual', variantLabel: 'A', kind: 'base', stepIndex: 1,
+    editHistory: [], ctaUrl: null, tone: null,
+  });
+  const result = await compliance.runQualityChecks(prisma, prisma.studioCampaign.rows[0], {
+    fetchImpl: async () => ({ ok: true, status: 200 }),
+  });
+  assert.equal(result.spamScore, 0);
+  assert.equal(result.level, 'ok');
+});
