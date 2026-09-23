@@ -646,3 +646,96 @@ module.exports = {
   incDiscoveryEvidence,
   incDiscoveryEstimatedCost,
 };
+
+// ─── Campaign Studio (specs/010) — métricas studio_* ───────────────────────
+
+const studioSchedulerTicks = enabled
+  ? new client.Counter({
+      name: 'studio_scheduler_ticks_total',
+      help: 'Ticks do scheduler do Studio por resultado',
+      labelNames: ['result'],
+      registers: [registry],
+    })
+  : null;
+const studioSendsEnqueued = enabled
+  ? new client.Counter({
+      name: 'studio_sends_enqueued_total',
+      help: 'Leads liberados pelo scheduler do Studio por canal',
+      labelNames: ['channel'],
+      registers: [registry],
+    })
+  : null;
+const studioGuardrailPauses = enabled
+  ? new client.Counter({
+      name: 'studio_guardrail_pauses_total',
+      help: 'Pausas de automação por guard-rails (anomalia)',
+      labelNames: ['channel', 'reason'],
+      registers: [registry],
+    })
+  : null;
+const studioAiBatchItems = enabled
+  ? new client.Counter({
+      name: 'studio_ai_batch_items_total',
+      help: 'Itens de geração em lote do Studio por resultado',
+      labelNames: ['kind', 'result'],
+      registers: [registry],
+    })
+  : null;
+const studioComplianceReviews = enabled
+  ? new client.Counter({
+      name: 'studio_compliance_reviews_total',
+      help: 'Pareceres do Compliance Guard por nível',
+      labelNames: ['level'],
+      registers: [registry],
+    })
+  : null;
+const studioQueueWaitHist = enabled
+  ? new client.Histogram({
+      name: 'studio_queue_wait_seconds',
+      help: 'Tempo entre agendamento e envio no Studio',
+      labelNames: ['channel'],
+      buckets: [1, 5, 15, 60, 300, 900, 3600, 21600],
+      registers: [registry],
+    })
+  : null;
+
+function incStudioSchedulerTick(result) {
+  if (studioSchedulerTicks) studioSchedulerTicks.inc({ result: result || 'ok' });
+}
+function incStudioSendsEnqueued(channel, count) {
+  if (studioSendsEnqueued) studioSendsEnqueued.inc({ channel: channel || 'unknown' }, count || 1);
+}
+function incStudioGuardrailPause(reason) {
+  if (studioGuardrailPauses) studioGuardrailPauses.inc({ channel: 'any', reason: reason || 'anomaly' });
+}
+function incStudioAiBatchItem(kind, result) {
+  if (studioAiBatchItems) studioAiBatchItems.inc({ kind: kind || 'unknown', result: result || 'ok' });
+}
+function incStudioComplianceReview(level) {
+  if (studioComplianceReviews) studioComplianceReviews.inc({ level: level || 'ok' });
+}
+function observeStudioQueueWait(channel, seconds) {
+  if (studioQueueWaitHist && Number.isFinite(seconds)) {
+    studioQueueWaitHist.observe({ channel: channel || 'unknown' }, Math.max(0, seconds));
+  }
+}
+
+module.exports.incStudioSchedulerTick = incStudioSchedulerTick;
+module.exports.incStudioSendsEnqueued = incStudioSendsEnqueued;
+module.exports.incStudioGuardrailPause = incStudioGuardrailPause;
+module.exports.incStudioAiBatchItem = incStudioAiBatchItem;
+module.exports.incStudioComplianceReview = incStudioComplianceReview;
+module.exports.observeStudioQueueWait = observeStudioQueueWait;
+
+const studioJourneyLeadsGauge = enabled
+  ? new client.Gauge({
+      name: 'studio_journey_leads_by_block',
+      help: 'Leads do Studio por bloco de journey',
+      labelNames: ['journeyId', 'blockId', 'status'],
+      registers: [registry],
+    })
+  : null;
+function setStudioJourneyLeads(journeyId, blockId, status, count) {
+  if (studioJourneyLeadsGauge) studioJourneyLeadsGauge.set({ journeyId, blockId, status }, count || 0);
+}
+module.exports.setStudioJourneyLeads = setStudioJourneyLeads;

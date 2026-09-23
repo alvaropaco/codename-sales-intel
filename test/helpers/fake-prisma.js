@@ -9,9 +9,36 @@ function makeId(prefix) {
 }
 
 function matches(record, where = {}) {
+  // OR no topo (Prisma): algum dos ramos precisa casar.
+  if (where.OR && Array.isArray(where.OR)) {
+    const rest = { ...where };
+    delete rest.OR;
+    if (!where.OR.some((branch) => matches(record, branch))) return false;
+    if (Object.keys(rest).length === 0) return true;
+    return matches(record, rest);
+  }
+  // AND no topo (Prisma): todos os ramos precisam casar.
+  if (where.AND && Array.isArray(where.AND)) {
+    const rest = { ...where };
+    delete rest.AND;
+    if (!where.AND.every((branch) => matches(record, branch))) return false;
+    if (Object.keys(rest).length === 0) return true;
+    return matches(record, rest);
+  }
   return Object.entries(where).every(([field, expected]) => {
     if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
-      // Operadores do Prisma suportados pelo fake: { lt, lte, gt, gte }
+      // Operadores do Prisma suportados pelo fake: { lt, lte, gt, gte, in, contains, equals }
+      if ('in' in expected) return expected.in.includes(record[field]);
+      if ('contains' in expected) {
+        return String(record[field] ?? '')
+          .toLowerCase()
+          .includes(String(expected.contains).toLowerCase());
+      }
+      if ('equals' in expected) return record[field] === expected.equals;
+      if ('array_contains' in expected) {
+        const v = record[field];
+        return Array.isArray(v) ? v.includes(expected.array_contains) : false;
+      }
       // Comparação numérica quando o limite é número; data caso contrário.
       const coerce = (v) => (typeof v === 'number' ? Number(v) : new Date(v));
       if ('lt' in expected) return coerce(record[field]) < coerce(expected.lt);
@@ -120,7 +147,39 @@ function makeModel(name, uniqueFields = []) {
 function createFakePrisma() {
   return {
     organization: makeModel('organization'),
+    user: makeModel('user'),
+    activity: makeModel('activity'),
     prospect: makeModel('prospect'),
+    // Campaign Studio (specs/010) — modelos do Studio + execuções de canal
+    studioCampaign: makeModel('studioCampaign'),
+    studioSegment: makeModel('studioSegment'),
+    studioAudienceSnapshot: makeModel('studioAudienceSnapshot'),
+    studioAudienceMember: makeModel('studioAudienceMember'),
+    studioContent: makeModel('studioContent'),
+    studioMaterial: makeModel('studioMaterial'),
+    studioPersonalization: makeModel('studioPersonalization'),
+    studioJourney: makeModel('studioJourney'),
+    studioJourneyLead: makeModel('studioJourneyLead'),
+    studioExperiment: makeModel('studioExperiment'),
+    studioBrandProfile: makeModel('studioBrandProfile'),
+    studioComplianceReview: makeModel('studioComplianceReview'),
+    studioReplyClassification: makeModel('studioReplyClassification'),
+    studioMetricDaily: makeModel('studioMetricDaily', ['campaignId_day_channel_variantLabel_stepIndex']),
+    studioAgentProposal: makeModel('studioAgentProposal'),
+    studioRecommendation: makeModel('studioRecommendation'),
+    studioTemplate: makeModel('studioTemplate'),
+    outreachCampaign: makeModel('outreachCampaign'),
+    outreachContact: makeModel('outreachContact'),
+    outreachMessage: makeModel('outreachMessage'),
+    outreachEvent: makeModel('outreachEvent'),
+    outreachTemplate: makeModel('outreachTemplate'),
+    whatsappCampaign: makeModel('whatsappCampaign'),
+    whatsappSequenceStep: makeModel('whatsappSequenceStep'),
+    whatsappCampaignContact: makeModel('whatsappCampaignContact'),
+    suppressionList: makeModel('suppressionList'),
+    leadChannelState: makeModel('leadChannelState'),
+    emailAccount: makeModel('emailAccount'),
+    whatsappAccount: makeModel('whatsappAccount'),
     deepAnalysis: makeModel('deepAnalysis'),
     commercialSettings: makeModel('commercialSettings'),
     enrichmentTaskRetryEvent: makeModel('enrichmentTaskRetryEvent'),

@@ -324,6 +324,30 @@ async function processPrepare(job) {
     }
   }
 
+  // Campaign Studio (specs/010 FR-050/T078): intro personalizada por lead —
+  // se houver override gerado/editado para este lead, ele abre a mensagem.
+  // Aditivo e à prova de falha: sem Studio, comportamento idêntico ao atual.
+  let studioIntro = null;
+  try {
+    if (campaign.studioCampaignId) {
+      const contents = await prisma.studioContent.findMany({
+        where: { campaignId: campaign.studioCampaignId, channel: 'email', kind: 'base', stepIndex: 1 },
+      });
+      const contentId = contents[0]?.id;
+      if (contentId) {
+        const persos = await prisma.studioPersonalization.findMany({
+          where: { contentId, prospectId: contact.prospectId },
+        });
+        const perso = persos[0];
+        if (perso && ['generated', 'edited'].includes(perso.status) && perso.overrides?.intro) {
+          studioIntro = perso.overrides.intro;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[studio:personalize] override indisponível (ignorado):', err.message);
+  }
+
   // Add tracking pixel
   const trackingToken = crypto.randomUUID();
   const htmlWithPixel = generated.htmlBody.includes('{tracking-token}')
@@ -336,7 +360,7 @@ async function processPrepare(job) {
     data: {
       contactId: contact.id,
       subject: generated.subject,
-      body: generated.body,
+      body: studioIntro ? `${studioIntro}\n\n${generated.body}` : generated.body,
       htmlBody: htmlWithPixel,
       status: 'SCHEDULED',
       generatedAt: new Date(),
@@ -752,6 +776,8 @@ async function _handleReply(prisma, msgData, emailAccountId) {
         { messages: { some: { status: 'SENT' } } },
       ],
     },
+    // specs/010: tenantId da campanha para a classificação de respostas.
+    include: { campaign: { select: { tenantId: true } } },
   });
 
   if (!contact) return 0;
@@ -774,6 +800,23 @@ async function _handleReply(prisma, msgData, emailAccountId) {
       replyCount: { increment: 1 },
     },
   });
+
+  // Campaign Studio (specs/010 FR-045): classifica a resposta por IA —
+  // chamada aditiva e à prova de falha; nunca afeta o fluxo de sync.
+  try {
+    const classifier = require('./studio/ai/classify-reply').createReplyClassifier();
+    classifier
+      .classifyAndStore(prisma, {
+        orgId: contact.campaign?.tenantId,
+        prospectId: contact.prospectId,
+        channel: 'email',
+        sourceMessageId: gmailMessageId,
+        text: subject,
+      })
+      .catch((err) => console.error('[studio:classify] falhou (ignorado):', err.message));
+  } catch (err) {
+    console.error('[studio:classify] indisponível (ignorado):', err.message);
+  }
 
   // Attach gmail thread ID to the first SENT message
   const sentMsg = await prisma.outreachMessage.findFirst({
@@ -820,22 +863,25 @@ async function _scheduleFollowup(prisma, contactId) {
     return;
   }
 
-  // Campanhas com template custom (suíte multicanal) são single-shot:
-  // reenviar o mesmo template em follow-up seria duplicar a mensagem.
-  // Exceção (007/T036): campanhas IA — o template semeado é a BASE aprovada e
-  // o follow-up é gerado por IA sobre ela (nunca reenvio do texto literal).
-  if (contact.campaign?.emailTemplateBody && contact.campaign?.source !== 'ai') {
-    return;
+  // Sequência configurada pelo Studio (specs/010 FR-079) tem precedência:
+  // cada passo define delay e término explícitos. Sem sequência configurada,
+  // o comportamento legado é preservado (single-shot em template custom,
+  // máx. 4 toques, D+3/5/7).
+  const studioSequence = Array.isArray(contact.campaign?.sequence) ? contact.campaign.sequence : [];
+  const scheduleService = require('./studio/schedule-service');
+  const planned = scheduleService.nextFollowup(studioSequence, contact.outreachSequence);
+
+  if (studioSequence.length > 0) {
+    // Sequência do Studio: sem próximo passo configurado → sem follow-up.
+    if (!planned) return;
+  } else {
+    // Legado: single-shot em template custom (exceto IA) + teto de 4 toques.
+    if (contact.campaign?.emailTemplateBody && contact.campaign?.source !== 'ai') return;
+    if (!planned) return;
   }
 
-  // Max 4 emails total (1 initial + 3 follow-ups)
-  const maxSeq = 4;
-  if (contact.outreachSequence >= maxSeq) return;
-
-  // Follow-up delays in days: [3, 5, 7]
-  const followupDelays = [3, 5, 7];
-  const nextSeq = contact.outreachSequence + 1;
-  const daysDelay = followupDelays[nextSeq - 2] || 7;
+  const nextSeq = planned.stepIndex;
+  const daysDelay = planned.delayDays;
   const delayMs = daysDelay * 24 * 60 * 60 * 1000;
 
   // Re-use prepare worker for follow-up

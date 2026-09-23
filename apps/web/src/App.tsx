@@ -28,6 +28,7 @@ import { LoginView } from '@/components/auth/LoginView';
 import { LandingView } from '@/components/auth/LandingView';
 import { crmBadgeState } from '@/lib/crmBadge';
 import { useSeo } from '@/hooks/useSeo';
+import { StudioApp } from '@/studio/StudioApp';
 
 // 009: fallback do sync de perfil quando o fetch inicial falhou — o payload do
 // onboarding é autocontido e o merge simplesmente não tem campos a preservar.
@@ -382,6 +383,14 @@ export function App() {
         onComplete={setOnboardingResult}
       />
     );
+  }
+
+  // Campaign Studio (feature 010): área separada com shell próprio em tema
+  // dark — rota /studio renderizada FORA do shell de tabs. Entrada direta por
+  // URL (deep link); o Studio usa pushState interno e o popstate existente
+  // devolve o controle para o shell padrão.
+  if (window.location.pathname === '/studio' || window.location.pathname.startsWith('/studio/')) {
+    return <StudioApp userName={session.name || session.email} />;
   }
 
   return (

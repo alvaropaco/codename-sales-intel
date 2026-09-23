@@ -159,6 +159,8 @@ const whatsappUtils = require('./whatsapp-utils');
 const reengagementAgent = require('./reengagement-agent');
 const reengagementReply = require('./reengagement-reply');
 const { closeWhatsAppQueues, getWhatsAppQueues } = require('./whatsapp-queues');
+// ─── Campaign Studio (specs/010) ───────────────────────────────────
+const { createStudioRouter } = require('./studio/router');
 const metrics = require('./metrics');
 
 // Middleware
@@ -264,6 +266,10 @@ app.get('/api/version', (req, res) => {
   });
 });
 app.use('/api', firebaseAuth.createRequireAuth(prisma));
+
+// Campaign Studio (specs/010) — área própria sob /api/studio, escopo de org
+// resolvido dentro do router (mesma semântica de requireRequestOrgId).
+app.use('/api/studio', createStudioRouter(prisma));
 
 // Dashboard route - serve enterprise React UI when built, fallback to legacy HTML
 app.get('/', async (req, res) => {
@@ -5589,6 +5595,16 @@ async function start() {
     } catch (err) {
       console.error('[whatsapp] failed to initialize workers:', err.message);
       console.log('[whatsapp] continuing without WhatsApp workers');
+    }
+
+    // Campaign Studio (specs/010): scheduler com janelas/ritmo (repeat 60s)
+    // e rollup de métricas (repeat 5min).
+    try {
+      require('./studio/scheduler-worker').registerStudioScheduler(prisma);
+      require('./studio/analytics-service').registerStudioMetrics(prisma);
+      require('./studio/analytics-service').registerSnapshotPurge(prisma);
+    } catch (err) {
+      console.error('[studio] failed to initialize workers:', err.message);
     }
 
     // Agente de reengajamento de conversas frias (shadow|auto via REENGAGE_MODE).
