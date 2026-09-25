@@ -1,0 +1,221 @@
+'use strict';
+
+/**
+ * test/studio-chat.test.js — experiência chat-first (iteração UX specs/010).
+ * O bot pergunta preferências e executa ações reais: objetivo, audiência via
+ * NL, material por URL colada com extração, conteúdo em revisão e agenda.
+ */
+
+const test = require('node:test');
+const assert = require('node:assert');
+const express = require('express');
+const { createFakePrisma } = require('./helpers/fake-prisma');
+const { createStudioRouter } = require('../studio/router');
+
+const EXTRACTION = {
+  product: 'ERP industrial', offer: 'implantação em 30 dias',
+  benefits: ['fiscal'], audience: 'indústrias de médio porte',
+  cta: 'demo', confidence: 0.9,
+};
+
+// LLM roteado por marcador de prompt (orquestrador / segmento / pacote / extração).
+function llm() {
+  return async ({ user }) => {
+    if (user.includes('NOVA MENSAGEM DO USUÁRIO')) {
+      // Orquestrador: script por conteúdo da mensagem do usuário.
+      if (user.includes('ERP para indústrias')) {
+        return {
+          content: JSON.stringify({
+            reply: 'Entendi! Vou montar a audiência de indústrias e definir o objetivo. Já quero gerar o conteúdo?',
+            actions: [
+              { type: 'set_objective', objective: 'vender ERP para indústrias' },
+              { type: 'set_audience', description: 'indústrias com score alto' },
+            ],
+          }),
+        };
+      }
+      if (user.includes('gera o conteúdo')) {
+        return {
+          content: JSON.stringify({
+            reply: 'Conteúdo gerado em 2 tons — está em revisão para você aprovar.',
+            actions: [{ type: 'generate_content', tones: ['formal', 'urgente'] }],
+          }),
+        };
+      }
+      if (user.includes('confirma')) {
+        return {
+          content: JSON.stringify({
+            reply: 'Extração confirmada. Quer que eu gere o conteúdo agora?',
+            actions: [],
+          }),
+        };
+      }
+      if (user.includes('dispara 20 por hora')) {
+        return {
+          content: JSON.stringify({
+            reply: 'Agenda configurada: 20/h em horário comercial.',
+            actions: [{
+              type: 'set_schedule', mode: 'scheduled',
+              windows: [{ days: [1, 2, 3, 4, 5], startHour: 9, endHour: 18 }],
+              hourlyLimit: 20, dailyLimit: 100, timezone: 'America/Sao_Paulo',
+            }],
+          }),
+        };
+      }
+      return { content: JSON.stringify({ reply: 'Me conta mais?', actions: [{ type: 'none' }] }) };
+    }
+    if (user.includes('extração estruturada')) return { content: JSON.stringify(EXTRACTION) };
+    if (user.includes('critérios de segmento')) {
+      return {
+        content: JSON.stringify({
+          criteria: { version: 1, groups: [{ op: 'AND', conditions: [{ field: 'industry', op: 'contains', value: 'indústria' }, { field: 'opportunityScore', op: 'gte', value: 70 }] }] },
+          rationale: 'indústrias com score alto',
+        }),
+      };
+    }
+    if (user.includes('pacote de campanha')) {
+      return {
+        content: JSON.stringify({
+          title: 'ERP',
+          email: { subject: 'ERP para {{companyName}}', preheader: 'p', blocks: [{ type: 'text', text: 'Olá {{firstName}} — descadastro aqui.' }] },
+          whatsapp: { text: 'Oi {{firstName}}, ERP?' },
+          linkedinText: 'texto',
+          timing: 'terça 10h',
+        }),
+      };
+    }
+    return { content: '{}' };
+  };
+}
+
+async function startServer({ orgPlan = 'premium' } = {}) {
+  const app = express();
+  app.use(express.json());
+  const prisma = createFakePrisma();
+  prisma.organization.rows.push({ id: 'org-1', plan: orgPlan });
+  prisma.commercialSettings.rows.push({ orgId: 'org-1', productDescription: 'software de prospecção B2B' });
+  app.use((req, _res, next) => {
+    req.user = { id: 'user-1', orgId: 'org-1' };
+    next();
+  });
+  app.use('/api/studio', createStudioRouter(prisma, {
+    overrides: {
+      aiDeps: {
+        callLlm: llm(),
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          text: async () => '<html><body><h1>ERP industrial</h1><p>implantação em 30 dias</p></body></html>',
+        }),
+      },
+    },
+  }));
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const api = async (method, path, body) => {
+    const res = await fetch(`${base}/api/studio${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { res, body: await res.json() };
+  };
+  return { server, prisma, api };
+}
+
+test('chat: objetivo + audiência montados por conversa, com contagem real de leads', async () => {
+  const { server, prisma, api } = await startServer();
+  try {
+    const { body: c } = await api('POST', '/campaigns', { name: 'Chat', channels: ['email', 'whatsapp'] });
+    prisma.prospect.rows.push(
+      { id: 'l1', orgId: 'org-1', companyName: 'A', industry: 'indústria', opportunityScore: 90, status: 'qualified', state: 'SP', cnpjEmail: 'a@a.com' },
+      { id: 'l2', orgId: 'org-1', companyName: 'B', industry: 'indústria', opportunityScore: 80, status: 'qualified', state: 'RJ', cnpjEmail: 'b@b.com' },
+      { id: 'l3', orgId: 'org-1', companyName: 'C', industry: 'varejo', opportunityScore: 10, status: 'prospect', state: 'BA', cnpjEmail: 'c@c.com' }
+    );
+
+    const { res, body } = await api('POST', `/campaigns/${c.data.id}/chat`, {
+      message: 'Quero vender ERP para indústrias',
+    });
+    assert.equal(res.status, 200);
+    assert.ok(body.data.reply);
+    const types = body.data.cards.map((card) => card.type);
+    assert.ok(types.includes('objective'), 'card de objetivo');
+    assert.ok(types.includes('audience'), 'card de audiência');
+    const audienceCard = body.data.cards.find((card) => card.type === 'audience');
+    assert.ok(audienceCard.detail.includes('2 leads'), 'contagem real (l1+l2)');
+
+    // Conversa persistida (user + assistant).
+    const history = (await api('GET', `/campaigns/${c.data.id}/chat`)).body.data;
+    assert.equal(history.length, 2);
+    assert.equal(history[0].role, 'user');
+    assert.equal(history[1].role, 'assistant');
+
+    // Estado consolidado para o painel lateral.
+    const state = (await api('GET', `/campaigns/${c.data.id}/state`)).body.data;
+    assert.equal(state.extras.audienceCount, 2);
+    assert.equal(state.campaign.objective, 'vender ERP para indústrias');
+  } finally {
+    server.close();
+  }
+});
+
+test('chat: URL colada vira material com extração; confirmação no chat; conteúdo em revisão', async () => {
+  const { server, prisma, api } = await startServer();
+  try {
+    const { body: c } = await api('POST', '/campaigns', { name: 'Com material', channels: ['email'] });
+
+    // 1) Usuário cola a URL do produto.
+    const first = await api('POST', `/campaigns/${c.data.id}/chat`, {
+      message: 'Use https://exemplo.com/produto como referência',
+    });
+    assert.equal(first.res.status, 200);
+    const materialCard = first.body.data.cards.find((card) => card.type === 'material');
+    assert.ok(materialCard, 'material criado automaticamente pela URL');
+    assert.ok(materialCard.detail.includes('ERP industrial'), 'extração no card');
+    const material = prisma.studioMaterial.rows[0];
+    assert.equal(material.kind, 'url');
+    assert.equal(material.extractionStatus, 'extracted');
+    assert.equal(material.confirmedAt, null, 'aguarda confirmação humana (FR-024)');
+
+    // 2) Usuário confirma no chat.
+    const confirm = await api('POST', `/campaigns/${c.data.id}/chat`, {
+      message: 'confirma a extração',
+    });
+    assert.equal(confirm.res.status, 200);
+    // (sem ação no script desse turno; confirmação direta via materialId)
+    await api('POST', `/materials/${material.id}/confirm`, {});
+
+    // 3) Gerar conteúdo pelo chat — cai em revisão, nunca dispara (FR-002).
+    const gen = await api('POST', `/campaigns/${c.data.id}/chat`, { message: 'gera o conteúdo' });
+    assert.equal(gen.res.status, 200);
+    const contentCard = gen.body.data.cards.find((card) => card.type === 'content');
+    assert.ok(contentCard, 'card de conteúdo');
+    const contents = prisma.studioContent.rows.filter((row) => row.campaignId === c.data.id);
+    assert.ok(contents.length >= 2, '2 tons gerados');
+    assert.equal(prisma.studioCampaign.rows.find((row) => row.id === c.data.id).status, 'in_review');
+    assert.equal(prisma.outreachContact.rows.length, 0, 'nada enfileirado');
+  } finally {
+    server.close();
+  }
+});
+
+test('chat: agendamento configurado por conversa com previsão de conclusão', async () => {
+  const { server, prisma, api } = await startServer();
+  try {
+    const { body: c } = await api('POST', '/campaigns', { name: 'Agenda', channels: ['email'] });
+    const { res, body } = await api('POST', `/campaigns/${c.data.id}/chat`, {
+      message: 'dispara 20 por hora em horário comercial',
+    });
+    assert.equal(res.status, 200);
+    const scheduleCard = body.data.cards.find((card) => card.type === 'schedule');
+    assert.ok(scheduleCard, 'card de agenda');
+    assert.ok(scheduleCard.detail.includes('20/h'));
+    const campaign = prisma.studioCampaign.rows.find((row) => row.id === c.data.id);
+    assert.equal(campaign.schedule.hourlyLimit, 20);
+    assert.equal(campaign.schedule.windows[0].startHour, 9);
+  } finally {
+    server.close();
+  }
+});

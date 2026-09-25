@@ -22,6 +22,7 @@ function registerStudioRoutes(router, context) {
   const { registerAnalyticsRoutes } = require('./analytics-routes');
   const { registerBrandRoutes } = require('./brand-routes');
   const { registerAdvancedRoutes } = require('./advanced-routes');
+  const { registerChatRoutes } = require('./chat-routes');
   registerCampaignRoutes(router, context);
   registerAudienceRoutes(router, context);
   registerSegmentRoutes(router, context);
@@ -35,6 +36,7 @@ function registerStudioRoutes(router, context) {
   registerAnalyticsRoutes(router, context);
   registerBrandRoutes(router, context);
   registerAdvancedRoutes(router, context);
+  registerChatRoutes(router, context);
 }
 
 module.exports = { registerStudioRoutes };

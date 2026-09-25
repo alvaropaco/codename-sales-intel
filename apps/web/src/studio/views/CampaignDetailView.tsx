@@ -16,15 +16,16 @@ import { WhatsAppPreview, RepliesReview } from '../components/WhatsAppPreview';
 import { PersonalizationPanel } from '../components/PersonalizationPanel';
 import { JourneyCanvas } from '../components/JourneyCanvas';
 import { AnalyticsView } from './AnalyticsView';
+import { CampaignChat } from '../components/CampaignChat';
 import { ExperimentPanel } from '../components/ExperimentPanel';
 
-const TABS = ['Conteúdo', 'Audiência', 'Agenda', 'Automação', 'Analytics'] as const;
+const TABS = ['Configurar', 'Avançado', 'Audiência', 'Agenda', 'Automação', 'Analytics'] as const;
 type Tab = (typeof TABS)[number];
 
 export function CampaignDetailView({ campaignId }: { campaignId: string }) {
   const [campaign, setCampaign] = useState<StudioCampaignDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('Conteúdo');
+  const [tab, setTab] = useState<Tab>('Configurar');
 
   useEffect(() => {
     let alive = true;
@@ -80,7 +81,10 @@ export function CampaignDetailView({ campaignId }: { campaignId: string }) {
         ))}
       </div>
 
-      {tab === 'Conteúdo' && campaign && (
+      {tab === 'Configurar' && campaign && (
+        <CampaignChat campaignId={campaign.id} onStateChange={() => void fetchCampaign(campaign.id).then(setCampaign).catch(() => {})} />
+      )}
+      {tab === 'Avançado' && campaign && (
         <div className="space-y-6">
           <details className="rounded-lg border border-border p-4">
             <summary className="cursor-pointer text-sm font-semibold">

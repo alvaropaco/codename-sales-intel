@@ -1398,3 +1398,17 @@ model StudioComplianceReview {
 
   @@index([campaignId])
 }
+
+// Conversa de criação de campanha (chat-first, specs/010 — iteração UX).
+model StudioChatMessage {
+  id          String   @id @default(cuid())
+  orgId       String
+  campaignId  String
+  role        String   // user | assistant
+  text        String
+  attachments Json     @default("[]") // [{materialId, kind, url?}]
+  cards       Json     @default("[]") // [{type, label, detail}] — o que o bot aplicou
+  createdAt   DateTime @default(now())
+
+  @@index([campaignId, createdAt])
+}

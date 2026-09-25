@@ -168,6 +168,7 @@ function createFakePrisma() {
     studioAgentProposal: makeModel('studioAgentProposal'),
     studioRecommendation: makeModel('studioRecommendation'),
     studioTemplate: makeModel('studioTemplate'),
+    studioChatMessage: makeModel('studioChatMessage'),
     outreachCampaign: makeModel('outreachCampaign'),
     outreachContact: makeModel('outreachContact'),
     outreachMessage: makeModel('outreachMessage'),
