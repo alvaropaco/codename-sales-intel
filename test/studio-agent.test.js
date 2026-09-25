@@ -74,14 +74,17 @@ test('agente propõe plano completo; decisão item a item; convert cria em revis
     assert.equal(propose.res.status, 202);
     const proposalId = propose.body.data.proposalId;
 
-    // Polling (execução inline) até plano pronto.
+    // Polling (execução inline) até o plano ficar pronto. Invariante da
+    // máquina de estados: "proposed" SÓ existe com o plano completo no banco
+    // (enquanto monta, o status é "planning" — o front faz polling nisso).
     let proposal = null;
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 100; i++) {
       proposal = (await api('GET', `/agent/proposals/${proposalId}`)).body.data;
-      if (proposal.status === 'proposed') break;
+      if (proposal.status !== 'planning') break;
       await new Promise((r) => setTimeout(r, 20));
     }
     assert.equal(proposal.status, 'proposed');
+    assert.ok(proposal.plan.audience, 'proposed só acontece com o plano completo no banco');
     assert.ok(proposal.plan.audience, 'plano inclui audiência');
     assert.ok(proposal.plan.contents, 'plano inclui conteúdos');
 

@@ -22,8 +22,10 @@ function registerAgentRoutes(router, context) {
       const prompt = String((req.body || {}).prompt || '').trim();
       if (!prompt) throw httpError('INVALID_PROMPT', 400, 'Descreva o objetivo da campanha.');
 
+      // Status "planning": o plano é montado assíncrono (inline v1) — o front
+      // faz polling até "proposed" (pronto) ou "failed" (plan.error).
       const proposal = await prisma.studioAgentProposal.create({
-        data: { orgId, requestPrompt: prompt, status: 'proposed', plan: {}, items: [] },
+        data: { orgId, requestPrompt: prompt, status: 'planning', plan: {}, items: [] },
       });
       // Execução inline (v1): chama segment-nl + compose por IA e monta o plano.
       void (async () => {
@@ -58,7 +60,7 @@ function registerAgentRoutes(router, context) {
           console.error('[studio:agent] falha ao montar plano:', err.message);
           await prisma.studioAgentProposal.update({
             where: { id: proposal.id },
-            data: { plan: { error: err.message } },
+            data: { plan: { error: err.message }, status: 'failed' },
           });
         }
       })();

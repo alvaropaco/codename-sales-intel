@@ -56,13 +56,22 @@ export function AgentPanel() {
       if (!res.ok) throw new StudioRequestError(body.error, res.status, body.message);
       const proposalId = body.data.proposalId;
       // Polling até o plano ficar pronto (execução inline no servidor).
-      for (let i = 0; i < 100; i++) {
-        const p = await api<Proposal>(`/agent/proposals/${proposalId}`, 'GET');
-        if (p && (p.status === 'proposed' || p.plan?.error)) {
-          setProposal(p);
-          break;
-        }
+      // O servidor nasce com status "planning" e só vira "proposed" quando o
+      // plano completo (ou o erro) está no banco.
+      let last: Proposal | null = null;
+      for (let i = 0; i < 120; i++) {
+        // Assinatura do helper: api(method, path) — ordem certa aqui.
+        last = await api<Proposal>('GET', `/agent/proposals/${proposalId}`);
+        if (!last) break;
+        if (last.status !== 'planning') break;
         await new Promise((r) => setTimeout(r, 400));
+      }
+      if (last && last.status === 'proposed') {
+        setProposal(last);
+      } else if (last?.plan?.error) {
+        setError(`O agente não conseguiu montar o plano: ${last.plan.error}`);
+      } else {
+        setError('A geração do plano demorou mais que o esperado. Tente novamente em instantes.');
       }
     } catch (err) {
       setError(err instanceof StudioRequestError ? err.message : 'Falha ao propor campanha');
