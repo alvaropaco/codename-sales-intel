@@ -195,59 +195,151 @@ function registerChatRoutes(router, context) {
       .join(' E ');
   }
 
-  // POST /campaigns/:id/chat — conversa (síncrona; orquestrador + ações).
+  // Rótulos das etapas em pt-BR — exibidos ao vivo no chat (status SSE).
+  const ACTION_LABELS = {
+    set_objective: 'Definindo objetivo…',
+    set_audience: 'Criando audiência…',
+    attach_url: 'Anexando e extraindo material…',
+    confirm_material: 'Confirmando extração…',
+    generate_content: 'Gerando conteúdo…',
+    set_schedule: 'Configurando agendamento…',
+  };
+
+  /**
+   * Um turno completo da conversa. `onEvent(event)` transmite o progresso ao
+   * vivo (usado pelo SSE; o POST síncrono ignora). Eventos:
+   *   {type:'status',  phase:'thinking'|label}
+   *   {type:'reply',   text}
+   *   {type:'status',  label}                  — antes de cada ação
+   *   {type:'card',    card} | {type:'card_error', card}
+   *   {type:'done',    cards, campaignStatus}
+   */
+  async function runChatTurn(prismaClient, { campaign, message, orgId, userId, onEvent = () => {} }) {
+    const emit = (event) => onEvent(event);
+
+    // URLs coladas viram materiais automaticamente (contexto dos agentes).
+    const urls = [...message.matchAll(URL_RE)].map((m) => m[1]).slice(0, 3);
+    const autoAttachCards = [];
+    for (const url of urls) {
+      emit({ type: 'status', label: ACTION_LABELS.attach_url });
+      const result = await runAction({ type: 'attach_url', url }, { campaign, cards: autoAttachCards, orgId, userId });
+      if (result) {
+        autoAttachCards.push(result);
+        emit({ type: 'card', card: result });
+      }
+    }
+
+    emit({ type: 'status', phase: 'thinking' });
+    const history = await prismaClient.studioChatMessage.findMany({
+      where: { campaignId: campaign.id },
+    });
+    const userMessage = await prismaClient.studioChatMessage.create({
+      data: {
+        orgId,
+        campaignId: campaign.id,
+        role: 'user',
+        text: message,
+        attachments: urls.map((url) => ({ kind: 'url', url })),
+      },
+    });
+
+    const extras = await currentExtras(prismaClient, campaign);
+    const { reply, actions } = await chatAgent.orchestrate({
+      campaign,
+      history: [...history, userMessage],
+      userMessage: message,
+      extras,
+    });
+    emit({ type: 'reply', text: reply });
+
+    const cards = [...autoAttachCards];
+    for (const action of actions) {
+      const label = ACTION_LABELS[action.type];
+      if (label) emit({ type: 'status', label });
+      try {
+        const card = await runAction(action, { campaign, cards, orgId, userId });
+        if (card) {
+          cards.push(card);
+          emit({ type: 'card', card });
+        }
+      } catch (err) {
+        // Ação falha não derruba a conversa — vira card de erro.
+        const errorCard = { type: 'error', label: `Ação "${action.type}" falhou`, detail: err.message };
+        cards.push(errorCard);
+        emit({ type: 'card_error', card: errorCard });
+      }
+    }
+
+    await prismaClient.studioChatMessage.create({
+      data: { orgId, campaignId: campaign.id, role: 'assistant', text: reply, cards },
+    });
+    emit({ type: 'done', cards, campaignStatus: campaign.status });
+    return { reply, cards, campaignStatus: campaign.status };
+  }
+
+  // POST /campaigns/:id/chat — conversa síncrona (compatibilidade/testes).
   router.post('/campaigns/:id/chat', async (req, res, next) => {
     try {
       const { orgId, userId } = req.studio;
       const campaign = await loadCampaign(prisma, orgId, req.params.id);
       const message = String((req.body || {}).message || '').trim();
       if (!message) throw httpError('INVALID_MESSAGE', 400, 'Mensagem vazia.');
+      const result = await runChatTurn(prisma, { campaign, message, orgId, userId });
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
 
-      // URLs coladas viram materiais automaticamente (contexto dos agentes).
-      const urls = [...message.matchAll(URL_RE)].map((m) => m[1]).slice(0, 3);
-      const autoAttachCards = [];
-      for (const url of urls) {
-        const result = await runAction({ type: 'attach_url', url }, { campaign, cards: autoAttachCards, orgId, userId });
-        if (result) autoAttachCards.push(result);
-      }
+  // POST /campaigns/:id/chat/stream — SSE: progresso ao vivo do turno
+  // (pensando → etapas → cards → done). Conexão unidirecional back→front.
+  router.post('/campaigns/:id/chat/stream', async (req, res, next) => {
+    try {
+      const { orgId, userId } = req.studio;
+      const campaign = await loadCampaign(prisma, orgId, req.params.id);
+      const message = String((req.body || {}).message || '').trim();
+      if (!message) throw httpError('INVALID_MESSAGE', 400, 'Mensagem vazia.');
 
-      const history = await prisma.studioChatMessage.findMany({
-        where: { campaignId: campaign.id },
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no', // nginx/ingress: não bufferizar o stream
       });
-      const userMessage = await prisma.studioChatMessage.create({
-        data: {
+      const send = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      // Heartbeat: mantém proxies vivos durante chamadas longas de LLM.
+      const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
+      req.on('close', () => clearInterval(heartbeat));
+
+      try {
+        send('status', { phase: 'thinking' });
+        await runChatTurn(prisma, {
+          campaign,
+          message,
           orgId,
-          campaignId: campaign.id,
-          role: 'user',
-          text: message,
-          attachments: urls.map((url) => ({ kind: 'url', url })),
-        },
-      });
-
-      const extras = await currentExtras(prisma, campaign);
-      const { reply, actions } = await chatAgent.orchestrate({
-        campaign,
-        history: [...history, userMessage],
-        userMessage: message,
-        extras,
-      });
-
-      const cards = [...autoAttachCards];
-      for (const action of actions) {
-        try {
-          const card = await runAction(action, { campaign, cards, orgId, userId });
-          if (card) cards.push(card);
-        } catch (err) {
-          // Ação falha não derruba a conversa — vira card de erro.
-          cards.push({ type: 'error', label: `Ação "${action.type}" falhou`, detail: err.message });
-        }
+          userId,
+          onEvent: (event) => {
+            if (event.type === 'status') {
+              if (event.phase) send('status', { phase: event.phase });
+              else send('status', { label: event.label });
+            } else if (event.type === 'reply') {
+              send('reply', { text: event.text });
+            } else if (event.type === 'card') {
+              send('card', { card: event.card });
+            } else if (event.type === 'card_error') {
+              send('card_error', { card: event.card });
+            }
+          },
+        });
+        send('done', { campaignStatus: campaign.status });
+      } catch (err) {
+        send('error', { message: err.message });
+      } finally {
+        clearInterval(heartbeat);
+        res.end();
       }
-
-      const assistantMessage = await prisma.studioChatMessage.create({
-        data: { orgId, campaignId: campaign.id, role: 'assistant', text: reply, cards },
-      });
-
-      res.json({ success: true, data: { reply, cards, campaignStatus: campaign.status } });
     } catch (err) {
       next(err);
     }

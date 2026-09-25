@@ -16,6 +16,18 @@ interface ChatMessage {
   createdAt: string;
 }
 
+interface ChatCard {
+  type: string;
+  label: string;
+  detail: string;
+}
+
+interface PendingTurn {
+  reply: string | null;
+  statuses: string[];
+  cards: ChatCard[];
+}
+
 interface CampaignState {
   campaign: {
     id: string;
@@ -66,6 +78,7 @@ export function CampaignChat({ campaignId, onStateChange }: CampaignChatProps) {
   const [state, setState] = useState<CampaignState | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<PendingTurn | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -101,13 +114,60 @@ export function CampaignChat({ campaignId, onStateChange }: CampaignChatProps) {
       { id: `tmp-${Date.now()}`, role: 'user', text, cards: [], createdAt: new Date().toISOString() },
     ]);
     setInput('');
+    // Turno via SSE: progresso ao vivo (pensando → etapas → cards → done).
+    setPending({ reply: null, statuses: ['Pensando…'], cards: [] });
     try {
-      await jsonFetch('POST', `/campaigns/${campaignId}/chat`, { message: text });
+      const res = await fetch(`/api/studio/campaigns/${campaignId}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}));
+        throw new StudioRequestError(body.error || 'CHAT_FAILED', res.status, body.message);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finished = false;
+      while (!finished) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const event = frame.match(/^event: (.+)$/m)?.[1];
+          const dataRaw = frame.match(/^data: (.+)$/m)?.[1];
+          if (!event) continue;
+          const data = dataRaw ? JSON.parse(dataRaw) : {};
+          setPending((prev) => {
+            if (!prev) return prev;
+            if (event === 'status') {
+              const label = data.phase === 'thinking' ? 'Pensando…' : data.label;
+              if (!label) return prev;
+              return { ...prev, statuses: [...prev.statuses.filter((s) => s !== 'Pensando…' || data.phase === 'thinking'), label] };
+            }
+            if (event === 'reply') return { ...prev, reply: data.text };
+            if (event === 'card' || event === 'card_error') {
+              return { ...prev, cards: [...prev.cards, data.card] };
+            }
+            if (event === 'error') {
+              setError(data.message);
+              return { ...prev, statuses: [] };
+            }
+            if (event === 'done') finished = true;
+            return prev;
+          });
+        }
+      }
       await load();
       onStateChange?.();
     } catch (err) {
       setError(err instanceof StudioRequestError ? err.message : 'Falha ao enviar mensagem');
     } finally {
+      setPending(null);
       setSending(false);
     }
   };
@@ -177,10 +237,30 @@ export function CampaignChat({ campaignId, onStateChange }: CampaignChatProps) {
               </div>
             </div>
           ))}
-          {sending && (
+          {pending && (
             <div className="flex justify-start">
-              <div className="rounded-2xl rounded-bl-sm bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-                Montando… pode levar alguns segundos.
+              <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted/60 px-3 py-2 text-sm">
+                {pending.reply ? (
+                  <div className="space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_li]:ml-4 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-1.5 [&_p:last-child]:mb-0 [&_strong]:font-semibold">
+                    <ReactMarkdown>{pending.reply}</ReactMarkdown>
+                  </div>
+                ) : null}
+                {pending.statuses.length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    {pending.statuses.map((label, i) => (
+                      <p key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className={i === pending.statuses.length - 1 ? 'animate-pulse' : ''}>●</span>
+                        {label}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {pending.cards.map((card, i) => (
+                  <div key={i} className={`mt-2 rounded-lg border p-2 text-xs ${card.type === 'error' ? 'border-destructive/40 bg-destructive/10' : 'border-border bg-background/80'}`}>
+                    <p className="font-semibold">{card.label}</p>
+                    {card.detail && <p className="mt-0.5 text-muted-foreground">{card.detail}</p>}
+                  </div>
+                ))}
               </div>
             </div>
           )}

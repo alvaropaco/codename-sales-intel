@@ -219,3 +219,64 @@ test('chat: agendamento configurado por conversa com previsão de conclusão', a
     server.close();
   }
 });
+
+// ── SSE (streaming de progresso — iteração UX chat fluido) ─────────────────
+
+test('chat/stream: emite pensando → status das etapas → cards → done via SSE', async () => {
+  const { server, prisma, api } = await startServer();
+  try {
+    const { body: c } = await api('POST', '/campaigns', { name: 'SSE', channels: ['email'] });
+    prisma.prospect.rows.push(
+      { id: 'l1', orgId: 'org-1', companyName: 'A', industry: 'indústria', opportunityScore: 90, status: 'qualified', state: 'SP', cnpjEmail: 'a@a.com' }
+    );
+
+    const res = await fetch(`${`http://127.0.0.1:${server.address().port}`}/api/studio/campaigns/${c.data.id}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Quero vender ERP para indústrias' }),
+    });
+    assert.equal(res.headers.get('content-type').includes('text/event-stream'), true, 'resposta é SSE');
+
+    // Lê o stream até o evento done.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const events = [];
+    while (events.filter((e) => e.event === 'done' || e.event === 'error').length === 0) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const event = frame.match(/^event: (.+)$/m)?.[1];
+        const data = frame.match(/^data: (.+)$/m)?.[1];
+        if (event) events.push({ event, data: data ? JSON.parse(data) : null });
+      }
+    }
+
+    const types = events.map((e) => e.event);
+    assert.ok(types.includes('status'), 'tem status (pensando/etapas)');
+    assert.ok(types.includes('reply'), 'tem a resposta do bot');
+    assert.ok(types.includes('done'), 'termina com done');
+    // Ordem: primeiro "pensando", depois reply, depois cards.
+    const firstStatus = events.find((e) => e.event === 'status');
+    assert.equal(firstStatus.data.phase, 'thinking', 'abre com pensando');
+    const thinkingIdx = events.findIndex((e) => e.event === 'status');
+    const replyIdx = events.findIndex((e) => e.event === 'reply');
+    assert.ok(thinkingIdx < replyIdx, 'pensando vem antes da resposta');
+
+    // Etapas ao vivo: card de audiência anunciado por status "Criando audiência…".
+    const statuses = events.filter((e) => e.event === 'status').map((e) => e.data.label);
+    assert.ok(statuses.some((l) => l && l.includes('Criando audiência')), 'etapa audiência anunciada');
+    const cards = events.filter((e) => e.event === 'card').map((e) => e.data.card);
+    assert.ok(cards.some((card) => card.type === 'audience'), 'card de audiência no stream');
+
+    // Turno persistido como no síncrono.
+    const history = (await api('GET', `/campaigns/${c.data.id}/chat`)).body.data;
+    assert.equal(history.length, 2);
+  } finally {
+    server.close();
+  }
+});
