@@ -6,7 +6,7 @@
  * follow-up baseado na interação real (US14). DI: callLlm injetável.
  */
 
-const { parseJsonLoose } = require('../../llm-client');
+const { parseModelJson } = require('./json');
 
 function createWriter({ callLlm } = {}) {
   const llm = callLlm || require('../../llm-client').callLlm;
@@ -39,7 +39,7 @@ function createWriter({ callLlm } = {}) {
       maxTokens: 700,
       tag: 'studio:write',
     });
-    const parsed = parseJsonLoose(result.content) || {};
+    const parsed = parseModelJson(result.content) || {};
     return { suggestions: (parsed.suggestions || []).filter(Boolean).slice(0, n) };
   }
 
@@ -63,7 +63,7 @@ function createWriter({ callLlm } = {}) {
       maxTokens: 1200,
       tag: 'studio:rewrite',
     });
-    const parsed = parseJsonLoose(result.content) || {};
+    const parsed = parseModelJson(result.content) || {};
     return { text: parsed.text || text };
   }
 
@@ -84,7 +84,7 @@ function createWriter({ callLlm } = {}) {
       maxTokens: 1200,
       tag: 'studio:translate',
     });
-    const parsed = parseJsonLoose(result.content) || {};
+    const parsed = parseModelJson(result.content) || {};
     return { text: parsed.text || text };
   }
 

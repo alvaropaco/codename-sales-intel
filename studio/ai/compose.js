@@ -8,7 +8,7 @@
  * (pesquisa D9); Brand Voice entra como diretriz quando configurada (US12).
  */
 
-const { parseJsonLoose } = require('../../llm-client');
+const { parseModelJson } = require('./json');
 
 function createComposer({ callLlm } = {}) {
   const llm = callLlm || require('../../llm-client').callLlm;
@@ -49,7 +49,7 @@ function createComposer({ callLlm } = {}) {
       maxTokens: 1400,
       tag: 'studio:compose',
     });
-    const parsed = parseJsonLoose(result.content);
+    const parsed = parseModelJson(result.content);
     if (!parsed || typeof parsed !== 'object') {
       const err = new Error(`Composição do tom "${tone}" não retornou JSON utilizável.`);
       err.code = 'COMPOSE_PARSE_FAILED';

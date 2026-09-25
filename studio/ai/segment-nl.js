@@ -7,7 +7,7 @@
  * com explicação por condição. Sempre validado pelo catálogo.
  */
 
-const { parseJsonLoose } = require('../../llm-client');
+const { parseModelJson } = require('./json');
 const segmentService = require('../segment-service');
 
 function createSegmentNl({ callLlm } = {}) {
@@ -33,7 +33,7 @@ function createSegmentNl({ callLlm } = {}) {
       maxTokens: 700,
       tag: 'studio:segment-nl',
     });
-    const parsed = parseJsonLoose(result.content) || {};
+    const parsed = parseModelJson(result.content) || {};
     // Validação pelo catálogo — LLM não pode inventar campo/op (D3).
     segmentService.validateCriteria(parsed.criteria);
     return {

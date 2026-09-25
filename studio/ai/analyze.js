@@ -6,7 +6,7 @@
  * reais do rollup (nada de opinião sem número). DI: callLlm injetável.
  */
 
-const { parseJsonLoose } = require('../../llm-client');
+const { parseModelJson } = require('./json');
 
 function createAnalyst({ callLlm } = {}) {
   const llm = callLlm || require('../../llm-client').callLlm;
@@ -27,7 +27,7 @@ function createAnalyst({ callLlm } = {}) {
       maxTokens: 700,
       tag: 'studio:analyze',
     });
-    const parsed = parseJsonLoose(result.content) || {};
+    const parsed = parseModelJson(result.content) || {};
     return {
       diagnosis: parsed.diagnosis || 'Sem diagnóstico disponível para os dados atuais.',
       suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],

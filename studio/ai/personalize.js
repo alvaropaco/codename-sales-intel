@@ -7,7 +7,7 @@
  * FR-051). Saída auditável via `dataBasis` (FR-075). DI: callLlm injetável.
  */
 
-const { parseJsonLoose } = require('../../llm-client');
+const { parseModelJson } = require('./json');
 
 function createPersonalizer({ callLlm } = {}) {
   const llm = callLlm || require('../../llm-client').callLlm;
@@ -46,7 +46,7 @@ function createPersonalizer({ callLlm } = {}) {
       maxTokens: 600,
       tag: 'studio:personalize',
     });
-    const parsed = parseJsonLoose(result.content) || {};
+    const parsed = parseModelJson(result.content) || {};
     if (parsed.skip) {
       return { skip: true, reason: parsed.reason || 'sem dados suficientes' };
     }
