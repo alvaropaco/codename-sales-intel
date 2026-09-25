@@ -5,6 +5,7 @@
  * lateral mostra o estado real da campanha; aprovação permanece explícita.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { StudioRequestError } from '../api';
 
 interface ChatMessage {
@@ -160,7 +161,13 @@ export function CampaignChat({ campaignId, onStateChange }: CampaignChatProps) {
                   m.role === 'user' ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm bg-muted/60'
                 }`}
               >
-                <p className="whitespace-pre-wrap">{m.text}</p>
+                {m.role === 'assistant' ? (
+                  <div className="space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_li]:ml-4 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-1.5 [&_p:last-child]:mb-0 [&_strong]:font-semibold">
+                    <ReactMarkdown>{m.text}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap">{m.text}</p>
+                )}
                 {m.cards?.map((card, i) => (
                   <div key={i} className="mt-2 rounded-lg border border-border bg-background/80 p-2 text-xs">
                     <p className="font-semibold">{card.label}</p>

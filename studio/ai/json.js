@@ -66,3 +66,40 @@ function parseModelJson(content) {
 }
 
 module.exports = { parseModelJson, balancedObjectSlice };
+
+/**
+ * Chamada LLM com expectativa de JSON + reparo (US chat/compose/segment-nl).
+ * `buildUser(previousRaw)` recebe null na 1ª tentativa e a resposta inválida
+ * nas seguintes (prompt de reparo). `validate` decide se o JSON serve.
+ */
+async function callLlmJson(llm, { system, buildUser, validate, maxTokens = 1200, temperature = 0.4, model, tag, attempts = 2 }) {
+  let lastRaw = null;
+  let lastProblem = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const result = await llm({
+      system,
+      user: buildUser(attempt === 1 ? null : lastRaw),
+      jsonMode: true,
+      temperature: attempt === 1 ? temperature : 0,
+      maxTokens,
+      model,
+      tag,
+    });
+    lastRaw = result.content;
+    const parsed = parseModelJson(result.content);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      if (!validate) return parsed;
+      const problem = validate(parsed);
+      if (!problem) return parsed;
+      lastProblem = problem;
+    } else {
+      lastProblem = 'resposta não é JSON';
+    }
+  }
+  const err = new Error(`Resposta não é JSON utilizável após ${attempts} tentativas${lastProblem ? ` (${lastProblem})` : ''}.`);
+  err.code = 'LLM_JSON_FAILED';
+  err.status = 502;
+  throw err;
+}
+
+module.exports.callLlmJson = callLlmJson;

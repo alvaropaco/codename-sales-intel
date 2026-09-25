@@ -166,13 +166,19 @@ function registerChatRoutes(router, context) {
         }
         const updated = await prisma.studioCampaign.update({ where: { id: campaign.id }, data });
         Object.assign(campaign, updated);
-        const forecast = scheduleService.forecast(schedule, (await currentExtras(prisma, campaign)).audienceCount || 0);
+        // Previsão de conclusão só faz sentido com audiência definida.
+        const audienceCount = (await currentExtras(prisma, campaign)).audienceCount || 0;
+        const forecast = audienceCount > 0 ? scheduleService.forecast(schedule, audienceCount) : null;
         return {
           type: 'schedule',
           label: 'Agendamento configurado',
           detail: `${schedule.hourlyLimit}/h · ${schedule.dailyLimit}/dia${
             schedule.windows.length ? ` · janelas ${schedule.windows.map((w) => `${w.startHour}h–${w.endHour}h`).join(', ')}` : ''
-          }${forecast.estimatedAt ? ` · conclusão prevista ${new Date(forecast.estimatedAt).toLocaleString('pt-BR')}` : ''}`,
+          }${
+            forecast?.estimatedAt
+              ? ` · conclusão prevista ${new Date(forecast.estimatedAt).toLocaleString('pt-BR')}`
+              : ' · defina a audiência para ver a previsão de conclusão'
+          }`,
         };
       }
 
